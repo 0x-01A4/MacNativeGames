@@ -43,14 +43,23 @@ defaults write org.macnativegames.totk AppleLanguages -array en-US
 ## 4. The UI archive and the build's own patch
 
 Most translations also replace `UI/LayoutArchive/Common.Product.<n>.Nin_NX_NVN.blarc.zs` (the UI textures with words
-in them). The build's RomFS patch (`make_romfs_patches.py`, the quick-menu capture timing) replaces the same archive,
-and two overlays may not replace one file, so the game stops at start with "two overlays replace the same file".
-Until that is handled (#73), there are two ways:
+in them). The build's RomFS patch (`make_romfs_patches.py`, the quick-menu capture timing) edits the same archive, and
+two overlays may not replace one file. `make_mod_manifest.py` takes care of it (#73): when the mod has that archive, it
+puts the build's edit into the mod's copy, keeps the mod's own file next to it as `<name>.mod-original` (used again on
+the next run) and says so:
 
-- leave the archive out of the mod: everything else is translated, the UI images stay in the original language;
-- or merge the two: in 1.2.1 the mod changes only `timg/__Combined.bntx` and the patch only the two `anim/*.bflan`
-  members, so the mod's archive with the patch's two members put in (recompressed with the same zstd dictionary)
-  carries both, and it goes in place of the build's patch file (and its manifest line) before the app is packaged.
+```
+merged with the build's patch: UI/LayoutArchive/Common.Product.110.Nin_NX_NVN.blarc.zs (the mod's own file: ...mod-original)
+```
+
+At start the log then shows that the mod's archive takes the place of the build's:
+
+```
+RomFS overlay: UI/LayoutArchive/Common.Product.110.Nin_NX_NVN.blarc.zs (6275634 bytes) replaces the build's overlay extracted/v121/romfs-patches/... (the mod holds its edit)
+```
+
+A mod that changed the patched members itself is refused and nothing is written. If a later build changes its patch,
+run `make_mod_manifest.py` again (the start says which file no longer matches).
 
 ## 5. Check
 
