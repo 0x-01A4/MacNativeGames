@@ -36,7 +36,8 @@ Exact measurements and logs are in the development log below and in the project'
 - An Apple silicon Mac with macOS 26 or newer, and Xcode with the Metal 4 SDK (tested with Xcode 27.1; install the Metal Toolchain
   component for the optional shader precompile step).
 - Super Mario Odyssey with the **1.3.0** update, as a combined XCI or NSP that you dumped yourself. Other versions are
-  rejected by hash. Some tools call this build "1.4.1": the executables are identical (see "Version naming" below).
+  rejected by hash, including **1.4.1**: it has the same executables but slightly different data, and is not
+  supported yet (see "Version naming" below).
 - `prod.keys` dumped from your own Switch.
 - Homebrew `opus` and `libvpx` (`brew install opus libvpx`), and Python 3 with `capstone`, `cryptography` and `lz4`.
 - About 20 GB of free disk space for the build folder.
@@ -136,27 +137,34 @@ Upstream MacNativeGames is 359 commits ahead of our `43f53b4` checkout (`origin/
 
 The new Metal compile flag `shouldMaximizeConcurrentCompilation` is also set (`DM_MAX_CONCURRENT_COMPILE=0` turns it off). The renderer objects compile. `tests/system_event_bind/probe.c` passes all three parts against the new `threads.c` and fails against the old one. Four bounded 90 s GPU runs resumed a copy of the Cap Kingdom save and alternated prefetch off and on; all exited 0 and reached the same in-game scene. In run order (off/on/off/on), long frames after 45 s were 26/40/10/4, worst 644/174/104/87 ms, with no in-game compile stalls after the first run. Warming across runs dominates, so prefetch's own effect is not established. The startup critical-pipeline wait swung between 0.2 and 38.9 s with Metal cache state (`boot-ab-prefetch-*.log`). The upstream **pipeline binary archive** was then ported and is on by default (`TOTK_PIPELINE_ARCHIVE=0` turns it off). Five bounded runs cut startup warm-up from 4.4 s (off) to 1.6 s (149 archived pipelines). After a rebuild, though, the first runs can spend more than 90 s compiling shader libraries from source before the first frame. Removing that needs precompiled `.metallib` files and the Metal Toolchain, whose download is still pending. [`PLAYBOOK.md`](PLAYBOOK.md) collects outside techniques for later problems, with sources: emulator bug history for SMO, 1.3.0 mod offsets, test and replay tools, the save format, GPU fault reporting, pacing, audio, input and packaging. [`TECHNIQUES.md`](TECHNIQUES.md) lists each backport with its upstream measurement, the upstream work still to port (pipeline binary archive first), and external techniques with sources.
 
-### Version naming: "1.3.0" here, "1.4.1" elsewhere, same executables
+### Version naming: 1.3.0 and 1.4.1 share their executables, not their data
 
-This port's dump has update display version **1.3.0**, from the update's Control NACP (`scripts/inspect_version.py`, `Odyssey_build/analysis/versions.json`). Two other projects call the build they target "1.4.1":
+This port is built and verified against update **1.3.0** (the update's Control NACP, `scripts/inspect_version.py`,
+`Odyssey_build/analysis/versions.json`). Update **1.4.1** is a later update with the **same executables** but
+**slightly different data**:
 
-- **[nxnative](https://github.com/seedds/nxnative)**: its profile `dm/games/0100000000010000/game.tsv` reads `build v393216 1.4.1`.
-- **[smo-recomp](https://github.com/Coz-0/smo-recomp)**.
+- Checked 23 October 2026 against a local 1.4.1 update NSP (metadata and hashes only): its NACP says **1.4.1**;
+  `main`, `sdk`, `subsdk0` and `rtld` are byte-identical to 1.3.0's (same SHA-256 and build IDs); `main.npdm` differs
+  only in a 512-byte block near its start (the signature area); its program NCA is 16,896 bytes larger, so its RomFS
+  patch differs. Which RomFS files differ is not known yet.
+- Other projects target the same executables under the 1.4.1 name: **[nxnative](https://github.com/seedds/nxnative)**
+  (profile `dm/games/0100000000010000/game.tsv`, `build v393216 1.4.1`, with these build IDs) and probably
+  **[smo-recomp](https://github.com/Coz-0/smo-recomp)** (no build IDs published; our main already imports the Labo VR
+  calls it lists as new in "1.4.1").
 
-nxnative's profile lists the NSO build IDs, and they are **identical to this dump's** (checked 23 October 2026 against `Odyssey_build/extracted/{main,sdk,subsdk0}`):
-
-| Module | Build ID (first 16 bytes) |
+| Module | Build ID (first 16 bytes), 1.3.0 and 1.4.1 |
 | --- | --- |
 | main | `b424be150a8e7d78701cbe7a439d9ebf` |
 | subsdk0 | `93ff8252d975adf07230cb86c83301c5` |
 | sdk | `fcf93a41b08c5193a1410d262602dc62` |
 
-The community's symbol lists also give this main build ID for 1.3.0 (Calypso `client/config/VersionList.sym`). So "1.4.1" in those projects names the same executables as our 1.3.0. The difference is a label (they appear to number by title version), not code.
+What this means:
 
-- **nxnative:** `main+0x…`/`sdk+0x…` offsets apply to this build directly.
-- **smo-recomp:** has not published build IDs. Its "1.4.1" is probably the same build: our main already imports the Labo VR calls it lists as new in "1.4.1". Check one of its addresses before relying on it.
-
-Per AGENTS.md rule 5, verify any borrowed offset by disassembly before using it. This port's own docs keep calling the build **1.3.0**.
+- Code addresses (`main+0x…`, `sdk+0x…`) from nxnative or smo-recomp apply to this build; per AGENTS.md rule 5,
+  still verify each one by disassembly before using it.
+- **The build accepts 1.3.0 only.** `scripts/prepare_runtime.py` checks the merged RomFS against
+  `assets/expected-local-update.json`, so 1.4.1's different data is rejected until it is examined and added as a
+  supported version.
 
 ## Open in Xcode
 
