@@ -34,6 +34,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 23 | Mac | **Super Mario Odyssey 1.3.0** (community port, early): Cap Kingdom and Bonneton playable at 60 fps on an M3, own runtime in [`games/odyssey`](games/odyssey/README.md), which has the build steps |
 | Oct 22 | Mac | The overlay box shows a render pipeline line under the shaders: "New render pipelines N / total M" (new to this profile this run / ready this run) |
 | Oct 21 | Mac | **Breath of the Wild 1.9.0** above 30 fps as 1.6.0: menus and the HUD at normal speed, physics steady, movies at their own 30 fps; docked play renders at native 1080p; keys 4 (21:9 ultrawide) and 5 (edge smoothing, MetalFX temporal) work on 1.9.0 |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |
