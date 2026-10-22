@@ -300,11 +300,13 @@ Every file under `games/totk` that this port changes (`git diff --stat ab4c9d2 H
 
 | File | What changed | Guard |
 |---|---|---|
-| `Makefile` | new rules `runtime-botw190`, `build/totk-native-botw190`, `build/gfx-botw190/*.o` and `build/botw190/*.h` | additive; no TOTK rule changed |
+| `Makefile` | new rules `runtime-botw190`, `build/totk-native-botw190`, `build/gfx-botw190/*.o`, `build/botw190/*.h` and `probe-audio-botw190` | additive; no TOTK rule changed |
 | `runtime/account.c` | `nn::account::PopOpenUsers` gives the one local user | `#ifdef GAME_BOTW` |
 | `runtime/aoc_romfs.c` | default DLC folder `extracted/<TOTK_GAME_DIR>/aoc` instead of the fixed `extracted/botw160/aoc` | the file is inside `#ifdef GAME_BOTW` |
-| `runtime/audio_mixer.h` | two fields keep the voice-drop parameter | `#ifdef GAME_BOTW` |
-| `runtime/audio_renderer.c` | `IAudioRenderer` commands 12 and 13 (Set/GetVoiceDropParameter) | `#ifdef GAME_BOTW` |
+| `runtime/audio_mixer.h` | two fields keep the voice-drop parameter; four more keep the ramp state (`prev_volume`, `ramp_ready`, `was_started`, `last`) | `#ifdef GAME_BOTW` |
+| `runtime/audio_mixer.c` | volume ramps and depop (`voice_ramp_mix`, `voice_depop_prepare`, `mix_depop`) | `#ifdef GAME_BOTW` |
+| `runtime/audio_ramp.h` | new header with the ramp arithmetic | included only under `GAME_BOTW` |
+| `runtime/audio_renderer.c` | `IAudioRenderer` commands 12 and 13 (Set/GetVoiceDropParameter); the ramp state is reset with the voice; `probe_ramp` in the audio probe | `#ifdef GAME_BOTW` |
 | `runtime/game_patches_botw.c` | The 1.9.0 real-time, UI-step, physics-substep, held-count, docked 1080p, movie-hold and ultrawide-camera sites. The 1.6.0 sites are unchanged. A `runtime_render_res` stub answers 0 for the shared `romfs.c` of `466330d`. Without it, no BOTW binary links | `#ifdef GAME_BOTW160` / `#else`. Only BOTW binaries compile this file |
 | `runtime/game_version.h` | the 1.9.0 version block | `#elif defined(GAME_BOTW190)`, before the TOTK blocks |
 | `runtime/loader.c` | the five-argument `nn::init::Start` of SDK 20.5; `module_finis` is compiled for 1.9.0 too | `#ifdef GAME_BOTW160` / `#elif defined(GAME_BOTW)`; `#ifndef GAME_BOTW` became `#ifndef GAME_BOTW160` |
@@ -352,6 +354,31 @@ run walks 10 s each minute, with a 2 s right turn, then presses A. The 13 shots,
 the forest and no Game Over. GPU allocation: 1138 MB at frame 300, 1823 MB at about 170 s, 1916 MB at the end. After
 the warm-up this is about 4 MB/min, against 10 MB/min before the fix. Resident memory: 2686 to 2900 MB. A first
 moving try on the field route is void, because Link died before 245 s and the run stayed on Game Over.
+
+## Audio: volume ramps and depop (2026-10-22)
+
+The mixer applied a new voice volume or channel mix volume as a step at the 5 ms frame edge, and a stopped or paused
+voice dropped to zero at once. BOTW ducks the music when the pause menu or the map opens, and each step on a loud sample
+is a click. The Switch DSP ramps the voice volume and each channel's mix volume from the last frame's value and decays a
+stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `VolumeRamp`, `MixRamp`,
+`DepopPrepare`, `DepopForMixBuffers`, 0.962189 per sample at 48 kHz). `audio_mixer.c` does the same under `GAME_BOTW`;
+`TOTK_AUDIO_RAMP=0` gives the old mixer for a comparison.
+
+- `tests/test_audio_ramp.c` (CI, no game data) runs `audio_ramp.h`: a duck from 1 to 0.25, a mix volume that falls to 0
+  and a stopped voice's decay may not step a sample by more than 0.04. With `-DAUDIO_RAMP_STEP` it fails (steps 0.6,
+  0.4 and 0.5).
+- `make probe-audio-botw190` (needs game data): a 0.8 voice ducks and stops, no sample steps more than 0.04. Run on the
+  packaged binary of this branch (origin/main `daf270e`): it passes, and with `TOTK_AUDIO_RAMP=0` it fails with "volume
+  step or stop is not smoothed".
+- Game A/B on the old base `bedb076` (Kakariko save, 7 pause-menu and map cycles, the same inputs, 30 s capture): 4
+  clicks (steps 0.15-0.20, about 12 times the local step) with the old mixer, 0 with the fix, 0 underruns in both.
+- Game run on origin/main `daf270e` (bog save, 290 s, menu and map cycles from 100 s, 30 s capture): 0 clicks with the fix
+  and 0 without, the largest step 0.133 in both captures, 0 underruns, exit 0, about 60 fps. This scene did not repeat the
+  clicks of the old base, so it proves no gain; it shows no harm.
+- Not tested: a listening test by the owner (pause menu, map, shrine, fast travel), splitter voices (BOTW opens none),
+  and BOTW 1.6.0, which also defines `GAME_BOTW`.
+- A run that ends in Game Over has no world sound (digital zero): the first runs of this check, started from the legs
+  save on a build without the legs cure, were silent for that reason.
 
 ## Not tested and known issues
 
