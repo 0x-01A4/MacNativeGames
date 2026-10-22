@@ -979,7 +979,7 @@ def variant_folder(game):
     """Where the game keeps the source of each patched shader variant it compiled while it was played (nvn_mtl.m
     variant_library: sampler border colours, missing varyings, the layer index, no depth output, MetalFX roles), named by
     its SHA-256: the player's shader cache, ~/Library/Application Support/MacNativeGames/<game>/shader-cache/rt-<chain>."""
-    return Path.home()/'Library/Application Support/MacNativeGames'/APPS[game][2]/'shader-cache/rt-totk-native-v6-unverified/variants'
+    return Path.home()/'Library/Application Support/MacNativeGames'/APPS[game][2]/'shader-cache/rt-totk-native-v7-unverified/variants'
 
 
 def variant_sources(game):
@@ -1118,16 +1118,29 @@ def data_bundle(tree, version, logs, *, bundle_id=BUNDLE_ID):
     """The RomFS image (16 GB) as a bundle of its own, signed once and kept in the work folder (build/data-bundles). The
     app carries a clone of it in Contents/Helpers, and the app's seal records only its signature: sealing the image
     inside the app hashed all 16 GB on every packaging (88 s on an M4 Mac mini, 2026-10-20), now only when the image
-    changed (the stamp names the image file: size, mtime, inode). The game opens the image through a link at its usual
-    place, extracted/<version>/romfs/romfs.bin, and checks its SHA-256 itself as before (runtime/romfs.c)."""
+    changed (the stamp names the image: size, mtime and the SHA-256 the extraction verified, extracted/<version>/romfs/
+    index.json). Not its inode, which an APFS clone of the work folder changes: a clone signed all 16 GB again (8 min on
+    the external disk, 2026-10-22). The game opens the image through a link at its usual place,
+    extracted/<version>/romfs/romfs.bin, and checks its SHA-256 itself as before (runtime/romfs.c)."""
     image = tree / f'extracted/{version}/romfs/romfs.bin'
     bundle = tree / f'build/data-bundles/GameData-{version}.bundle'
     stamp = bundle.with_name(bundle.name + '.json')
     st = image.stat()
-    want = dict(format=1, size=st.st_size, mtime_ns=st.st_mtime_ns, inode=st.st_ino)
     try:
-        if json.loads(stamp.read_text()) == want and (bundle / 'Contents/_CodeSignature/CodeResources').is_file():
-            return bundle
+        sha = json.loads((image.parent / 'index.json').read_text()).get('romfs_sha256')
+    except (OSError, ValueError):
+        sha = None
+    want = dict(format=2, size=st.st_size, mtime_ns=st.st_mtime_ns, sha256=sha) if sha else \
+        dict(format=1, size=st.st_size, mtime_ns=st.st_mtime_ns, inode=st.st_ino)
+    try:
+        have = json.loads(stamp.read_text())
+        if (bundle / 'Contents/_CodeSignature/CodeResources').is_file():
+            if have == want:
+                return bundle
+            if (want['format'] == 2 and have.get('format') == 1 and have.get('size') == st.st_size
+                    and have.get('mtime_ns') == st.st_mtime_ns):   # an older stamp (or a clone's: other inode, same file)
+                stamp.write_text(json.dumps(want))
+                return bundle
     except (OSError, ValueError):
         pass
     say('4/4 app: signing the game data once (a minute or two; later builds reuse it)')
@@ -1272,13 +1285,17 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
         try:
             report = json.loads((seed/'seed-manifest.json').read_text())
             known = seed_digests(seed)
-            if (report['version'] != version or report['chain'] != 'totk-native-v6-unverified' or
+            if (report['version'] != version or report['chain'] != 'totk-native-v7-unverified' or
                     report['shaders'] < (8000 if game == 'totk' else 2000) or not report['files'] or any(
                         Path(name).name != name or seed_sha256(seed, name, known) != digest for name, digest in report['files'].items())):
                 raise ValueError('version, translation chain or file hash differs')
         except (ValueError, KeyError, OSError, TypeError) as error:
             raise BuildError(f'invalid prepared startup shader seed: {error}') from None
         copy_tree(seed, res/'build/shader-seed')
+        aliases = seed.with_name(seed.name+'.aliases.tsv')   # listed variants the seed carries under another name
+        if aliases.is_file():
+            run([tree/'.venv/bin/python', 'scripts/shader_list.py', 'rename', aliases, res/'build/pso_manifest.tsv',
+                 res/'build/pso_title.tsv'], logs/'shader-list-rename.log', cwd=tree)
         for src in sorted(seed.glob('*.metal')):   # each named in the manifest, its hash just checked
             lib = tree/f'build/shader-libs/{report["files"][src.name]}.metallib'
             if lib.is_file():
