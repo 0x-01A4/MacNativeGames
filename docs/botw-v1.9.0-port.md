@@ -340,10 +340,29 @@ them, 4 versions). The Python scripts keep the TOTK defaults, and the Makefile o
 ## Long run and the sinking legs
 
 Sinking legs: Link stands idle after a load of the 08:29 Great Plateau autosave, and his legs sink into the stone
-path by the ruin wall. One re-test on this branch showed the same. With the write-back off (`flag writeback 0`), the
-legs sank the same, so the write-back is not the cause. On an earlier build, one move or attack cleared it on the same
-spot. A new save at the same spot (System > Save, slot 1) gives the same: five seconds after its load, the legs sink
-mid-thigh. The cause is unknown.
+path by the ruin wall. A new save at the same spot (System > Save, slot 1) gives the same: five seconds after its load,
+the legs sink mid-thigh. With the write-back off (`flag writeback 0`) the legs sank the same, which fits the cause
+below: nothing is copied back then.
+
+Cause (2026-10-22): the game renders a 1x1 target on the GPU and reads the result on the CPU with no invalidate over its
+memory, as the idle foot placement and the water material loader do. The port copied GPU renderings to memory only at an
+invalidate, so the CPU read stale bytes: legs that sink, and water whose colour block stayed zero (the Bottomless Bog
+rendered clear and milky). One local fix on the old base 7305d4e (`bedb076`) wrote such 1x1 renderings back at each
+present: legs straight at 60, 75 and 90 s, bog dark and opaque; the same build with `TOTK_WB_EAGER=1x1` also kept the
+legs straight, without it they sank.
+
+Test on origin/main `daf270e` (M1 Pro, macOS 27, scratch apps built from the worktrees, copied saves, the same inputs;
+legs: save slot 5 of the 08:29 autosave, no input after the load; bog: save slot 2, camera turned left and down; frames
+at 38 to 90 s after the start):
+
+| Build | Legs | Bog |
+|---|---|---|
+| origin/main | sunk to the knees at 42 s; a bokoblin that stays hidden in the other runs attacks; Game Over at 60 s | no water: the ground shows through (milky, clear) |
+| origin/main with pull request #239 (tiny GPU targets copied to memory when their submission completes) | straight at 42, 60 and 90 s, bokoblin hidden, about 59 fps | dark and opaque water |
+
+So the cause above holds on current main and #239 cures both symptoms; this branch carries no fix of its own, because a
+second one would conflict with it. Not tested: our own write-back fix on current main (it did not run there; it
+passed on the old base only), and #239 on 1.6.0.
 
 Leak fix: the first 25-minute run (Shrine route, `f3ad878` merged) stopped at 1509 s at the 5000 MB GPU budget. Its
 485,380 write-back stage buffers (2.9 GB) were never freed, because the game thread has no autorelease pool. `5ab49a2`
@@ -382,7 +401,7 @@ stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `V
 
 ## Not tested and known issues
 
-- Sinking legs after a save loads: deferred, cause unknown (see "Long run and the sinking legs").
+- Sinking legs after a save loads, and the clear Bottomless Bog: cured in the test by pull request #239, not on main yet (see "Long run and the sinking legs").
 - GPU allocation grows about 4 MB/min after warm-up (1916 MB after 27 minutes): deferred. At that rate, the 5 GB
   budget is about 13 hours away.
 - Key 2 with no UI: fixed by `75cadf2`, with light proof (4 to 5 frames lost per HUD hide, against 408 before). A long
