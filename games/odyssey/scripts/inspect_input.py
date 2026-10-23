@@ -18,7 +18,7 @@ def inspect(game: Path, keys_path: Path) -> int:
         print("Key file was not found.", file=sys.stderr)
         return 2
 
-    scripts = Path(__file__).resolve().parents[2] / "totk" / "scripts"
+    scripts = Path(__file__).resolve().parents[1] / "third_party" / "totk-scripts"
     sys.path.insert(0, str(scripts))
     try:
         from extract_exefs import container_entries, load_keys, nca_inventory

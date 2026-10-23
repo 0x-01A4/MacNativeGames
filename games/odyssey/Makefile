@@ -55,9 +55,9 @@ SPIRV_CROSS_SOURCES := main.cpp spirv_cfg.cpp spirv_cpp.cpp spirv_cross.cpp spir
 SPIRV_CROSS_OBJECTS := $(addprefix $(OUT)/spirv-cross/obj/,$(addsuffix .o,$(SPIRV_CROSS_SOURCES)))
 .PHONY: shader-tools
 shader-tools: $(OUT)/shader-service/totk_xlate $(OUT)/spirv-cross/spirv-cross
-$(OUT)/shader-service/totk_xlate: ../totk/prebuilt/macos-arm64/totk_xlate ../totk/prebuilt/macos-arm64/totk_xlate.sha256
+$(OUT)/shader-service/totk_xlate: prebuilt/macos-arm64/totk_xlate prebuilt/macos-arm64/totk_xlate.sha256
 	@mkdir -p "$(dir $@)"
-	test "$$(shasum -a 256 "$<" | cut -d' ' -f1)" = "$$(cut -d' ' -f1 ../totk/prebuilt/macos-arm64/totk_xlate.sha256)"
+	test "$$(shasum -a 256 "$<" | cut -d' ' -f1)" = "$$(cut -d' ' -f1 prebuilt/macos-arm64/totk_xlate.sha256)"
 	cp "$<" "$@" && chmod +x "$@"
 $(OUT)/spirv-cross/obj/%.cpp.o: $(WORK)/src/SPIRV-Cross/%.cpp Makefile
 	@mkdir -p "$(dir $@)"

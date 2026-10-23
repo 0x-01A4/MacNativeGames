@@ -7,7 +7,7 @@ Steps (each is skipped when its verified output already exists, so a failed run 
  1. check the input (title, version, integrity; prints no keys or game data)
  2. extract the program modules (main, sdk, subsdk0) and merge the base + update RomFS
  3. extract the system fonts from the game card's system-update partition (NSP: pass --firmware)
- 4. rewrite the ARM64 modules ahead of time (games/by3/third_party/d2r/patch_nso.py, native ruleset)
+ 4. rewrite the ARM64 modules ahead of time (third_party/d2r/patch_nso.py, native ruleset)
  5. loader tables: verifies ExeFS, rewrite and RomFS against assets/expected-local-update.json
  6. shader tools (pinned SPIRV-Cross) and the runtime
  7. the whole-game shader seed (the longest step; --skip-seed leaves it out)
@@ -117,7 +117,7 @@ def main():
     else:
         source = ["--firmware", args.firmware] if args.firmware else ["--xci", args.game]
         try:
-            run([py, GAMES / "totk/scripts/extract_shared_fonts.py", *keyargs, *source, "--output", fonts,
+            run([py, GAME_DIR / "third_party/totk-scripts/extract_shared_fonts.py", *keyargs, *source, "--output", fonts,
                  "--inventory", work / "analysis/firmware-inventory.json"])
         except subprocess.CalledProcessError:
             if args.firmware:
@@ -135,7 +135,7 @@ def main():
         if (rewritten / f"{name}.patched.bin").is_file():
             print(f"   {name} already rewritten")
             continue
-        run([py, GAMES / "by3/third_party/d2r/patch_nso.py", ext / name, rewritten, name],
+        run([py, GAME_DIR / "third_party/d2r/patch_nso.py", ext / name, rewritten, name],
             env={"DM_RULESET": "native", "DM_PRIVATE_GATES": "0"})
     done(t)
 

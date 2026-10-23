@@ -13,9 +13,8 @@ import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-REPO = HERE.parents[1]
-SEED = REPO / 'games/totk/scripts/prepare_shader_seed.py'
-TRANSLATOR = REPO / 'games/totk/prebuilt/macos-arm64/totk_xlate'
+SEED = HERE / 'third_party/totk-scripts/prepare_shader_seed.py'
+TRANSLATOR = HERE / 'prebuilt/macos-arm64/totk_xlate'
 
 
 def load_seed():

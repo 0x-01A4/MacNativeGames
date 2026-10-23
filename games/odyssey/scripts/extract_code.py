@@ -10,7 +10,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers import modes
 
-GENERIC = Path(__file__).resolve().parents[2] / 'totk/scripts/extract_exefs.py'
+GENERIC = Path(__file__).resolve().parents[1] / 'third_party/totk-scripts/extract_exefs.py'
 spec = importlib.util.spec_from_file_location('generic_exefs', GENERIC)
 ex = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ex)

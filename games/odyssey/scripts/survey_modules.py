@@ -38,7 +38,7 @@ def main():
     shim.block = block
     sys.modules['lz4'] = shim
     sys.modules['lz4.block'] = block
-    script = Path(__file__).resolve().parents[2] / 'by3/scripts/prepare_modules.py'
+    script = Path(__file__).resolve().parents[1] / 'third_party/by3-scripts/prepare_modules.py'
     spec = importlib.util.spec_from_file_location('prepare_modules', script)
     analyzer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(analyzer)

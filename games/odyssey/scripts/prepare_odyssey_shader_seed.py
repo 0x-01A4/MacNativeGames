@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare Odyssey's whole-game shader seed from the local, verified RomFS and game modules.
 
-Upstream's tool (games/totk/scripts/prepare_shader_seed.py) does the work: inventory, one translator service per core,
+Upstream's tool (third_party/totk-scripts/prepare_shader_seed.py, a copy of games/totk's) does the work: inventory, one translator service per core,
 seed manifest. Odyssey needs four differences, applied here without changing the shared tool (22 October 2026):
 - Keys: TotK's rule. Odyssey binds its 0x848-byte control sections unmodified, so BotW's bind-time rewrite must not
   be applied (with it, 182 of 844 runtime shaders matched; without it, 828; SHADER_STUTTER.md).
@@ -26,7 +26,7 @@ import sys
 
 GAME = Path(__file__).resolve().parents[1]
 BUILD = Path(os.environ.get("ODYSSEY_WORK", GAME / "Odyssey_build")).resolve()   # ODYSSEY_WORK: another build folder
-UPSTREAM = GAME.parent / "totk/scripts/prepare_shader_seed.py"
+UPSTREAM = GAME / "third_party/totk-scripts/prepare_shader_seed.py"   # a copy of games/totk's (2026-10-22)
 STAGE_NUMBER = {"vs": 0, "ps": 1, "cs": 5}   # NVN stage numbers in pso_manifest.tsv rows
 
 
@@ -48,6 +48,8 @@ def load_upstream():
     # Odyssey's shaders are only in these four folders (a scan of ObjectData, StageData, LocalizedData and EventData found
     # no BNSH / BAHS container; research, 22 October) plus the main module, so skip decompressing everything else.
     seed.GAMES["totk"]["folders"] = ("ShaderData/", "EffectData/", "LayoutData/", "SystemData/")
+    # Odyssey's own shared list (none yet: an empty list), not the Tears of the Kingdom list the copy would look for.
+    seed.GAMES["totk"]["list"] = GAME / "assets/shader_list.tsv"
     return seed
 
 

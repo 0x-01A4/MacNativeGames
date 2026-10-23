@@ -12,12 +12,12 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE.parent / 'by3/scripts'))
+sys.path.insert(0, str(HERE / 'third_party/by3-scripts'))
 from extract_exefs import (load_keys, container_entries, common_tickets,
                            nca_inventory, nca_ctr_key, require)
 from extract_romfs import index_romfs
 
-spec = importlib.util.spec_from_file_location('by3_merge_romfs', HERE.parent / 'by3/scripts/merge_romfs.py')
+spec = importlib.util.spec_from_file_location('by3_merge_romfs', HERE / 'third_party/by3-scripts/merge_romfs.py')
 by3_merge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(by3_merge)
 Ctr, romfs_section, verify_ivfc = by3_merge.Ctr, by3_merge.romfs_section, by3_merge.verify_ivfc

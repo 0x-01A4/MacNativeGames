@@ -9,7 +9,7 @@ alRenderMaterial.szs) and 27 in EffectData/EffectPtcl.szs, i.e. in archives the 
 import json, glob, os, sys, importlib.util, collections, random
 GAME = sys.argv[1]; prefixes = sys.argv[2:] or ['ShaderData/']
 B = GAME + '/Odyssey_build/'; C = B + 'build/shader-cache/rt-totk-native-v4-unverified/'
-spec = importlib.util.spec_from_file_location('seed', GAME + '/../totk/scripts/prepare_shader_seed.py'); seed = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed)
+spec = importlib.util.spec_from_file_location('seed', GAME + '/third_party/totk-scripts/prepare_shader_seed.py'); seed = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed)
 inv = set()
 def walk(o):
     if isinstance(o, dict):
