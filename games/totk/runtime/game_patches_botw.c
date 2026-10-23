@@ -13,6 +13,7 @@
 #include "aspect_math.h"   /* key 4: TOTK_ASPECT parsing */
 uint32_t runtime_thread_current_handle(void);
 static void botw_aspect_install(Module *m);   /* key 4, end of the file */
+static int patch_output_res(Module *m);   /* native output size, after runtime_output_res */
 static void botw_aspect_apply(void);
 
 /* Real-time frame step (TOTK_REALTIME=0: as shipped). ksys::VFR (singleton pointer main+0x2d1e170, built at main+0x183eb98)
@@ -484,7 +485,7 @@ static void patch_render_1080(Module *m) {
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
     runtime_survey_init(m);   /* TOTK_SURVEY=1: survey pos / move (world_survey.c) */
-    patch_render_1080(m);
+    if (!patch_output_res(m)) patch_render_1080(m);
     botw_aspect_install(m);
     if (realtime_enabled()) patch_realtime(m);
     else fprintf(stderr, "[botw] real-time frame step off (TOTK_REALTIME=0): the game advances by its present interval\n");
@@ -604,9 +605,79 @@ int botw_jq_hook(void *context) {   /* SIGTRAP from loader.c crash(): 1 = it was
 #undef U32
 #undef U64
 int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }   /* no scene size above 1600x900 for the heaps (romfs.c) */
+#ifdef GAME_BOTW160
+/* Native output size, 1.6.0 (TOTK_OUTPUT_RES=<w>x<h>, e.g. 2560x1440; for now at the start only, key 3 does not switch
+   it yet). The game takes its TV size from two places (2026-10-23, both found in the code): a function-local static
+   {1920, 1080} at main+0x2cceb10 that six guarded initialisers write (the framework's swapchain, made once at the start,
+   the system task's TV size, the dungeon map and the noise gauge read it), and the docked branch of the display-mode
+   function (main+0x1821670..0x18216ac), which writes the screen and render widths (+0x1290: 1920.0 and the shipped
+   1600.0, which patch_render_1080 makes 1920.0), the system task's TV size (+0x4c0) and the window crop. Both become
+   <w>x<h>, the scene included (render width = screen width, as the 1080p patch already has it). The heaps are fixed in
+   the code (no HeapDef): the render-target heap 115 -> 320 MiB, the graphics system's (the swapchain's) 48 -> 64 MiB,
+   SetMemoryHeapSize and the root heap +224 MiB, and the host's application pool the same (runtime_output_res_extra_bytes,
+   services.c). The sizes are a first estimate, to be measured in play. */
+static unsigned g_out_w, g_out_h;
+int runtime_output_res(unsigned *w, unsigned *h) {
+    static int parsed;
+    if (!parsed) {
+        parsed = 1;
+        const char *e = getenv("TOTK_OUTPUT_RES"); unsigned a, b; char tail;
+        if (e && *e && strcmp(e, "0") && strcmp(e, "auto")) {
+            if (sscanf(e, "%ux%u%c", &a, &b, &tail) != 2 || a < 1280 || b < 720 || a > 7680 || b > 4320 || a > 0xffff || b > 0xffff)
+                runtime_fail("TOTK_OUTPUT_RES must be <width>x<height> (1280x720 .. 7680x4320)");
+            float f = (float)a; uint32_t bits; memcpy(&bits, &f, 4);
+            if (bits & 0xffff) runtime_fail("TOTK_OUTPUT_RES: this width cannot be written by the patched mov / movk (its float has low bits)");
+            g_out_w = a; g_out_h = b;
+        }
+    }
+    if (!g_out_w) return 0;
+    if (w) *w = g_out_w;
+    if (h) *h = g_out_h;
+    return 1;
+}
+uint64_t runtime_output_size_current(void) { unsigned w = 1920, h = 1080; runtime_output_res(&w, &h); return w | ((uint64_t)h << 32); }
+#define OUTPUT_EXTRA (224ull << 20)
+uint64_t runtime_output_res_extra_bytes(void) { return runtime_output_res(NULL, NULL) ? OUTPUT_EXTRA : 0; }
+static uint32_t movz_x(unsigned rd, unsigned imm16, unsigned hw) { return 0xd2800000u | (hw << 21) | (imm16 << 5) | rd; }
+static uint32_t movk_x(unsigned rd, unsigned imm16, unsigned hw) { return 0xf2800000u | (hw << 21) | (imm16 << 5) | rd; }
+static int patch_output_res(Module *m) {
+    unsigned w, h; if (!runtime_output_res(&w, &h)) return 0;
+    static const uint32_t size_init[] = {0xe563dc, 0xe56410, 0x113fb48, 0x1140208, 0x1186ce0, 0x1805028};
+    static const struct { uint32_t off, original; } check[] = {
+        {0x1821670, 0xd2a89e08}, {0x1821674, 0xf2e89908}, {0x1821678, 0xf9094b88}, {0x1821684, 0xd280f009}, {0x1821688, 0xf2c08709},
+        {0x182168c, 0xf9026109}, {0x18216ac, 0xf8054109},
+        {0x1804c44, 0x52a0e608}, {0xe550a0, 0x320807e0}, {0xe536dc, 0x52b86000}, {0xe53fa0, 0x52b82015},
+    };
+    uint32_t word;
+    for (size_t i = 0; i < sizeof size_init / sizeof *size_init; i++) {
+        memcpy(&word, m->base + size_init[i], 4); uint32_t k; memcpy(&k, m->base + size_init[i] + 12, 4);
+        if (word != 0xd280f009u || k != 0xf2c08709u) { fprintf(stderr, "[botw] output size main+%#x: %08x / %08x\n", size_init[i], word, k); runtime_fail("native output size requires the 1.6.0 size initialisers"); }
+    }
+    for (size_t i = 0; i < sizeof check / sizeof *check; i++) {
+        memcpy(&word, m->base + check[i].off, 4);
+        if (word != check[i].original) { fprintf(stderr, "[botw] output size main+%#x: found %08x expected %08x\n", check[i].off, word, check[i].original); runtime_fail("native output size requires the 1.6.0 display-mode and heap instructions"); }
+    }
+    uint32_t mw = movz_x(9, w, 0), mh = movk_x(9, h, 2);
+    for (size_t i = 0; i < sizeof size_init / sizeof *size_init; i++) { memcpy(m->base + size_init[i], &mw, 4); memcpy(m->base + size_init[i] + 12, &mh, 4); }
+    float f = (float)w; uint32_t fb; memcpy(&fb, &f, 4);
+    uint32_t fs = movz_x(8, fb >> 16, 1), fr = movk_x(8, fb >> 16, 3);   /* {screen width, render width} = {w, w} */
+    memcpy(m->base + 0x1821670, &fs, 4); memcpy(m->base + 0x1821674, &fr, 4);
+    memcpy(m->base + 0x1821684, &mw, 4); memcpy(m->base + 0x1821688, &mh, 4);
+    const uint32_t heap_render = 0x52a28008u;   /* mov w8, #0x14000000: 320 MiB */
+    const uint32_t heap_gfx = 0x320603e0u;      /* mov w0, #0x4000000: 64 MiB */
+    const uint32_t heap_size = 0x52ba2000u;     /* mov w0, #0xd1000000: SetMemoryHeapSize +224 MiB */
+    const uint32_t heap_root = 0x52b9e015u;     /* mov w21, #0xcf000000: the root block +224 MiB */
+    memcpy(m->base + 0x1804c44, &heap_render, 4); memcpy(m->base + 0xe550a0, &heap_gfx, 4);
+    memcpy(m->base + 0xe536dc, &heap_size, 4); memcpy(m->base + 0xe53fa0, &heap_root, 4);
+    fprintf(stderr, "[botw] native output %ux%u (TOTK_OUTPUT_RES): the swapchain, the scene and the window crop at that size; heaps: render 320 MiB, graphics 64 MiB, +224 MiB (21 instructions verified)\n", w, h);
+    return 1;
+}
+#else
 int runtime_output_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 uint64_t runtime_output_size_current(void) { return 1920ull | (1080ull << 32); }   /* the canvas this game draws (frontend.m's shortcut text); no output-size patch yet */
 uint64_t runtime_output_res_extra_bytes(void) { return 0; }
+static int patch_output_res(Module *m) { (void)m; return 0; }
+#endif
 /* Pre-rendered movies (the memories, the intro): the movie player advances one movie frame per game frame, so above
    30 fps they ran fast, out of step with their sound, and a cutscene could wait for ever (2026-10-20). main+0x2cbef40
    holds the movie object while one plays (stored at main+0x1600e74 when it is made, cleared at main+0x1a4d6f0 after it
