@@ -393,7 +393,7 @@ stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `V
   before the next frame still fades from its last sample, and a voice whose channel was muted for a frame adds nothing
   when it is paused afterwards (its last added sample is 0). Run on a build of origin/main `a988b5e` with this
   branch's runtime: without the fix the release and reuse cases step 0.8 and the mute-then-pause case adds 0.0032; with
-  it the probe passes (and fails with `TOTK_AUDIO_RAMP=0`). A voice freed while it is still started is cut.
+  it the probe passes (and fails with `TOTK_AUDIO_RAMP=0`). A voice freed while it is still started is cut, and so is the old voice when a new voice starts at once in its place (its first samples would add to the tail: 0.8 plus 0.77 clips to 1.0, a 0.2 step; the old mixer has no step there).
 - Game A/B on the old base `bedb076` (Kakariko save, 7 pause-menu and map cycles, the same inputs, 30 s capture): 4
   clicks (steps 0.15-0.20, about 12 times the local step) with the old mixer, 0 with the fix, 0 underruns in both.
 - Game run on origin/main `daf270e` (bog save, 290 s, menu and map cycles from 100 s, 30 s capture): 0 clicks with the fix

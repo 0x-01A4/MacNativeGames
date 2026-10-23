@@ -64,7 +64,7 @@ static void update_voice(AudioRenderer *r, const AudrenVoiceIn *in) {
     need(in->id < (uint32_t)r->param.voice_count, "voice id out of range");
     ServerVoice *v = &r->voices[in->id];
 #ifdef GAME_BOTW
-    if (in->is_new || !in->in_use) audio_mixer_voice_release(r, v);   /* v->in still holds the old mix: a voice stopped in this request fades out instead of being cut */
+    if ((in->is_new || !in->in_use) && !(in->in_use && in->play_state == PLAY_STARTED)) audio_mixer_voice_release(r, v);   /* v->in still holds the old mix: a voice stopped in this request fades out instead of being cut, unless a new voice starts at once (its start would add to the tail) */
 #endif
     if (in->is_new || !in->in_use) voice_reset(v);
     for (int i = 0; i < 2; i++) if (!in->biquads[i].enable)
@@ -433,10 +433,10 @@ static int probe_ramp(void) {
     audio_mixer_close(r); free(r->voices); free(r->pools); free(r->mixes); free(r->sinks); free(r->effects); free(r->channels); free(r);
     return checked + 3;
 }
-/* Edge cases of the depop on a loud constant voice (0.8): the voice is stopped and then released, or reused by a new voice, before the next frame, or its
+/* Edge cases of the depop on a loud constant voice (0.8): the voice is stopped and then released, or reused by a new voice (stopped, or started at once at the same level), before the next frame, or its
    channel is muted for a frame and the voice is then paused. Each must fade from the last sample (no step above 0.04), and a muted
    voice that pauses must add nothing (its last added sample was 0). TOTK_AUDIO_RAMP=0 must fail. */
-enum { EDGE_RELEASE, EDGE_REUSE, EDGE_MUTE_PAUSE };
+enum { EDGE_RELEASE, EDGE_REUSE, EDGE_MUTE_PAUSE, EDGE_REUSE_STARTED };
 static int probe_ramp_edge(int kind) {
     AudrenParameter p = {48000, 240, 2, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, REV(11)};
     AudioRenderer *r = renderer_new(&p); audio_mixer_open(r);
@@ -453,6 +453,7 @@ static int probe_ramp_edge(int kind) {
             v.is_new = 0; v.wave_buffers[0].sent = 1;
             if (kind == EDGE_RELEASE) { v.play_state = PLAY_STOPPED; update_voice(r, &v); v.in_use = 0; update_voice(r, &v); }   /* stop, then free it before the next render */
             if (kind == EDGE_REUSE) { v.play_state = PLAY_STOPPED; update_voice(r, &v); v.is_new = 1; v.wave_buffers[0].sent = 0; update_voice(r, &v); }   /* and the id goes to a new, stopped voice */
+            if (kind == EDGE_REUSE_STARTED) { v.play_state = PLAY_STOPPED; update_voice(r, &v); v.is_new = 1; v.wave_buffers[0].sent = 0; v.play_state = PLAY_STARTED; update_voice(r, &v); }   /* and a new voice at the same level starts at once */
             if (kind == EDGE_MUTE_PAUSE) r->channels[0].mix[0] = r->channels[0].mix[1] = 0;   /* the channel is muted: its volume ramps from 1 to 0 */
         }
         if (f == 4 && kind == EDGE_MUTE_PAUSE) { v.play_state = PLAY_PAUSED; update_voice(r, &v); }
@@ -464,7 +465,7 @@ static int probe_ramp_edge(int kind) {
             prev = lr[2 * k]; checked++;
         }
     }
-    if (fabsf(prev) > 1e-3f) runtime_fail("audio probe: depop does not decay to silence");
+    if (fabsf(prev - (kind == EDGE_REUSE_STARTED ? 0.8f : 0.0f)) > 1e-3f) runtime_fail("audio probe: depop does not decay to silence, or the new voice is not at its level");
     audio_mixer_close(r); free(r->voices); free(r->pools); free(r->mixes); free(r->sinks); free(r->effects); free(r->channels); free(r);
     return checked + 1;
 }
@@ -477,7 +478,7 @@ void runtime_audio_probe(void) {
     int checked = probe_rev15();
 #ifdef GAME_BOTW
     checked += probe_ramp();
-    for (int kind = EDGE_RELEASE; kind <= EDGE_MUTE_PAUSE; kind++) checked += probe_ramp_edge(kind);
+    for (int kind = EDGE_RELEASE; kind <= EDGE_REUSE_STARTED; kind++) checked += probe_ramp_edge(kind);
 #endif
     /* final mix 0: buffers 0-1; submix 1: buffers 2-3 -> mix 0 with a swap matrix at volume 0.5 */
     r->mixes[0] = (AudrenMixIn){.volume = 1, .sample_rate = 48000, .buffer_count = 2, .in_use = 1, .mix_id = 0, .dest_mix_id = 0x7fffffff, .dest_splitter_id = 0xffffffffu};
