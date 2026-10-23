@@ -34,13 +34,12 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
-| Oct 22 | Mac | The overlay box shows a render pipeline line under the shaders: "New render pipelines N / total M" (new to this profile this run / ready this run) |
-| Oct 21 | Mac | **Breath of the Wild 1.9.0** above 30 fps as 1.6.0: menus and the HUD at normal speed, physics steady, movies at their own 30 fps; docked play renders at native 1080p; keys 4 (21:9 ultrawide) and 5 (edge smoothing, MetalFX temporal) work on 1.9.0 |
+| Oct 23 | iPhone, iPad | **Tears of the Kingdom** fills the screen, 60 fps by default, MetalFX upscaling |
+| Oct 23 | Mac | **Tears of the Kingdom** renders its 3D scene at the canvas resolution: internal 1920x1080 at 1080p (docked was only 1600x900), 2560x1440 on the 2K canvas |
+| Oct 21 | Mac | **Breath of the Wild 1.9.0**: shaders and render pipelines optimised |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |
-| Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`); keys 2 and 3 work; both versions now run uncapped on a 120 Hz display too (measured on 1.9.0); since Oct 22 the uncapped mode applies on any display, up to 120 FPS by default (`TOTK_UNCAPPED_HZ=240` allows 240) |
-| Oct 20 | Mac | **Tears of the Kingdom**: faster app builds |
-| Oct 20 | Mac | **Breath of the Wild 1.6.0** (early): a card image holding the base game, the update and the add-on content builds its own app with the same command; title, saves, the Great Plateau and the DLC packs work, keys 2 (frame interpolation) and 3 (MetalFX 2K) work |
-| Oct 20 | iPhone, iPad | The launcher adopts the UIScene lifecycle, so an IPA built with Xcode 27 starts on iOS 27 (which ends apps that still make their window in the app delegate) |
+| Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`) |
+| Oct 20 | Mac | **Breath of the Wild 1.6.0** (early): a card image holding the base game, the update and the add-on content builds its own app with the same command; title, saves, the Great Plateau and DLC packs work |
 | Oct 19 | Mac | Key 4 switches to a true 21:9 ultrawide view and back (1.2.1, 1.4.3); the HUD keeps its shape in the middle 16:9 |
 | Oct 19 | iPhone, iPad | Tested with 1.4.3: a fresh install shows the game from the first launch, without a played cache |
 | Oct 19 | All | The game notes the shaders the shared list lacks; on a Mac, every 500 it asks to send them in a [GitHub issue](https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list.yml) |
@@ -346,13 +345,12 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
-| 10 月 22 日 | Mac | 提示框里着色器下面多一行渲染管线：“新渲染管线 N / 总计 M”（这次新建、本机以前没建过的 / 这次已经备好的） |
-| 10 月 21 日 | Mac | **旷野之息 1.9.0** 30 帧以上和 1.6.0 一样：菜单和 HUD 速度正常、物理稳定、过场动画按自己的 30 帧播放；底座模式按原生 1080p 渲染；4 键（21:9 宽屏）和 5 键（边缘平滑，MetalFX 时间性）在 1.9.0 上也能用 |
+| 10 月 23 日 | iPhone、iPad | **王国之泪** 铺满屏幕 默认锁 60、MetalFX放大|
+| 10 月 23 日 | Mac | **王国之泪** 3D 画面按画布分辨率渲染：1080p 内部分辨率 1920x1080（原来底座模式只有 1600x900），2K 画布时 2560x1440|
+| 10 月 21 日 | Mac | **旷野之息 1.9.0** 优化了着色器和渲染管线 |
 | 10 月 21 日 | Mac、iPhone、iPad | **王国之泪** 提高90帧稳定性，提高完全没有着色器时帧数稳定 |
-| 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`）；2 键和 3 键都能用；两个版本在 120 Hz 显示器上现在也不限帧（在 1.9.0 上测的）；10 月 22 日起不限帧在任何显示器上都生效，默认最高 120 帧（`TOTK_UNCAPPED_HZ=240` 可到 240） |
-| 10 月 20 日 | Mac | **王国之泪** 打包更快|
-| 10 月 20 日 | Mac | **旷野之息 1.6.0**（早期）：本体 + 更新 + 追加内容合在一起的卡带镜像用同一条命令打成单独的 App；标题、存档、初始台地和 DLC 内容包都能用，2 键（补帧）和 3 键（MetalFX 2K）都能用 |
-| 10 月 20 日 | iPhone、iPad | 启动器改用 UIScene 生命周期：用 Xcode 27 构建的 IPA 能在 iOS 27 上启动（iOS 27 会结束仍在 app delegate 里创建窗口的 App） |
+| 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`） |
+| 10 月 20 日 | Mac | **旷野之息 1.6.0**（早期）：本体 + 更新 + 追加内容合在一起的卡带镜像用同一条命令打成单独的 App；标题、存档、初始台地和 DLC 内容包都能用 |
 | 10 月 19 日 | Mac | 按 4 切换真正的 21:9 超宽画面（1.2.1、1.4.3），HUD 保持原比例、在中间 16:9 区域 |
 | 10 月 19 日 | iPhone、iPad | 用 1.4.3 实测：全新安装、没有玩过的缓存，第一次启动就能看到游戏画面 |
 | 10 月 19 日 | 全部 | 游戏会记下公共清单里还没有的着色器；Mac 上每攒够 500 个提醒一次用 [GitHub Issue](https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list.yml) 发送 |
