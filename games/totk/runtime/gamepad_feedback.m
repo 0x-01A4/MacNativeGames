@@ -40,6 +40,7 @@ void runtime_rumble_gain_set(float g) { (void)g; }
 #include <mach/mach_vm.h>
 #include "bow_state.h"
 #include "game_version.h"   /* Tears of the Kingdom 1.4.3's scene slot and actor name offsets, for the bow state */
+#include <mach/mach_time.h>
 #include "hid_imu.h"
 
 /* ---- rumble ----
@@ -322,6 +323,7 @@ static void hid_motion_stop(void) {   /* main queue */
     if (!hidDevice) return;
     runtime_gamepad_switch_left(NULL, -1, -1);
     IOHIDDeviceRegisterInputReportCallback(hidDevice, hidReport, sizeof hidReport, NULL, NULL);
+    IOHIDDeviceRegisterInputReportWithTimeStampCallback(hidDevice, hidReport, sizeof hidReport, NULL, NULL);
     IOHIDDeviceUnscheduleFromRunLoop(hidDevice, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
     IOHIDDeviceClose(hidDevice, kIOHIDOptionsTypeNone);
     CFRelease(hidDevice); hidDevice = NULL;
@@ -499,7 +501,8 @@ void runtime_triggers_choose(int on) {
 
 /* ---- motion from the input reports of a pad GameController gives none (2026-10-23): runtime/hid_imu.h ---- */
 static const HidImuProfile *imuProfile;   /* main run loop */
-static void hid_imu_report(void *ctx, IOReturn result, void *sender, IOHIDReportType type, uint32_t id, uint8_t *p, CFIndex len) {   /* main run loop */
+static uint64_t imuLast;   /* main run loop: the time of the last sample */
+static void hid_imu_report(void *ctx, IOReturn result, void *sender, IOHIDReportType type, uint32_t id, uint8_t *p, CFIndex len, uint64_t stamp) {   /* main run loop */
     (void)ctx; (void)sender; (void)type;
     const HidImuProfile *pr = imuProfile;
     if (result != kIOReturnSuccess || !pr || id != pr->reportId) return;
@@ -510,7 +513,9 @@ static void hid_imu_report(void *ctx, IOReturn result, void *sender, IOHIDReport
     }
     double acc[3], gyro[3];
     if (!hid_imu_decode(pr, id, p, len, acc, gyro)) return;
-    runtime_motion_feed(acc, gyro, runtime_now_ns());
+    static mach_timebase_info_data_t tb;
+    if (!tb.denom) mach_timebase_info(&tb);
+    runtime_motion_feed(acc, gyro, hid_imu_time((uint64_t)((__uint128_t)stamp * tb.numer / tb.denom), runtime_now_ns(), &imuLast));   /* the report's own receive time: see hid_imu.h */
 }
 static BOOL hid_imu_start(GCController *c) {   /* main queue: c has no GCMotion */
     if (![c.productCategory isEqualToString:GCProductCategoryHID]) return NO;   /* not an Xbox pad that merely sits beside one of these */
@@ -537,7 +542,8 @@ static BOOL hid_imu_start(GCController *c) {   /* main queue: c has no GCMotion 
     hid_motion_stop();
     hidManager = m; hidDevice = (IOHIDDeviceRef)CFRetain(d); imuProfile = found;
     IOHIDDeviceScheduleWithRunLoop(hidDevice, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
-    IOHIDDeviceRegisterInputReportCallback(hidDevice, hidReport, sizeof hidReport, hid_imu_report, NULL);
+    imuLast = 0;
+    IOHIDDeviceRegisterInputReportWithTimeStampCallback(hidDevice, hidReport, sizeof hidReport, hid_imu_report, NULL);
     motionPad = c; runtime_motion_deadzone_default(1.2); runtime_motion_live(1);
     fprintf(stderr, "[gyro] %s: no motion from GameController; reading the six-axis sensor from its HID reports (%04x:%04x)\n", name, vendor, product);
     return YES;
