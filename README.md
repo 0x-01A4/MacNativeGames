@@ -223,6 +223,19 @@ What works on 1.6.0 (October 20, an M4 Mac, a Great Plateau save): title, the ad
 
 What works on 1.9.0 (October 20, an M1 Pro Mac with its built-in 120 Hz display, both DLC packs): title, loading saves, autosaves, six places from the Shrine of Resurrection to the Hyrule Castle exit at 58.4–77.5 fps standing still and 58.6–81.4 fps walking with a warm shader cache, a 25-minute run in Korok Forest with Link moving, the game advancing by real time at any frame rate (held-button counts too), the two DLC packs (the Kakariko route starts the DLC quest "EX Treasure: Garb of Winds"), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited; on the Great Plateau, standing still, the game ran at 69, 30, 58 and 61 fps and the screen showed about 67, 60, 115 and 115 pictures a second) and key 3 (MetalFX replaces the game's own upscale). Since October 21, 1.9.0 also has 1.6.0's fixes above 30 fps (menus and the HUD at normal speed, six physics steps a frame, movies held at 30 fps), renders docked play at native 1080p, and has key 5 (MetalFX temporal anti-aliasing: smoother edges, about 9 fps less on the plateau at 1600x900, 67.7 to 58.6). Key 4 switches a 21:9 ultrawide view on 1.9.0 (Mac: the camera sees more at the sides and the picture fills a wider window; `TOTK_ASPECT=32:9` or `3440x1440` picks another shape and starts with it on; the HUD and menus keep their shape in the middle 16:9, the map with black bars at the sides; markers that follow objects in the world are not moved out yet). Both versions now run uncapped on a 120 Hz display too, up to 120 fps (measured on 1.9.0); before, the game's present interval held them at 60 fps there. Walking into a place for the first time stutters while new pipelines compile. Not yet: native 2K, iPhone / iPad, and a fix for Link's legs, which sink into the stone path after a save at one Great Plateau spot loads (the old autosave and a new save made there). See [the 1.9.0 test record](docs/botw-v1.9.0-port.md).
 
+### Apple Vision Pro
+
+Tears of the Kingdom can be built as a native visionOS 26 app with `--platform visionos`. It uses a resizable 16:9 window, docked 1920×1080 output and a game controller. This is windowed play; immersive VR, head tracking and experimental stereo are not included. MetalFX frame interpolation and temporal anti-aliasing are unavailable on visionOS and stay off.
+
+Use the existing separate-data installation to keep the large game image and shader pack across app updates:
+
+```sh
+python3.14 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys --platform visionos --ios-game-data documents -o ~/Games/TOTK-Vision.app
+python3.14 games/totk/ios/tools/install_device.py ~/Games/TOTK-Vision.app --device "<Vision Pro name>" --game-data ~/Games/TOTK_build/totk/extracted/v0/romfs/romfs.bin
+```
+
+Install the visionOS platform in Xcode Settings › Components, pair the headset with Xcode and enable Developer Mode. For a build with `--update`, use that version's extracted image (`v112`, `v121` or `v143`) instead of `v0`; with `--work`, use the chosen work folder. The installer selects the native visionOS signing profile from the app. Game data uses the same existing 1 GiB parts and shader packs as iPhone/iPad. Native visionOS support currently covers Tears of the Kingdom only. A contributor reported playing 1.2.1 on an M2 Vision Pro with a DualSense; the current integration has not been tested on a headset.
+
 ### iPhone and iPad
 
 Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild 1.6.0 has been played on the iPhone 14 (title, loading a save, walking around; October 23): build it with `--platform ios --ios-game-data documents` and install it with `games/totk/ios/tools/install_device.py` like Tears of the Kingdom. It fills the screen and renders at 960x540 with the game's own upscale to 1280x720, as Tears of the Kingdom does on the phone. 1.9.0 builds for the iPhone the same way (960x540 too) but has not been played on one yet. On the phone both games run at up to 60 fps, the screen's rate.
@@ -519,6 +532,12 @@ python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Gam
 1.6.0 已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。10 月 23 日起（Mac）：2 键补帧恢复（它认“场景画完”用的着色器键是 10 月 20 日改键之前记的，一帧都认不出来，#177），跟着镜头走的东西（林克）不再套用镜头运动，30+30 下林克不再抖；3 键的 MetalFX 又能代替游戏自己的放大；4 键和 1.9.0 一样切换 21:9（1.6.0 的镜头每帧把比例写回 16:9，所以改的是游戏自己写的那一步）；5 键边缘平滑（#178）。3 键现在和王国之泪 1.4.3 一样循环：关 → MetalFX 2K → 原生 2K → 关（原生 2K 时场景和画布都是 2560x1440；App 启动时就按 2560x1440 建交换链、加大内存堆，`TOTK_OUTPUT_RES=0` 只保留原来的 1080p）。还没有：DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
 
 1.9.0 已验证（10 月 20 日，M1 Pro Mac 的内置 120 Hz 屏幕，两个 DLC 内容包）：标题、读档和自动存档、六个测试地点（从 Shrine of Resurrection 到海拉鲁城出口）站着不动 58.4–77.5 帧，着色器缓存已预热时走动 58.6–81.4 帧、在克洛格森林让林克一直走动的 25 分钟测试、游戏在任何帧率下都按真实时间推进（按住按键的计数也一样）、两个 DLC 内容包（卡卡利科村的路线会触发 DLC 任务 “EX Treasure: Garb of Winds”）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧；在初始台地站着不动时，游戏分别跑 69、30、58 和 61 帧，屏幕每秒显示约 67、60、115 和 115 张画面）和 3 键（MetalFX 代替游戏自己的放大）。从 10 月 21 日起，1.9.0 也有了 1.6.0 在 30 帧以上的修复（菜单和 HUD 速度正常、每帧六次物理步进、过场动画保持 30 帧），底座模式按原生 1080p 渲染，并支持 5 键（MetalFX 时间性抗锯齿：边缘更平滑，1600x900 时台地上约少 9 帧，67.7 降到 58.6）。4 键在 1.9.0 上切换 21:9 宽屏（Mac：镜头两侧看得更多，画面填满更宽的窗口；`TOTK_ASPECT=32:9` 或 `3440x1440` 选别的比例并在启动时就打开；HUD 和菜单在中间 16:9 里保持原来的形状，地图两侧有黑边；跟随世界中物体的标记还没有往外移）。两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的）；以前游戏的呈现间隔在这种显示器上把帧率压在 60。第一次走进一个地方时，新管线编译会造成卡顿。还没有：原生 2K、iPhone / iPad，以及林克腿陷进石头路的修复（在初始台地的一个地点读档后出现，旧的自动存档和在那里新存的档都一样）。详见 [1.9.0 测试记录](docs/botw-v1.9.0-port.md)。
+
+### Apple Vision Pro
+
+王国之泪新增 `--platform visionos`，构建原生 visionOS 26 App：16:9 可缩放窗口、docked 1920×1080 输出、游戏手柄操作。当前是窗口内游玩，未接入沉浸式 VR、头部追踪或实验性立体 3D；visionOS 不支持的 MetalFX 补帧、时间抗锯齿保持关闭。
+
+安装方法见上面的 [Apple Vision Pro](#apple-vision-pro) 命令。先在 Xcode 设置的 Components 中安装 visionOS 平台组件、配对头显并开启开发者模式。`--ios-game-data documents` 沿用现有的游戏数据外置、1 GiB 分片和着色器打包传输，更新 App 时保留数据；安装器按 App 的平台选择签名。当前仅支持王国之泪。匿名贡献者报告在 M2 Vision Pro 上用 DualSense 游玩过 1.2.1，本次接入尚未做头显真机验证。
 
 ### iPhone 和 iPad
 
