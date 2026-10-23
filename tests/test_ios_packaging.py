@@ -8,6 +8,7 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parents[1]/'games/totk/ios/tools'
 sys.path.insert(0, str(TOOLS))
 import build_ipa  # noqa: E402
+import install_device  # noqa: E402
 
 
 class Discard(unittest.TestCase):
@@ -28,6 +29,32 @@ class Discard(unittest.TestCase):
     def test_a_missing_path_is_fine(self):
         with tempfile.TemporaryDirectory() as d:
             build_ipa.discard(Path(d)/'none')
+
+
+def read_pack(parts):
+    """ios/Sources/main.m seed_unpack, in Python: the files of a pack stream cut into parts."""
+    data = b''.join(p.read_bytes() for p in parts); assert data[:9] == b'TOTKPACK1'; at, out = 9, {}
+    while True:
+        nl = int.from_bytes(data[at:at + 2], 'little'); at += 2
+        if not nl: return out, at == len(data)
+        name = data[at:at + nl].decode(); at += nl
+        size = int.from_bytes(data[at:at + 8], 'little'); at += 8
+        out[name] = data[at:at + size]; at += size
+
+
+class ShaderPack(unittest.TestCase):
+    def test_files_come_back_whole_across_part_boundaries(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); seed = root/'seed'; seed.mkdir(); parts = []
+            files = {'a.metal': b'x' * 1000, 'b.json': b'{}', 'empty.variants': b'', 'c.metallib': bytes(range(256)) * 3}
+            for n, b in files.items():
+                (seed/n).write_bytes(b)
+            install_device.write_pack(seed, sorted(files), root, 'shader-seed-x', 97, parts.append)
+            self.assertGreater(len(parts), 10)   # cut in the middle of names, sizes and contents
+            self.assertTrue(all(p.stat().st_size <= 97 for p in parts))
+            got, exact = read_pack(parts)
+            self.assertEqual(got, files)
+            self.assertTrue(exact)   # nothing after the end mark
 
 
 if __name__ == '__main__':
