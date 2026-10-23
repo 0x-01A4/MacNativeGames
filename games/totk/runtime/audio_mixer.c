@@ -698,9 +698,10 @@ void audio_mixer_render(AudioRenderer *r, double seconds) {
     for (int i = 0; i < r->param.voice_count; i++) {
         ServerVoice *v = &r->voices[i];
 #ifdef GAME_BOTW
+        const int fade_in = v->fade_in; v->fade_in = 0;   /* a tail was queued in this slot since the last frame */
         if (m->ramp && v->in.in_use) {
             if (!v->ramp_ready) {   /* new voice: no ramp from an older volume, unless it starts over a kept tail */
-                v->prev_volume = v->fade_in ? 0 : v->in.volume; v->ramp_ready = 1; v->fade_in = 0;   /* over a kept tail it ramps up from 0 */
+                v->prev_volume = fade_in && v->state == SV_STARTED ? 0 : v->in.volume; v->ramp_ready = 1;   /* over a kept tail it ramps up from 0 */
                 for (unsigned c = 0; c < v->in.channel_count && c < 6; c++) { int32_t id = v->in.channel_ids[c]; if (id >= 0 && id < r->param.voice_count * 6) memcpy(m->prev_mix[id], r->channels[id].mix, sizeof m->prev_mix[id]); }
             }
             if (v->state != SV_STARTED) { if (v->was_started) { voice_depop_prepare(r, v); v->prev_volume = 0; } v->was_started = 0; continue; }
