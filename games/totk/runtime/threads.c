@@ -76,6 +76,8 @@ typedef struct thr {
     uint32_t wh[4]; int nwh;   // handles of the current WaitSynchronization (state dump)
     int last_hle;              // 1 + wrapper index of the last host call made while "hletrace" was on (state dump)
     uint64_t yrun_ns, yrun_svc;   // the current run of yields: when it started, and nsvc at its last yield (yield_backoff_ns)
+    uint64_t core_wait_ns, core_held_ns, core_nwait;   // time in core_take waiting for a virtual core, time holding one, waits (core_table)
+    uint64_t core_held_prev, core_wait_prev, core_nwait_prev, cpu_prev_ns;   // the same, and the host thread's CPU time, at the last table
 #ifdef GAME_BOTW
     uint64_t cwait_ns;            // when it last queued for a virtual core (starvation rule, core_beats)
     uint64_t protect_until;       // given a core by the starvation rule: no priority preemption before this
@@ -183,6 +185,7 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns);
 #define NCORE 3
 static thr_t *g_core_owner[NCORE];
 static thr_t *g_core_wait;
+static uint64_t g_core_wait_all_ns, g_core_wait_all_n;   // all guest threads' waits in core_take (holding G; dm_core_wait_stats)
 static int g_cores_on = -1;
 static int cores_enabled(void) { if (g_cores_on < 0) g_cores_on = getenv("TOTK_FREE_CORES") ? 0 : 1; return g_cores_on; }
 static int core_allowed(const thr_t *t, int c) { return (int)((t->mask >> c) & 1); }
@@ -236,6 +239,7 @@ static void core_grant(int c) {   // holding G: give free core c to the best wai
 }
 static void core_put(thr_t *t) {   // holding G
     if (t->cur_core < 0) return;
+    if (t->core_since) t->core_held_ns += now_ns() - t->core_since;   // core_table
     int c = t->cur_core; t->cur_core = -1; t->preempt = 0; g_core_owner[c] = NULL; core_grant(c);
 }
 #ifdef GAME_BOTW
@@ -331,6 +335,36 @@ static void core_wait_report(const thr_t *w) {
     }
     fprintf(stderr, "\n");
 }
+#else
+/* Diagnostics for Tears of the Kingdom's virtual cores (TOTK_CORE_DIAG=1, off by default: it suspends core owners for a
+   moment to read their pc). A thread that has waited CORE_DIAG_NS for a core logs once who holds the three cores, with
+   priority, core mask and where each owner is (main+... in game code, a symbol in a host function); the first
+   CORE_DIAG_MAX such waits. Every CORE_TABLE_NS a [core-table] line per thread that held or waited for a core: time
+   held, CPU time used meanwhile, time waited, core mask. Frames that drop a refresh showed the guest threads together
+   waiting 25-29 ms for a core against 2 ms in the others (frame TSV @core_wait_all_ms, 2026-10-23). */
+void runtime_describe_address(uint64_t a, char *out, size_t n);
+#define CORE_DIAG_NS 4000000L
+#define CORE_DIAG_MAX 400
+static int core_diag_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_CORE_DIAG"); v = e && *e && strcmp(e, "0"); } return v; }
+static int g_core_reports;
+static void core_wait_report_totk(const thr_t *w, uint64_t w0) {   // holding G
+    if (g_core_reports++ >= CORE_DIAG_MAX) return;
+    uint64_t now = now_ns();
+    fprintf(stderr, "[core-wait] thread %#x (priority %d, mask %#llx) waited %.1f ms:", w->handle, w->prio, (unsigned long long)w->mask, (now - w0) / 1e6);
+    for (int i = 0; i < NCORE; i++) {
+        thr_t *o = g_core_owner[i]; if (!o) { fprintf(stderr, " core %d free%s;", i, core_allowed(w, i) ? "" : " (not in mask)"); continue; }
+        char a[96] = "?", b[96] = "?";
+        if (thread_suspend(o->mport) == KERN_SUCCESS) {
+            arm_thread_state64_t st; mach_msg_type_number_t cnt = ARM_THREAD_STATE64_COUNT;
+            if (thread_get_state(o->mport, ARM_THREAD_STATE64, (thread_state_t)&st, &cnt) == KERN_SUCCESS) {
+                runtime_describe_address(arm_thread_state64_get_pc(st), a, sizeof a); runtime_describe_address(arm_thread_state64_get_lr(st), b, sizeof b); }
+            thread_resume(o->mport);
+        }
+        fprintf(stderr, " core %d%s: %#x (priority %d, mask %#llx, held %.1f ms, last svc %#x) at %s <- %s;", i, core_allowed(w, i) ? "" : " (not in mask)",
+                o->handle, o->prio, (unsigned long long)o->mask, (now - o->core_since) / 1e6, o->last_svc, a, b);
+    }
+    fprintf(stderr, "\n");
+}
 #endif
 static void core_take(thr_t *t) {   // holding G; waits until a core in t's mask is handed over
     if (!cores_enabled() || t->cur_core >= 0) return;
@@ -349,9 +383,17 @@ static void core_take(thr_t *t) {   // holding G; waits until a core in t's mask
     t->cwait_ns = 0;
 #else
     if (c >= 0) { t->cur_core = c; t->core_since = now_ns(); g_core_owner[c] = t; return; }
+    uint64_t w0 = now_ns();
     t->cseq = ++g_wseq; t->cnext = g_core_wait; g_core_wait = t;
     for (int i = 0; i < NCORE; i++) if (core_allowed(t, i) && g_core_owner[i] && g_core_owner[i]->prio > t->prio) g_core_owner[i]->preempt = 1;
-    while (t->cur_core < 0) pthread_cond_wait(&t->cv, &G);
+    int reported = 0;
+    while (t->cur_core < 0) {
+        if (reported || !core_diag_on()) { pthread_cond_wait(&t->cv, &G); continue; }
+        struct timespec again = {0, CORE_DIAG_NS};   // TOTK_CORE_DIAG: one look at the owners once a wait gets long
+        pthread_cond_timedwait_relative_np(&t->cv, &G, &again);
+        if (t->cur_core < 0 && now_ns() - w0 >= CORE_DIAG_NS) { core_wait_report_totk(t, w0); reported = 1; }
+    }
+    { uint64_t dw = now_ns() - w0; t->core_wait_ns += dw; t->core_nwait++; g_core_wait_all_ns += dw; g_core_wait_all_n++; }
 #endif
 }
 static thr_t *me_or_null(void) { return g_keythr ? pthread_getspecific(g_keythr) : NULL; }
@@ -535,6 +577,40 @@ uint32_t svc_thread_main_init(void) {
 
 static _Atomic uint64_t g_main_yield_n, g_main_yield_ns;   // 只有客体主线程写；诊断行在同一线程读 | Written only by the guest main thread; the diagnostic line reads it on the same thread
 void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = g_main_yield_n; *ns = g_main_yield_ns; }
+#ifndef GAME_BOTW
+#define CORE_TABLE_NS 10000000000ull
+static void core_table(void) {   // TOTK_CORE_DIAG: every CORE_TABLE_NS, from the presenting thread (not holding G)
+    static uint64_t last; uint64_t now = now_ns();
+    if (!core_diag_on() || (last && now - last < CORE_TABLE_NS)) return;
+    double span = last ? (now - last) / 1e6 : 0; last = now;
+    pthread_mutex_lock(&G);
+    fprintf(stderr, "[core-table] last %.0f ms; mask: bit 0-2 = virtual cores 0-2\n", span);
+    for (thr_t *t = g_all; t; t = t->all) {
+        uint64_t held = t->core_held_ns + (t->cur_core >= 0 && t->core_since ? now - t->core_since : 0);
+        uint64_t dh = held - t->core_held_prev, dw = t->core_wait_ns - t->core_wait_prev, dn = t->core_nwait - t->core_nwait_prev;
+        t->core_held_prev = held; t->core_wait_prev = t->core_wait_ns; t->core_nwait_prev = t->core_nwait;
+        /* CPU the host thread used: well below the time it held a core means it held the core while not running */
+        uint64_t cpu = 0; thread_basic_info_data_t bi; mach_msg_type_number_t cnt = THREAD_BASIC_INFO_COUNT;
+        if (t->mport && thread_info(t->mport, THREAD_BASIC_INFO, (thread_info_t)&bi, &cnt) == KERN_SUCCESS)
+            cpu = (uint64_t)(bi.user_time.seconds + bi.system_time.seconds) * 1000000000ull + (uint64_t)(bi.user_time.microseconds + bi.system_time.microseconds) * 1000ull;
+        uint64_t dc = cpu >= t->cpu_prev_ns ? cpu - t->cpu_prev_ns : 0; t->cpu_prev_ns = cpu;
+        if (span && dh < 50000000ull && dw < 5000000ull) continue;   // only threads that held 50 ms or waited 5 ms
+        fprintf(stderr, "[core-table]   thread %#x priority %d mask %#llx ideal %d: held %.0f ms (%.0f%%), cpu %.0f ms (%.0f%% of held), waited %.1f ms in %llu waits, last svc %#x%s\n",
+                t->handle, t->prio, (unsigned long long)t->mask, t->core, dh / 1e6, span ? 100.0 * (dh / 1e6) / span : 0, dc / 1e6,
+                dh ? 100.0 * dc / dh : 0, dw / 1e6, (unsigned long long)dn, t->last_svc, t->cur_core >= 0 ? " (on a core now)" : "");
+    }
+    pthread_mutex_unlock(&G);
+}
+#endif
+/* For the frame TSV (hle_nvn.c @core_wait_ms / @core_wait_all_ms / @core_waits): the calling thread's and all guest
+   threads' time waiting for a virtual core, and the number of waits. Called on the presenting thread once a frame. */
+void dm_core_wait_stats(uint64_t *self_ns, uint64_t *all_ns, uint64_t *all_n) {
+#ifndef GAME_BOTW
+    core_table();
+#endif
+    thr_t *me = me_or_null();
+    *self_ns = me ? me->core_wait_ns : 0; *all_ns = g_core_wait_all_ns; *all_n = g_core_wait_all_n;
+}
 uint32_t dm_guest_work_qos(unsigned *count) {
     uint32_t qos = QOS_CLASS_UNSPECIFIED; unsigned n = 0;
     pthread_mutex_lock(&G);

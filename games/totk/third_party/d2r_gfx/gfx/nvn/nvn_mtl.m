@@ -2113,9 +2113,7 @@ void mtl_finish(void) { mtl_present_flush(); mtl_finish_gpu(); }   // 队列语�
 static void present_drop_for_suspend(void);
 void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); cb_commit(cb); cb_wait(cb); mtl_finish_gpu(); }
 
-// ================= 渲染回放 =================
-// ================= Render replay =================
-#include "../../host/front.h"
+// ================= 渲染回放 ==========// ================= Render replay ==========#include "../../host/front.h"
 static int g_red_once[128];
 #define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("【红】" __VA_ARGS__); } while (0)
 
@@ -4730,9 +4728,7 @@ static int scissor_full(const tex_t *t, const view_t *v, int has_v) {
 }
 
 
-// ================= 着色器 / 描述符池 / 管线 / 绘制 =================
-// ================= Shaders / descriptor pool / pipelines / draws =================
-#include "nvn_registry_lock.h"
+// ================= 着色器 / 描述符池 / 管线 / 绘制 ==========// ================= Shaders / descriptor pool / pipelines / draws ==========#include "nvn_registry_lock.h"
 static os_unfair_lock g_rmu = OS_UNFAIR_LOCK_INIT;
 static _Thread_local unsigned g_rmu_depth;
 static inline int registry_lock(void) { return nvn_registry_enter(&g_rmu, &g_rmu_depth); }
@@ -7116,6 +7112,11 @@ static uint64_t g_pp_full, g_pp_reclaimed, g_pp_waits, g_pp_wait_ns, g_pp_scans,
    synchronous builds, so one 23 ms build pays for about ten scans that hand the rest of the submission to the
    background. TOTK_PSO_SCAN_ADAPT=0 turns it off. */
 static uint64_t g_pp_sync_frame, g_pp_sync_frame_ns;   // the frame of the synchronous builds below, and their time in it
+/* For the frame TSV (hle_nvn.c): the submit thread waiting for predicted libraries / pipelines, and its time in the
+   shader / pipeline prediction scans; with g_pp_sync, the pipelines it built itself. */
+void mtl_wait_stats(uint64_t *plib_ns, uint64_t *pso_ns) { *plib_ns = g_plib_wait_ns; *pso_ns = g_pp_wait_ns; }
+static uint64_t g_sp_ns;
+void mtl_scan_stats(uint64_t *shader_ns, uint64_t *pso_ns) { *shader_ns = g_sp_ns; *pso_ns = g_pp_scan_ns; }
 static void pso_predict_rest(void);
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
 // Called only with g_pp_mu held. An in-flight worker still owns its slot:
@@ -8863,7 +8864,7 @@ static void rt_sub(const p_set_rt *r, int k, uint64_t *ser, int *lv, int *sl);
    (g_prog_prefetch), and the other new variants are queued as usual. Those draws then wait in parallel. A scan that ends
    on its budget (TOTK_SHADER_PREDICT_SCAN commands, 8192; TOTK_SHADER_PREDICT_US, 2000) may run again from the next
    miss, up to 16 per submission. */
-static uint64_t g_sp_mark, g_sp_scans, g_sp_ns, g_sp_progs, g_sp_urgent, g_sp_queued; static int g_sp_n, g_sp_more;
+static uint64_t g_sp_mark, g_sp_scans, g_sp_progs, g_sp_urgent, g_sp_queued; static int g_sp_n, g_sp_more;
 static scan_budget g_sp_budget;
 static void shader_predict_rest(void) {
     static int enabled = -1, max_ops, max_us;
