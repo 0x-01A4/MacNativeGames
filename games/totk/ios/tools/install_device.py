@@ -13,7 +13,7 @@ one file that size); a later install skips it while the device holds the same im
 Xcode needs your Apple ID (Xcode > Settings > Accounts). The provisioning profile comes from a throwaway Xcode project
 built with the same bundle identifier and entitlements (-allowProvisioningUpdates registers the device and the App ID).
 """
-import argparse, hashlib, json, os, plistlib, re, shutil, subprocess, sys, tempfile, zipfile
+import argparse, time, hashlib, json, os, plistlib, re, shutil, subprocess, sys, tempfile, zipfile
 from datetime import timezone
 from pathlib import Path
 
@@ -120,6 +120,29 @@ def push_game_data(dev, bundle_id, image):
             print(f'  part {i + 1}/{parts}', flush=True)
         (Path(d)/'romfs.sha256').write_text(sha + '\n'); copy(Path(d)/'romfs.sha256', 'romfs.sha256')
 
+def push_seed(dev, bundle_id, seed):
+    """The startup shaders of an app built with --ios-game-data documents (<app>-shader-seed beside it) into their own
+    folder in Documents/GameData, then shader-seed.txt naming it (ios/Sources/main.m), so the next install skips them while
+    their content (fingerprint.txt, build_ipa.py) is the same. devicectl copies a folder only to a new path, hence a new
+    folder per copy; the app removes earlier ones."""
+    fp = (seed/'fingerprint.txt').read_text().strip()
+    with tempfile.TemporaryDirectory() as d:
+        got = Path(d)/'shader-seed.txt'
+        r = subprocess.run(['xcrun','devicectl','device','copy','from','--device',dev,'--domain-type','appDataContainer',
+                            '--domain-identifier',bundle_id,'--source','Documents/GameData/shader-seed.txt','--destination',got], capture_output=True)
+        lines = got.read_text().split('\n') if r.returncode == 0 and got.is_file() else []
+        if len(lines) >= 2 and lines[1].strip() == fp and lines[0] in device_files(dev, bundle_id, 'Documents/GameData'):
+            print('shaders: the device already has these'); return
+        folder = f'shader-seed-{fp[:12]}-{int(time.time())}'
+        n = sum(1 for _ in seed.iterdir())
+        print(f'shaders: copying {n} files (once per shader list; later installs keep them)')
+        def copy(local, name):
+            run(['xcrun','devicectl','device','copy','to','--device',dev,'--domain-type','appDataContainer','--domain-identifier',
+                 bundle_id,'--source',local,'--destination',f'Documents/GameData/{name}'], capture_output=True)
+        got.write_text('stale\n'); copy(got, 'shader-seed.txt')   # until the folder is complete
+        copy(seed, folder)
+        got.write_text(f'{folder}\n{fp}\n'); copy(got, 'shader-seed.txt')
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('ipa', type=Path, help='the unsigned IPA (or .app folder) from build_app.py --platform ios')
@@ -147,13 +170,8 @@ def main():
     # Unpack once per IPA; later runs only re-sign. 16 GiB of game data is signed in place.
     work = a.ipa.with_suffix('.signed'); stamp = work/'.ipa-mtime'
     app = work/'Payload/TOTK.app'
-    if a.ipa.is_dir():   # an unsigned .app (build_app.py -o X.app): cloned, nothing to unpack
-        print(f'cloning {a.ipa.name}')
-        shutil.rmtree(work, ignore_errors=True); app.parent.mkdir(parents=True)
-        import ctypes   # one APFS clone of the whole folder (~100,000 files), as build_app.py copy_tree
-        libc = ctypes.CDLL(None); libc.clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
-        if libc.clonefile(os.fsencode(a.ipa), os.fsencode(app), 0) and subprocess.run(['/bin/cp', '-cR', a.ipa, app]).returncode:
-            sys.exit(f'cannot copy {a.ipa}')
+    if a.ipa.is_dir():   # an unsigned .app (build_app.py -o X.app): signed where it is, a build's own output (no copy)
+        app = a.ipa.resolve(); work.mkdir(exist_ok=True)
     elif not stamp.is_file() or stamp.read_text() != str(a.ipa.stat().st_mtime_ns):
         print(f'unpacking {a.ipa.name}')
         shutil.rmtree(work, ignore_errors=True); work.mkdir()
@@ -171,6 +189,9 @@ def main():
     print('installing (a few minutes over the cable)')
     run(['xcrun','devicectl','device','install','app','--device',dev['identifier'],app])
     if a.game_data: push_game_data(dev['identifier'], bundle_id, a.game_data)
+    seed = a.ipa.with_name(a.ipa.stem + '-shader-seed')   # build_ipa.py --image-outside
+    if a.ipa.is_dir() and not (app/'GameData/shader-seed').is_dir() and (seed/'fingerprint.txt').is_file():
+        push_seed(dev['identifier'], bundle_id, seed)
     print('installed. First time on this device: Settings > General > VPN & Device Management > trust your Apple ID.')
 
 if __name__ == '__main__': main()

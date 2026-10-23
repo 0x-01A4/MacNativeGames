@@ -147,6 +147,27 @@ static void audio_observe(void) {
                                              : @"No game data. On the Mac, copy it to Files › On My iPhone › %@ › GameData with ios/tools/install_device.py --game-data."), app];
         fprintf(stderr, "[totk] no game image: %s\n", g_no_game_data.UTF8String);
     }
+    /* The startup shaders likewise (build_app.py --ios-game-data documents): install_device.py puts the seed into its own
+       folder in Documents/GameData once per content and writes shader-seed.txt last ("<folder>\n<fingerprint>"), so the app
+       carries none and a new build installs in seconds. Read in place like the app's own (totk_shader_seed.h); folders of
+       earlier seeds are removed in the background. Without either seed the game has no shaders: said on the screen. */
+    NSString *seedDir = [res stringByAppendingPathComponent:@"shader-seed"];
+    NSArray<NSString *> *seedMark = [[NSString stringWithContentsOfFile:[gameData stringByAppendingPathComponent:@"shader-seed.txt"] encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByString:@"\n"];
+    NSString *pushedName = seedMark.count >= 2 && seedMark[1].length == 64 && [seedMark[0] hasPrefix:@"shader-seed-"] && ![seedMark[0] containsString:@"/"] ? seedMark[0] : nil;
+    NSString *pushed = pushedName ? [gameData stringByAppendingPathComponent:pushedName] : nil;
+    if (pushed && [fm fileExistsAtPath:[pushed stringByAppendingPathComponent:@"seed-manifest.json"]]) {
+        seedDir = pushed; setenv("TOTK_SHADER_SEED_PUSHED", pushed.fileSystemRepresentation, 1);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+            NSFileManager *files = [NSFileManager new];
+            for (NSString *name in [files contentsOfDirectoryAtPath:gameData error:nil] ?: @[])
+                if ([name hasPrefix:@"shader-seed-"] && ![name isEqualToString:pushedName]) [files removeItemAtPath:[gameData stringByAppendingPathComponent:name] error:nil];
+        });
+    } else if (!g_no_game_data && ![fm fileExistsAtPath:[seedDir stringByAppendingPathComponent:@"seed-manifest.json"]]) {
+        BOOL zh = [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"];
+        g_no_game_data = zh ? @"没有着色器。请在 Mac 上用 ios/tools/install_device.py 重新安装（会把着色器复制到手机上）。"
+                            : @"No shaders. Install the game again from the Mac with ios/tools/install_device.py (it copies them to the device).";
+        fprintf(stderr, "[totk] no shader seed: %s\n", g_no_game_data.UTF8String);
+    }
     setenv("TOTK_OPERATION_MODE","handheld",1);
     // Game language: the Settings app (Settings.bundle › TOTK_LANG) stores the choice in our defaults; empty means the
     // system language, which is what the runtime already follows. iOS 27 does not honour Info.plist LSEnvironment, so
@@ -156,7 +177,7 @@ static void audio_observe(void) {
     setenv("TOTK_ROMFS_PATCHES",[res stringByAppendingPathComponent:@"romfs-patches"].fileSystemRepresentation,1);
     setenv("TOTK_ROMFS_PATCHES_OUT",[res stringByAppendingPathComponent:@"romfs-patches-out"].fileSystemRepresentation,1);
     setenv("TOTK_SHARED_FONTS",[res stringByAppendingPathComponent:@"shared-fonts"].fileSystemRepresentation,1);
-    setenv("TOTK_SHADER_SEED_DIR",[res stringByAppendingPathComponent:@"shader-seed"].fileSystemRepresentation,1);
+    setenv("TOTK_SHADER_SEED_DIR",seedDir.fileSystemRepresentation,1);
     /* One folder per translation chain, as on the Mac: the runtime refuses translations of another chain, and the seed
        import keeps files that are already there. Builds before the v5 chain (2026-10-20) kept them directly in
        shader-cache; those, and other chains' folders, are only cache and are removed in the background. */
@@ -178,8 +199,8 @@ static void audio_observe(void) {
     });
     // Shaders the shared list lacks (totk_shader_contrib.h), in the Files app for players who want to send them; only the Mac asks.
     setenv("TOTK_SHADER_CONTRIB",[docs stringByAppendingPathComponent:@"shader-list-contribution.txt"].fileSystemRepresentation,1);
-    setenv("DM_NVN_SHMAP",[res stringByAppendingPathComponent:@"shader-seed/shader_map.tsv"].fileSystemRepresentation,1);
-    setenv("DM_MSL_DIR",[res stringByAppendingPathComponent:@"shader-seed"].fileSystemRepresentation,1);
+    setenv("DM_NVN_SHMAP",[seedDir stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation,1);
+    setenv("DM_MSL_DIR",seedDir.fileSystemRepresentation,1);
     NSString *font = [res stringByAppendingPathComponent:@"font"]; setenv("TOTK_FONT_DIR",font.fileSystemRepresentation,1);
     // Same player environment as the Mac launcher (app/launcher.m); the bundle is read-only, so state goes to Documents.
     setenv("TOTK_PROFILE_DIR",[docs stringByAppendingPathComponent:@"save"].fileSystemRepresentation,1);
