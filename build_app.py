@@ -1193,13 +1193,55 @@ def app_seal_valid(app):
     return subprocess.run(['codesign', '--verify', '--strict', app], capture_output=True).returncode == 0
 
 
-def keep_game_data(new, old, *, verify=app_seal_valid):
+class _AppMoves:
+    """Keep rename inverses until publication finishes; do not discard the fresh data before then."""
+    def __init__(self):
+        self.done = []
+        self.discard = []
+        self.recovery_failed = False
+
+    def move(self, source, target):
+        source.rename(target)
+        self.done.append((source, target))
+
+    def restore(self, checkpoint=0):
+        while len(self.done) > checkpoint:
+            source, target = self.done[-1]
+            try:
+                if source.exists() or source.is_symlink():
+                    raise OSError(f'recovery destination already exists: {source}')
+                target.rename(source)
+            except OSError as error:
+                self.recovery_failed = True
+                raise BuildError(f'App update rollback could not restore {target} to {source}: {error}. '
+                                 'Files have been retained; recover them before rebuilding.') from error
+            self.done.pop()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        if kind is not None and not self.recovery_failed:
+            self.restore()
+        elif kind is None:
+            for path in self.discard:
+                try:
+                    remove_tree(path)
+                except OSError as cleanup_error:
+                    say(f'Could not remove temporary game data {path}: {cleanup_error}')
+        return False
+
+
+def keep_game_data(new, old, *, verify=app_seal_valid, _moves=None):
     """When the app being replaced carries the same signed game data as the new one (the same signature, which names the
     image's SHA-256, the same Info.plist and image size), move its data bundle into the new app in place of the fresh
     clone. The image keeps its inode and times, so the runtime's RomFS verification record (runtime/romfs.c, keyed by
     them) still matches and the first start after a packaging does not hash 16 GB again (19.5 s, 2026-10-21). An image
     changed since keeps nothing either: its modification time moved, so the runtime hashes it and refuses it. Called when
     the old app no longer runs, just before it is replaced; if the new app's seal does not verify, the clone goes back."""
+    if _moves is None:
+        with _AppMoves() as moves:
+            return keep_game_data(new, old, verify=verify, _moves=moves)
     image = 'Contents/Resources/romfs.bin'
     kept = False
     for bundle in sorted((new / 'Contents/Helpers').glob('GameData-*.bundle')):
@@ -1212,17 +1254,17 @@ def keep_game_data(new, old, *, verify=app_seal_valid):
         fresh = new.with_name(f'{new.name}.{bundle.name}.fresh')   # outside the app: anything extra in it fails the seal
         if fresh.exists():
             remove_tree(fresh)
-        bundle.rename(fresh)
+        checkpoint = len(_moves.done)
+        _moves.move(bundle, fresh)
         try:
-            before.rename(bundle)
+            _moves.move(before, bundle)
         except OSError:
-            fresh.rename(bundle)
+            _moves.restore(checkpoint)
             continue
         if not verify(new):
-            bundle.rename(before)
-            fresh.rename(bundle)
+            _moves.restore(checkpoint)
             continue
-        remove_tree(fresh)
+        _moves.discard.append(fresh)
         kept = True
     return kept
 
@@ -1246,26 +1288,27 @@ def install_app(new, out, *, verify=None, remove=None):
     name is not an app's, deleted in the background with any left by an earlier packaging. Returns whether the installed
     game data was kept."""
     verify, remove = verify or app_seal_valid, remove or remove_in_background
-    kept = out.exists() and keep_game_data(new, out, verify=verify)
-    if not kept and not verify(new):
-        raise BuildError(f'{new}: the new app\'s signature does not verify (codesign --verify --strict); the installed app is unchanged')
-    leftovers = sorted(out.parent.glob(f'{glob.escape(out.name)}.replaced-*'))
-    if out.exists():
-        # The .app folder itself stays: macOS keeps its first-run check of an app (Gatekeeper / XProtect read the whole
-        # bundle, 185-200 s for the 17 GB one) with the folder. A new folder with the same contents was scanned again,
-        # new Contents in the same folder were not (2026-10-22). Everything in it moves out, the new Contents move in.
-        old = out.with_name(f'{out.name}.replaced-{os.getpid()}')
-        if old.exists():
-            remove_tree(old)
-        old.mkdir()
-        for entry in list(out.iterdir()):
-            entry.rename(old / entry.name)
-        for entry in list(new.iterdir()):
-            entry.rename(out / entry.name)
-        new.rmdir()
-        leftovers.append(old)
-    else:
-        new.rename(out)
+    with _AppMoves() as moves:
+        kept = out.exists() and keep_game_data(new, out, verify=verify, _moves=moves)
+        if not kept and not verify(new):
+            raise BuildError(f'{new}: the new app\'s signature does not verify (codesign --verify --strict); the installed app is unchanged')
+        leftovers = sorted(out.parent.glob(f'{glob.escape(out.name)}.replaced-*'))
+        if out.exists():
+            # The .app folder itself stays: macOS keeps its first-run check of an app (Gatekeeper / XProtect read the whole
+            # bundle, 185-200 s for the 17 GB one) with the folder. A new folder with the same contents was scanned again,
+            # new Contents in the same folder were not (2026-10-22). Everything in it moves out, the new Contents move in.
+            old = out.with_name(f'{out.name}.replaced-{os.getpid()}')
+            if old.exists():
+                remove_tree(old)
+            old.mkdir()
+            for entry in list(out.iterdir()):
+                moves.move(entry, old / entry.name)
+            for entry in list(new.iterdir()):
+                moves.move(entry, out / entry.name)
+            new.rmdir()
+            leftovers.append(old)
+        else:
+            moves.move(new, out)
     for path in leftovers:
         remove(path)
     return kept
