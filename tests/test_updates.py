@@ -272,6 +272,8 @@ class Updates(unittest.TestCase):
                 signing.assert_called_once_with(out.with_name(out.name+'.partial'),self.root/'logs')
                 info=plistlib.loads((out/'Contents/Info.plist').read_bytes())
                 self.assertEqual(info['CFBundleShortVersionString'],display)
+                self.assertIn('zh-Hans',info['CFBundleLocalizations']);self.assertIn('zh-Hant',info['CFBundleLocalizations'])
+                self.assertEqual('pt-BR' in info['CFBundleLocalizations'],version=='v143')
                 res=out/'Contents/Resources/totk'
                 self.assertFalse((res/'build'/f'totk-native-{version}').exists())
                 self.assertTrue((res/'build/totk-native').exists())
