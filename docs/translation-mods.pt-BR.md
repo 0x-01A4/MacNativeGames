@@ -8,7 +8,8 @@ arquivos, num MacBook Air M1 (19/10/2026). Nada aqui distribui conteúdo do jogo
 
 Cada tradução é feita para uma versão do jogo, e o nome dos arquivos diz qual. Na RomFS, `Mals/<idioma>.Product.<n>.sarc.zs`
 guarda o texto e `System/Resource/ResourceSizeTable.Product.<n>.rsizetable.zs` a tabela de tamanhos: `100` é a 1.0.0, `121`
-é a 1.2.1 (a 1.2.1 mantém os arquivos de interface como `Common.Product.110` e `Title.Product.110`). Um mod da 1.2.1 num app
+é a 1.2.1 (a 1.2.1 mantém os arquivos de interface como `Common.Product.110` e `Title.Product.110`), e a 1.4.3 tem
+`Mals/*.Product.142`, a tabela `Product.143` e `Common.Product.140`. Um mod da 1.2.1 num app
 1.0.0 não muda o texto (a 1.0.0 lê `Product.100`), e as vozes junto com a tabela de outra versão podem não funcionar. Gere o
 app na versão do mod (`--update` com esse update) e coloque o mod em `mods/<essa versão>`, por exemplo `mods/v121`.
 
@@ -62,11 +63,13 @@ Um mod que mudou ele mesmo os membros do patch é recusado, e nada é gravado. S
 
 ## 5. Conferir
 
-O log (`~/Library/Logs/MacNativeGames/totk.log`) mostra o mod ao abrir:
+O log vem desligado: ligue com `defaults write org.macnativegames.totk TOTK_DEBUG_LOG -bool YES` e abra o jogo de novo. O
+log (`~/Library/Logs/MacNativeGames/totk.log`) então mostra o mod ao abrir:
 
 ```
 RomFS overlay: 1410 files from .../mods/v121 (1394 more not listed)
 RomFS overlay: .../mods/v121 checked, 1410 files, 144.5 MB hashed in 0.69 s
 ```
 
-Se a versão ou um hash não bater, o jogo para ao abrir e o log diz qual arquivo, então um mod errado nunca carrega pela metade.
+Se um hash não bater, o jogo para ao abrir e o log diz qual arquivo, então um mod alterado nunca carrega pela metade. Um mod
+de outra versão não para o jogo: os arquivos entram como arquivos novos que o jogo não lê, então ele simplesmente não tem efeito.

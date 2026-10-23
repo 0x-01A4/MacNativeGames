@@ -8,7 +8,8 @@ it took to run one on a Mac: a Brazilian Portuguese text and voice mod for 1.2.1
 
 A translation is made for one game version, and its file names say which. In the RomFS, `Mals/<language>.Product.<n>.sarc.zs`
 holds the text and `System/Resource/ResourceSizeTable.Product.<n>.rsizetable.zs` the size table: `100` is 1.0.0, `121` is
-1.2.1 (1.2.1 keeps its UI archives as `Common.Product.110` and `Title.Product.110`). A 1.2.1 mod in a 1.0.0 app changes no
+1.2.1 (1.2.1 keeps its UI archives as `Common.Product.110` and `Title.Product.110`), and 1.4.3 has `Mals/*.Product.142`, the
+size table `Product.143` and `Common.Product.140`. A 1.2.1 mod in a 1.0.0 app changes no
 text (the 1.0.0 game reads `Product.100`), and its voice files paired with another version's size table may not work. Build
 the app for the mod's version (`--update` with that update) and put the mod in `mods/<that version>`, for example
 `mods/v121`.
@@ -63,11 +64,14 @@ run `make_mod_manifest.py` again (the start says which file no longer matches).
 
 ## 5. Check
 
-The log (`~/Library/Logs/MacNativeGames/totk.log`) lists the mod at start:
+The log is off by default: turn it on with `defaults write org.macnativegames.totk TOTK_DEBUG_LOG -bool YES` and start the
+game again. The log (`~/Library/Logs/MacNativeGames/totk.log`) then lists the mod at start:
 
 ```
 RomFS overlay: 1410 files from .../mods/v121 (1394 more not listed)
 RomFS overlay: .../mods/v121 checked, 1410 files, 144.5 MB hashed in 0.69 s
 ```
 
-A version or hash mismatch stops the start with the file named in the log, so a wrong mod never loads half-way.
+A file whose hash does not match stops the start with the file named in the log, so a changed mod never loads half-way. A
+mod made for another version does not stop it: its files are listed as new files the game does not read, so it simply has
+no effect.

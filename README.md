@@ -144,11 +144,7 @@ You do not need to download separate 1.2.1 or 1.4.3 runtime tables or a shader c
 
 Allow about **40 GB free for a fresh update build**, or **19 GB extra** when the base data is already cached, with the app on the same APFS volume. The merge reads the base NCA through a bounded range of the original container, temporarily extracts the much smaller update NCA, and verifies every IVFC level. It fetches a pinned [hactool](https://github.com/SciresM/hactool) source and builds it with clang/make. Temporary ticket files are private and removed after the merge; key values are not passed on the command line or printed.
 
-If replacing a Mac app fails during signature verification or file moves, the build attempts to restore the installed
-contents and any reused game data before reporting the error. Successful updates still keep the installed app folder
-and the reused data file identities. If restoration itself fails, the error names the paths to recover; keep the
-`.partial`, `.fresh` and `.replaced-*` folders and recover them before rebuilding. This handles exceptions during the
-running build, not power loss or a forcibly terminated process. Saves in your Library folder are not moved by this step.
+If replacing a Mac app fails while it is signed or moved, the build puts the installed app and its reused game data back before it reports the error (if that fails too, the error names the folders to recover).
 
 Saves stay in the same profile folder. Before the first updated launch, the app makes a complete backup beside it, such as `profile-before-1.1.2`, `profile-before-1.2.1` or `profile-before-1.4.3`; failure stops startup. Keep this backup if you need to return to an older version—do not assume an updated save is backward compatible.
 
@@ -479,20 +475,7 @@ python3.14 games/totk/tools/install_desktop_entry.py --app "/路径/Tears of the
 
 1.2.1（10 月 19 日）通过了同样的改写验证（600 个反向对照全部抓到）和加载、RomFS、启动探针。在 M4 Mac 上读过 1.0.0 和 1.1.2 两种格式的存档，并通过移动 / 跳跃、菜单 / 地图 / 快捷菜单、手动存档后新进程读档、摔死重试和 3 键的三种画质；打包后的 App 也从启动器打开测试过。详见 [1.2.1 测试记录](docs/v1.2.1-port.md)；这不代表全流程或长局验收。
 
-### Mac App 更新失败恢复
-
-替换 Mac App 时，如果签名检查或文件移动抛出异常，构建程序会尝试恢复原 App 内容和复用的游戏数据，再报告错误。
-正常更新仍保留 App 目录及复用数据文件的身份。如果恢复操作也失败，错误会给出需要恢复的路径；请保留旁边的
-`.partial`、`.fresh` 和 `.replaced-*` 目录，完成恢复后再重新构建。此机制不保证断电或进程被强制终止后的自动恢复，
-也不会移动 Library 中的存档。
-
-开发者可使用合成文件验证这些异常路径，无需游戏文件：
-
-```sh
-python -m unittest discover -s tests -p test_app_game_data.py -v
-```
-
-
+替换 Mac App 时如果签名或移动文件出错，构建会先把原来的 App 和复用的游戏数据放回去再报错（放回也失败时，错误里写明要恢复的目录）。
 
 ### 构建带模组代码补丁
 
