@@ -248,7 +248,13 @@ NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) {
     if (o->mem && !(o->flags & NVN_MEMORY_POOL_FLAGS_GPU_NO_ACCESS)) { x_drain(); nvn_dirty_remove_range(o->mem); mtl_pool_del(o->mem); }
     totk_vpool_fini(o); o->magic = 0;
 }
-NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
+/* A mirrored render target has private Metal storage. Reconcile GPU writes at mapped-range cache maintenance too:
+   BotW flushes its grass masks before reading their pool bytes. The write-back helper keeps later CPU writes and
+   does nothing when the range has no pending rendering; ordinary shared-buffer CPU uploads remain coherent. */
+void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n);
+NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
+    if (off >= 0 && n) mtl_pool_invalidate((const pool_t *)p, (uint64_t)off, n);
+}
 NVN(nvnMemoryPoolGetFlags, NVNmemoryPoolFlags, const NVNmemoryPool *p){return (NVNmemoryPoolFlags)((const pool_t *)p)->flags;}
 NVN(nvnMemoryPoolMap, void *, const NVNmemoryPool *p){const pool_t *v=(const void *)p;
 #ifdef GAME_BOTW
