@@ -4797,7 +4797,10 @@ static void shmap_load(void) {
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> no_depth_fn;
     NSString *src, *src_path; NSDictionary<NSNumber *, NSString *> *io; NSMutableDictionary<NSString *, id<MTLFunction>> *vpatch; id<MTLFunction> mfx_fn[8]; uint8_t mfx_tried[8]; NSMutableDictionary<NSString *, id<MTLFunction>> *bpatch; int border_seen;
     /* the last border_key result of this shader (border_key) */
-    int bk_valid, bk_stage, bk_nsid, bk_n; uint64_t bk_gen; uint32_t bk_sid[NVN_REFL_MAXB]; NSString *bk_key; float bk_c[8][4]; int bk_a[8]; unsigned bk_x[8]; samp_par bk_p[8]; } @end   // TOTK: MSL source, user varyings (locn -> type), patched vertex functions   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
+    int bk_valid, bk_stage, bk_nsid, bk_n; uint64_t bk_gen; uint32_t bk_sid[NVN_REFL_MAXB]; NSString *bk_key; float bk_c[8][4]; int bk_a[8]; unsigned bk_x[8]; samp_par bk_p[8];
+    /* Ready-function reuse from PR #286; border-key identity is shared with PR #483. */
+    NSString *fb_key[2]; id<MTLFunction> fb_fn[2];
+    NvShader *vf_fs[4]; NSString *vf_bkey[4]; id<MTLFunction> vf_fn[4]; int vf_layered[4]; uint8_t vf_ok[4], vf_next; } @end   // TOTK: MSL source, user varyings (locn -> type), patched vertex functions   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 /* TOTK: a shader's MSL source is needed only to build derived functions (varying patches, layered vertex, depth-less and
    MetalFX UI fragment variants). The Mac keeps it; iOS keeps only the path and reads it when needed (thousands of sources
@@ -6615,7 +6618,12 @@ static id<MTLFunction> fs_fn_border(NvShader *fs, int nodepth, NSString **recipe
     NSString *key = border_key(fs, 1, b.c, b.a, b.x, b.p, &b.n);
     if (!key) return nil;
     if (recipe) *recipe = key;
-    return fs_fn_border_with(fs, nodepth, key, b, NULL);
+    int nd = nodepth && fs->writes_depth;   // the same key object means the same samplers as last time (border_key)
+    os_unfair_lock_lock(&g_bpatch_lock); id<MTLFunction> last = fs->fb_key[nd] == key ? fs->fb_fn[nd] : nil; os_unfair_lock_unlock(&g_bpatch_lock);
+    if (last) return last;
+    id<MTLFunction> fn = fs_fn_border_with(fs, nodepth, key, b, NULL);
+    if (fn) { os_unfair_lock_lock(&g_bpatch_lock); fs->fb_key[nd] = key; fs->fb_fn[nd] = fn; os_unfair_lock_unlock(&g_bpatch_lock); }   // nil: not compiled yet (or none), asked again next time
+    return fn;
 }
 /* The fragment function for a border key and its inputs (a draw's samplers, or a recipe); cache_key: its bpatch key. */
 static id<MTLFunction> fs_fn_border_with(NvShader *fs, int nodepth, NSString *bkey, border_in b, NSString **cache_key) {
@@ -6675,7 +6683,22 @@ static id<MTLFunction> vs_fn_for(NvShader *vs, NvShader *fs, int layered, int bo
     border_in b; b.n = 0;
     NSString *bkey = border && sh_has_src(vs) ? border_key(vs, 0, b.c, b.a, b.x, b.p, &b.n) : nil;
     if (recipe) *recipe = bkey;
-    return vs_fn_variant(vs, fs, layered, bkey, b, NULL);
+    /* The variant for (fs, layered, border key) is a function of those alone: the last four found are kept on the vertex
+       shader, holding the objects they were found with (a key object is the same only while the samplers are). */
+    id<MTLFunction> f = nil;
+    os_unfair_lock_lock(&g_vpatch_lock);
+    for (int i = 0; i < 4 && !f; i++)
+        if (vs->vf_ok[i] && vs->vf_fs[i] == fs && vs->vf_bkey[i] == bkey && vs->vf_layered[i] == layered) f = vs->vf_fn[i];
+    os_unfair_lock_unlock(&g_vpatch_lock);
+    if (f) return f;
+    f = vs_fn_variant(vs, fs, layered, bkey, b, NULL);
+    if (f) {   // nil: not compiled yet, asked again next time
+        os_unfair_lock_lock(&g_vpatch_lock);
+        int i = vs->vf_next++ & 3;
+        vs->vf_fs[i] = fs; vs->vf_bkey[i] = bkey; vs->vf_layered[i] = layered; vs->vf_fn[i] = f; vs->vf_ok[i] = 1;
+        os_unfair_lock_unlock(&g_vpatch_lock);
+    }
+    return f;
 }
 /* The same for a border key and its inputs (a draw's samplers, or a recipe); cache_key: its vpatch key (nil: vs->fn). */
 static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NSString *bkey, border_in b, NSString **cache_key) {
