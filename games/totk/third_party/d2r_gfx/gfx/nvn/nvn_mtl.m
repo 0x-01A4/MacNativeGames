@@ -7461,6 +7461,7 @@ static void warm_worker(NSArray<NSString *> *paths, NSArray<NSString *> *files,
         NSMutableSet<NSString *> *seen = [NSMutableSet set];
         NSUInteger path_index = 0;
         MLOG("后台预热：着色器库用 %d 个线程编（TOTK_WARM_THREADS），进世界后最多 2 个", warm_threads());
+        totk_rt_service_prestart();   // the first translation in play does not start the translator (totk_shader_rt.m)
         g_variant_bg = 1;   // patched variants pso_desc and warm_border compile here are no stall (variant_library)
         /* A pipeline the archive lacks (one met in play last time, from pso_user.tsv) goes into it as soon as this compiled
            it, so the next start takes it from there (par_add). Before, play-time pipelines waited for an idle moment in the

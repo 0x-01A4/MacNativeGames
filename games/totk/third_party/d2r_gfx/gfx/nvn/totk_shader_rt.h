@@ -24,6 +24,7 @@ NSArray<NSString *> *totk_rt_known_variants(NSString *shader);
 // may_defer 2: urgent, a draw further on cannot go without it: run now on the urgent services (a queued job of the shader too).
 NSString *totk_rt_variant(NSString *shader, int stage, const uint8_t *control, const uint8_t *code, NSDictionary *answers, NSArray *local, int may_defer);
 void totk_rt_urgent_stats(uint64_t *n, uint64_t *ns);   // urgent jobs done and their time from queued to recorded
+void totk_rt_service_prestart(void);   // start the submit thread's translator service in the background (Mac)
 // Called on the background worker after a translation, before the variant is recorded: compile its Metal library there.
 void totk_rt_set_ready_hook(void (*hook)(NSString *variant, int stage));
 // The variant totk_rt_variant would return when the cache index already names one; nil otherwise (never translates).
