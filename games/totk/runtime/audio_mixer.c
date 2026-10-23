@@ -482,8 +482,9 @@ static void voice_depop_prepare(AudioRenderer *r, ServerVoice *v) {
 }
 /* A voice that was stopped or paused but is released or reused before the next render frame (audio_renderer.c update_voice) still
    hands its tail to the depop, as the frame that sees the stop would. A voice freed while it is still started is cut. */
-void audio_mixer_voice_release(AudioRenderer *r, ServerVoice *v) {
-    Mixer *m = r->mixer; if (m && m->ramp && v->was_started && v->state != SV_STARTED) voice_depop_prepare(r, v);
+int audio_mixer_voice_release(AudioRenderer *r, ServerVoice *v) {
+    Mixer *m = r->mixer; if (!m || !m->ramp || !v->was_started || v->state == SV_STARTED) return 0;
+    voice_depop_prepare(r, v); return 1;
 }
 static void mix_depop(AudioRenderer *r, int mix) {
     Mixer *m = r->mixer; const float decay = r->param.sample_rate == 48000 ? 0.962189f : 0.943695f;
@@ -698,8 +699,8 @@ void audio_mixer_render(AudioRenderer *r, double seconds) {
         ServerVoice *v = &r->voices[i];
 #ifdef GAME_BOTW
         if (m->ramp && v->in.in_use) {
-            if (!v->ramp_ready) {   /* new voice: no ramp from an older volume */
-                v->prev_volume = v->in.volume; v->ramp_ready = 1;
+            if (!v->ramp_ready) {   /* new voice: no ramp from an older volume, unless it starts over a kept tail */
+                v->prev_volume = v->fade_in ? 0 : v->in.volume; v->ramp_ready = 1; v->fade_in = 0;   /* over a kept tail it ramps up from 0 */
                 for (unsigned c = 0; c < v->in.channel_count && c < 6; c++) { int32_t id = v->in.channel_ids[c]; if (id >= 0 && id < r->param.voice_count * 6) memcpy(m->prev_mix[id], r->channels[id].mix, sizeof m->prev_mix[id]); }
             }
             if (v->state != SV_STARTED) { if (v->was_started) { voice_depop_prepare(r, v); v->prev_volume = 0; } v->was_started = 0; continue; }
