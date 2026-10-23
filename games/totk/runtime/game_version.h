@@ -15,11 +15,29 @@
 #define GAME_FOLDER "BotW"   /* ~/Library/Application Support/MacNativeGames/<GAME_FOLDER> (app/launcher.m) */
 #define GAME_LOG "botw"      /* ~/Library/Logs/MacNativeGames/<GAME_LOG>.log */
 #define GAME_CONTRIB_TEMPLATE "shader-list-botw.yml"   /* the issue form for this game's shared shader list (totk_shader_contrib.h) */
+#define TOTK_CONTRIB_STEP 500   /* its seed has no default variant of every shader yet: every new variant is noted */
 #define GAME_CONTRIB_TITLE "Shader list (Breath of the Wild):"   /* the title prefix of an automatically submitted contribution */
 #define TOTK_GAME_DIR "botw160"
 #define GAME_ADDR_0xe995c4 0xe53f8c   /* return address of nnMain's only call to nn::oe::SetFocusHandlingMode */
 #define GAME_ADDR_0x2aa4fa0 0x2128690 /* nn::swkbd::ShowKeyboard: main's PLT stub */
 #define GAME_ADDR_0x453f648 0x2c7ef90 /* nn::swkbd::ShowKeyboard: main's GOT slot */
+#elif defined(GAME_BOTW190)
+/* Breath of the Wild 1.9.0 (docs/botw-v1.9.0-port.md): the same game code as 1.6.0 with the SDK 20.5 of a later build;
+   game_patches_botw.c holds its 1.9.0 sites (the #else branch of GAME_BOTW160). */
+#ifndef GAME_BOTW
+#define GAME_BOTW 1
+#endif
+#define TOTK_GAME_VERSION "1.9.0"
+#define GAME_NAME "Breath of the Wild"
+#define GAME_FOLDER "BotW"
+#define GAME_LOG "botw"
+#define GAME_CONTRIB_TEMPLATE "shader-list-botw.yml"
+#define TOTK_CONTRIB_STEP 500
+#define GAME_CONTRIB_TITLE "Shader list (Breath of the Wild):"
+#define TOTK_GAME_DIR "botw190"
+#define GAME_ADDR_0xe995c4 0xc617e8   /* return address of nnMain's only call to nn::oe::SetFocusHandlingMode */
+#define GAME_ADDR_0x2aa4fa0 0x15a01a0 /* nn::swkbd::ShowKeyboard: main's PLT stub */
+#define GAME_ADDR_0x453f648 0x1d78198 /* nn::swkbd::ShowKeyboard: main's GOT slot */
 #elif defined(TOTK_GAME_V143)
 #define TOTK_GAME_VERSION "1.4.3"
 #define TOTK_GAME_DIR "v143"
