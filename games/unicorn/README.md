@@ -4,9 +4,9 @@
 `010054B01AD92000` 的 **1.05（本体＋v262144 更新）与两个 DLC**，运行 `main` 和 `sdk`
 两个 ARM64 模块。数字美术集属于独立应用，没有加入；尚未验证完整流程。
 
-## 本机启动
+## 启动与存档
 
-双击 `/Users/yangjiawang/game/圣兽之王.app`。App 引用
+双击构建输出的 `圣兽之王.app`。App 引用
 `games/unicorn/UNICORN_build-1.05` 中的原生程序、重写模块和资源，请保留工作目录。
 每次启动的日志为 `UNICORN_build-1.05/boot.log`。
 旧版保留为 `圣兽之王 1.0.0.app`，仍使用 `UNICORN_build`。新版存档从旧版复制，之后各自独立。
@@ -22,17 +22,59 @@
 | Option / Shift | ZL / ZR |
 | 1 | 显示或隐藏性能与快捷键提示 |
 
-## 使用现有本机数据重新构建
+## 从原始文件构建
 
-需要 Apple silicon、macOS 26 SDK、Command Line Tools、Homebrew 的 `opus` 和 `libvpx`。
-Python 环境位于本机 `TOTK_build/venv`；游戏文件和生成文件均被 Git 忽略。
+仅支持上述亚洲版 1.05，当前构建必须同时提供两个 DLC。不是通用模拟器，也不支持其他地区、
+其他更新版本或赠品应用。游戏、更新、DLC 和密钥均由玩家自行提供，不随代码分发。
+需要 Apple silicon、macOS 26 或更新版本、Command Line Tools/macOS 26 SDK、Homebrew。
+首次构建会下载 Makefile 固定版本的 SPIRV-Cross；打包结果引用工作目录，移动仓库后应重新运行 `make app`。
+
+在仓库根目录安装依赖，再进入本游戏目录。下面的提取命令要求新的输出目录；重新验证时另选
+位于 `UNICORN_build-1.05/` 内的子目录，不要覆盖正在使用的工作目录或存档。
 
 ```sh
-cd /Users/yangjiawang/game/games/unicorn
-make prepare PY=/Users/yangjiawang/game/TOTK_build/venv/bin/python
-make -j8 runtime shader-tools app
+brew install opus libvpx python@3.14 llvm@23
+cd games/unicorn
+WORK="$PWD/UNICORN_build-1.05"
+python3.14 -m venv "$WORK/venv"
+PY="$WORK/venv/bin/python"
+"$PY" -m pip install -r requirements.txt
+
+BASE="/absolute/path/base.nsp"
+UPDATE="/absolute/path/update-1.05.nsp"
+DLC1="/absolute/path/dlc-010054B01AD93001.nsp"
+DLC2="/absolute/path/dlc-010054B01AD93002.nsp"
+KEYS="/absolute/path/prod.keys"
+export DM_ROOT="$WORK"
+export LLVM_BIN="$(brew --prefix llvm@23)/bin"
+
+"$PY" scripts/extract_exefs.py "$UPDATE" --update --keys "$KEYS" --output "$WORK/extracted/v262144/exefs"
+"$PY" scripts/merge_romfs.py "$BASE" "$UPDATE" --keys "$KEYS" --output "$WORK/extracted/v262144/romfs"
+"$PY" scripts/extract_addons.py "$DLC1" "$DLC2" --keys "$KEYS" --output "$WORK/extracted/v262144/aoc"
+mkdir -p "$WORK/rewritten/v262144"
+for MODULE in main sdk; do
+  "$PY" third_party/d2r/patch_nso.py "$WORK/extracted/v262144/exefs/$MODULE" "$WORK/rewritten/v262144" "$MODULE" || exit 1
+  "$PY" third_party/d2r/structck.py "$WORK/rewritten/v262144" "$MODULE" "$WORK/extracted/v262144/exefs/$MODULE" || exit 1
+done
+make prepare WORK="$WORK" PY="$PY"
+make -j4 runtime shader-tools app WORK="$WORK" APP="../../圣兽之王.app"
+shasum -a 256 Makefile requirements.txt scripts/*.py third_party/d2r/*.py assets/expected-v1.05.json > "$WORK/build-inputs.sha256"
 ```
 
+NSZ 先转换为 NSP，在上述四个输入变量中使用转换后的路径：
+
+```sh
+mkdir -p "$WORK/containers"
+"$WORK/venv/bin/nsz" -D --keys "$KEYS" -o "$WORK/containers" "/absolute/path/game-or-update-or-dlc.nsz"
+```
+
+本游戏提取器仍核验 NCA 文件系统/ExeFS 哈希和全部六层 RomFS IVFC；运行准备和加载阶段再核对固定产物哈希。
+脚本不验证任天堂 RSA 签名，不能将这些完整性检查称作来源认证。DLC 还固定了 NSP 包哈希，重新封装过的包可能不被接受。
+本机已验证的字体不是构建前提：本次游玩使用游戏自带字体。若游戏请求系统字体而工作目录中没有它们，运行层会明确报错；
+可在 `make prepare` 前用 `scripts/extract_shared_fonts.py --keys "$KEYS" --firmware /path/to/unpacked-firmware --output "$WORK/extracted/firmware/shared-fonts"`
+从自己的固件提取，不会下载字体。
+
+已准备好数据时，只需重新执行 `make prepare` 和 `make runtime shader-tools app`。
 `assets/expected-v1.05.json` 固定更新后的 ExeFS、重写模块、RomFS 和两个 DLC 的校验值。
 准备脚本拒绝不匹配的数据。首次构建 SPIRV-Cross 会使用 Makefile 固定的上游提交。
 
@@ -54,7 +96,7 @@ make -j8 runtime shader-tools app
 1.05 的验证记录位于 `UNICORN_build-1.05/logs/`：两个模块结构检查通过，
 新版 main 的 3264 个改写点无语义偏差，50 个注入错误全部被检出；源码测试共 256 项，1 项跳过，其余通过。
 实际启动已确认标题、键盘确认与中文开场剧情；游戏已查询并收到两个 DLC 编号。
-DLC 的后续纹章选择、完整战斗及存档重载尚未验证。
+本轮已实际看到教程交战的 WIN 画面；DLC 的后续纹章选择及保存后重启读档尚未验证。
 `probe-addons` 已验证镜像哈希、列表分页与输出边界；损坏或缺失 DLC 的负向检查也已通过。
 
 1.0.0 的重写校验记录保留在 `UNICORN_build/struct-main.log`、`struct-sdk.log`、
@@ -63,19 +105,22 @@ DLC 的后续纹章选择、完整战斗及存档重载尚未验证。
 `probe-gpu-address-final.log`，均在工作目录中。
 
 ```sh
-cd /Users/yangjiawang/game/games/unicorn/UNICORN_build-1.05
+cd games/unicorn/UNICORN_build-1.05
 ./build/unicorn-native rewritten/v262144 probe-addons
 ```
 
 旧版运行时回归命令：
 
 ```sh
-cd /Users/yangjiawang/game/games/unicorn/UNICORN_build
+cd games/unicorn/UNICORN_build
 ./build/unicorn-native rewritten/v0 probe-memory
 ./build/test-opus-multistream
 ./build/unicorn-native rewritten/v0 probe-gpu-address
 ```
 
 独立 GPU 探针与游戏共用单实例锁，运行探针前应先退出游戏。
-复制自上游的完整 `probe-gfx` 在管线预测探针处崩溃，未计为通过；其日志保留为
-`probe-gfx-final.log`。实际游戏启动与画面检查另行进行，不能用探针结果替代。
+旧 `probe-gfx-final.log` 记录了复制来的预测探针因缺少模拟 control 元数据而崩溃。
+本轮修复后，1.05 的 CPU `probe-gfx` 通过，24/26/27 负对照仍拒绝错误行为；
+这只验证对象和命令录制，不代表实际 GPU 画面或完整游戏通过。详见下面的验证记录。
+
+本轮补充验证和已知问题见 [VALIDATION.md](VALIDATION.md)，供审查的改动范围见 [PR.md](PR.md)。

@@ -60,7 +60,7 @@ boot: runtime shader-tools
 	cd "$(WORK)" && TOTK_GPU_ALLOW_SUBMIT=1 ./build/unicorn-native rewritten/v262144 boot > "$(abspath $(UNICORN_LOG))" 2>&1
 
 APP ?= ../../圣兽之王.app
-$(OUT)/launcher: app/launcher.m
+$(OUT)/launcher: app/launcher.m runtime/game_version.h
 	xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -fobjc-arc app/launcher.m -framework Cocoa -o "$@"
 
 .PHONY: app
@@ -70,3 +70,12 @@ app: runtime shader-tools $(OUT)/launcher
 	cp app/Info.plist "$(APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :UnicornWorkFolder $(abspath $(WORK))" "$(APP)/Contents/Info.plist"
 	codesign --force --sign - "$(APP)"
+
+$(OUT)/test-opus-multistream: tests/opus_multistream.c runtime/opus_multistream.c runtime/runtime.h
+	@mkdir -p "$(dir $@)"
+	xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -Iruntime -I/opt/homebrew/opt/opus/include/opus \
+	  tests/opus_multistream.c runtime/opus_multistream.c /opt/homebrew/opt/opus/lib/libopus.a -o "$@"
+
+.PHONY: test-opus
+test-opus: $(OUT)/test-opus-multistream
+	"$(OUT)/test-opus-multistream"

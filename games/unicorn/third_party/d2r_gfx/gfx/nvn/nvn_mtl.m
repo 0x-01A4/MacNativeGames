@@ -7754,7 +7754,10 @@ void dm_nvn_probe_prediction(void) {
     if(memcmp(&cache,&g_cond_cache[slot],sizeof cache)||g_draw_skip[14]!=unknown)MDIE("pipeline prediction evaluated a future conditional counter");
     // A speculative future program need not be resolved. Calling prog_get here
     // would try to translate its absent bytes (or compile real future shaders).
+    /* 分阶段绑定会先读取 control 的阶段编号；未翻译程序也必须具有有效的 NVN 元数据。 */
+    uint8_t control[0x718] = {0};
     prog_t future = {.nstage = 1, .serial = UINT64_MAX - 17};
+    future.sd[0].control = control;
     struct { op_hdr bind; p_bind_program program; op_hdr draw; p_draw args; op_hdr end; } cold = {
         {OP_BIND_PROGRAM, 8 + sizeof(p_bind_program)}, {&future, 3},
         {OP_DRAW, 8 + sizeof(p_draw)}, {0}, {OP_END, 8}
