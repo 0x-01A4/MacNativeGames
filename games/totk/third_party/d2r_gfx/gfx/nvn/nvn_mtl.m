@@ -4795,7 +4795,9 @@ static void shmap_load(void) {
     tex_slot_cache tex_slots;
     id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass;   // ab_pass：编这块参数的渲染通道序号——只在同一通道内复用（跨通道 / 跨提交的块所在 arena 可能已回收重写） | ab_pass: serial of the render pass that encoded this argument block - reused only within the same pass (the arena holding a block from another pass / another submission may already have been reclaimed and rewritten)
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> no_depth_fn;
-    NSString *src, *src_path; NSDictionary<NSNumber *, NSString *> *io; NSMutableDictionary<NSString *, id<MTLFunction>> *vpatch; id<MTLFunction> mfx_fn[8]; uint8_t mfx_tried[8]; NSMutableDictionary<NSString *, id<MTLFunction>> *bpatch; int border_seen; } @end   // TOTK: MSL source, user varyings (locn -> type), patched vertex functions   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
+    NSString *src, *src_path; NSDictionary<NSNumber *, NSString *> *io; NSMutableDictionary<NSString *, id<MTLFunction>> *vpatch; id<MTLFunction> mfx_fn[8]; uint8_t mfx_tried[8]; NSMutableDictionary<NSString *, id<MTLFunction>> *bpatch; int border_seen;
+    /* the last border_key result of this shader (border_key) */
+    int bk_valid, bk_stage, bk_nsid, bk_n; uint64_t bk_gen; uint32_t bk_sid[NVN_REFL_MAXB]; NSString *bk_key; float bk_c[8][4]; int bk_a[8]; unsigned bk_x[8]; samp_par bk_p[8]; } @end   // TOTK: MSL source, user varyings (locn -> type), patched vertex functions   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 /* TOTK: a shader's MSL source is needed only to build derived functions (varying patches, layered vertex, depth-less and
    MetalFX UI fragment variants). The Mac keeps it; iOS keeps only the path and reads it when needed (thousands of sources
@@ -6435,9 +6437,49 @@ static NSString *fs_src_without_depth(NvShader *fs);
 static int border_filtered(const samp_par *p) {   // MIN/MAX reduction is not affine in the colour: it keeps the plain test
     return !p->reduction && (p->magf || p->minf == 1 || p->minf == 3 || p->minf == 5 || p->aniso > 1);
 }
+/* border_key ran on every draw (pso_get, before the pipeline cache lookup) and formatted its key with
+   appendFormat / %a: about 15% of the submit thread's busy time in a fight (sample, 2026-10-23). Its result depends only
+   on the sampler ids the shader's sampler bindings hold and the sampler registry (g_reg_gen moves on every
+   registration), so the last result per shader is kept and returned while both are unchanged. TOTK_BORDER_KEY_CACHE=0
+   turns it off; TOTK_BORDER_KEY_CHECK=1 recomputes on every hit and stops if the cached key differs. */
+static int border_key_cache_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_BORDER_KEY_CACHE"); v = !(e && !strcmp(e, "0")); } return v; }
+static int border_key_check_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_BORDER_KEY_CHECK"); v = e && strcmp(e, "0"); } return v; }
+static uint64_t g_bk_hits, g_bk_misses;
+static NSString *border_key_compute(NvShader *sh, int stage, float colours[][4], int aids[], unsigned axes[], samp_par params[], int *n);
 static NSString *border_key(NvShader *sh, int stage, float colours[][4], int aids[], unsigned axes[], samp_par params[], int *n) {
     *n = 0;
     if (!atomic_load_explicit(&g_border_custom_any, memory_order_relaxed)) return nil;
+    if (!border_key_cache_on()) return border_key_compute(sh, stage, colours, aids, axes, params, n);
+    uint32_t sids[NVN_REFL_MAXB]; int ns = 0;
+    for (int i = 0; i < sh->rf.nb && ns < NVN_REFL_MAXB; i++) {   // the bound sampler id of every sampler binding, in order
+        const nvn_rbind *b = &sh->rf.b[i];
+        if ((b->kind != NVN_RB_SAMP && b->kind != NVN_RB_SAMPT) || b->reg >= 128) continue;
+        sids[ns++] = (uint32_t)((b->kind == NVN_RB_SAMPT ? S.tex[stage][b->reg] : S.samp[stage][b->reg]) >> 20);
+    }
+    uint64_t gen = atomic_load_explicit(&g_reg_gen, memory_order_acquire);
+    if (sh->bk_valid && sh->bk_stage == stage && sh->bk_gen == gen && sh->bk_nsid == ns && !memcmp(sh->bk_sid, sids, sizeof sids[0] * ns)) {
+        g_bk_hits++;
+        *n = sh->bk_n;
+        if (*n) { memcpy(colours, sh->bk_c, sizeof sh->bk_c[0] * *n); memcpy(aids, sh->bk_a, sizeof sh->bk_a[0] * *n);
+                  memcpy(axes, sh->bk_x, sizeof sh->bk_x[0] * *n); memcpy(params, sh->bk_p, sizeof sh->bk_p[0] * *n); }
+        if (border_key_check_on()) {
+            float c2[8][4]; int a2[8]; unsigned x2[8]; samp_par p2[8]; int n2 = 0;
+            NSString *k2 = border_key_compute(sh, stage, c2, a2, x2, p2, &n2);
+            if (n2 != *n || (k2 != sh->bk_key && ![k2 isEqualToString:sh->bk_key])) MDIE("border_key cache: kept %s, now %s", sh->bk_key.UTF8String ?: "nil", k2.UTF8String ?: "nil");
+        }
+        return sh->bk_key;
+    }
+    g_bk_misses++;
+    NSString *key = border_key_compute(sh, stage, colours, aids, axes, params, n);
+    sh->bk_valid = 1; sh->bk_stage = stage; sh->bk_gen = gen; sh->bk_nsid = ns; memcpy(sh->bk_sid, sids, sizeof sids[0] * ns);
+    sh->bk_key = [key copy]; sh->bk_n = *n;
+    if (*n) { memcpy(sh->bk_c, colours, sizeof sh->bk_c[0] * *n); memcpy(sh->bk_a, aids, sizeof sh->bk_a[0] * *n);
+              memcpy(sh->bk_x, axes, sizeof sh->bk_x[0] * *n); memcpy(sh->bk_p, params, sizeof sh->bk_p[0] * *n); }
+    if ((g_bk_hits + g_bk_misses) % 2000000 == 0) MLOG("border_key cache: %llu hits, %llu misses", (unsigned long long)g_bk_hits, (unsigned long long)g_bk_misses);
+    return key;
+}
+static NSString *border_key_compute(NvShader *sh, int stage, float colours[][4], int aids[], unsigned axes[], samp_par params[], int *n) {
+    *n = 0;
     NSMutableString *key = nil;
     registry_lock();
     for (int i = 0; i < sh->rf.nb && *n < 8; i++) {
