@@ -6,6 +6,7 @@
 // runtime; 2026-10-17), else scripts/shader_service.py with the .NET translator. Same requests, replies and cache files.
 #import <Foundation/Foundation.h>
 #include "totk_ui_lang.h"
+#include "dm_wait_stats.h"
 #include <TargetConditionals.h>
 #include "totk_shader_rt.h"
 #include "dmsh_chain.h"
@@ -556,9 +557,9 @@ NSString *totk_rt_variant(NSString *shader, int stage, const uint8_t *control, c
     NSString *found = variant_lookup(shader, answers);
     for (NSMutableArray *job; !found && !may_defer && (job = g_rt_pending[shader]); found = variant_lookup(shader, answers)) {
         if ([job[0] intValue] == RT_JOB_QUEUED) { job[0] = @(RT_JOB_TAKEN); [g_rt_pending removeObjectForKey:shader]; break; }
-        uint64_t w0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        uint64_t w0 = dm_wait_stats_enabled() ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
         pthread_cond_wait(&g_rt_done, &g_rt_lock);
-        atomic_fetch_add(&g_rt_wait_n, 1); atomic_fetch_add(&g_rt_wait_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - w0);
+        if (w0) { atomic_fetch_add(&g_rt_wait_n, 1); atomic_fetch_add(&g_rt_wait_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - w0); }
     }
     if (!found && may_defer == 2 && g_rt_pending[shader]) {   // urgent: a job of this shader still in line runs now
         NSMutableArray *job = g_rt_pending[shader];
@@ -572,9 +573,9 @@ NSString *totk_rt_variant(NSString *shader, int stage, const uint8_t *control, c
     BOOL existed = [NSFileManager.defaultManager fileExistsAtPath:[totk_rt_dir() stringByAppendingFormat:@"/%@_b.metal", rq[@"variant"]]];   // a re-translation of a broken variant is not a new one
     if (may_defer == 2) { urgent_translate(shader, rt_job_new(shader, stage, rq, existed, code_bytes)); pthread_mutex_unlock(&g_rt_lock); return nil; }
     if (may_defer) { bg_translate(shader, stage, rq, existed, code_bytes); pthread_mutex_unlock(&g_rt_lock); return nil; }
-    uint64_t s0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    uint64_t s0 = dm_wait_stats_enabled() ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
     variant_record(shader, rq, translate(&g_svc, rq, started), existed, started, 0);
-    atomic_fetch_add(&g_rt_sync_n, 1); atomic_fetch_add(&g_rt_sync_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - s0);
+    if (s0) { atomic_fetch_add(&g_rt_sync_n, 1); atomic_fetch_add(&g_rt_sync_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - s0); }
     pthread_mutex_unlock(&g_rt_lock);
     return rq[@"variant"];
 }
