@@ -269,13 +269,14 @@ int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -
 /* Key 5 (MetalFX temporal anti-aliasing, totk_taa.m): the compose draw that samples the linear HDR scene at fragment
    texture slot 0 before tone mapping. TOTK: 0ac9a549 (tone mapping and bloom). Breath of the Wild 1.9.0: f7ee6fe1 (two
    texel reads: the 1600x900 R11G11B10F scene at slot 0, the 320x180 bloom at slot 1; it writes the 1600x900 RGB10A2
-   picture that the upscale draw bd7ffdd4 then reads), found by those textures on the Kakariko route. 1.6.0's draw is not
-   known yet (no 1.6.0 run on record): there key 5 changes nothing (no draw is replaced, so no frame is jittered). */
+   picture that the upscale draw bd7ffdd4 then reads), found by those textures on the Kakariko route. 1.6.0: d14b1c38,
+   from the same archive (uking_pass_shader.sharcb), the same 1280 bytes of code and 99.4 % of its instruction words
+   equal to 1.9.0's (the nearest of all 1.6.0 fragment shaders; the next is 57 %); f7ee6fe1 is not in 1.6.0 (#178). */
 #ifdef GAME_BOTW
 #ifdef GAME_BOTW190
 #define TAA_COMPOSE(fs) !strncmp(fs->key, "f7ee6fe10b925543e905dfc9437ce67dc21a118d465b03bb3c9eccafdf2e33c4-", 65)
 #else
-#define TAA_COMPOSE(fs) 0
+#define TAA_COMPOSE(fs) !strncmp(fs->key, "d14b1c38f70d2ed8355a18183099d088e798b831f919c8be4d1f797a3cdc2689-", 65)
 #endif
 #else
 #define TAA_COMPOSE(fs) !strncmp(fs->key, "0ac9a54938974396", 16)
