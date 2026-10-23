@@ -45,5 +45,8 @@ void audio_mixer_effect_result(AudioRenderer *r, int id, void *output, unsigned 
 uint32_t audio_mixer_sink_written(AudioRenderer *r, int id);
 void audio_mixer_render(AudioRenderer *r, double seconds);   /* called with r->lock held, after audio_voices_prepare, before voices advance */
 void audio_voices_prepare(AudioRenderer *r);                 /* audio_renderer.c: each render frame's voice state changes (flush, stop, start) */
+#ifdef GAME_BOTW
+void audio_mixer_voice_release(AudioRenderer *r, ServerVoice *v);   /* queues the tail of a stopped or paused voice before audio_renderer.c resets it */
+#endif
 int audio_buffer_empty(const AudrenWaveBuffer *b);           /* no samples to decode: played as soon as it is reached */
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);

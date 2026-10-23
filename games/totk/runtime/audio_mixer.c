@@ -466,7 +466,9 @@ static void voice_ramp_mix(AudioRenderer *r, ServerVoice *v, float vs[6][MAX_FRA
         const AudrenChannelIn *ch = &r->channels[id]; float *prev = m->prev_mix[id];
         for (int b = 0; b < r->mixes[mix].buffer_count && b < 24; b++) {
             int buffer = m->offset[mix] + b;
-            if ((ch->mix[b] != 0 || prev[b] != 0) && buffer < m->nbuf) v->last[c][b] = ramp_mix(mixbuf(m, buffer), vs[c], prev[b], ch->mix[b], frames);
+            if (buffer >= m->nbuf) continue;
+            if (ch->mix[b] != 0 || prev[b] != 0) v->last[c][b] = ramp_mix(mixbuf(m, buffer), vs[c], prev[b], ch->mix[b], frames);
+            else v->last[c][b] = 0;   /* a muted channel added nothing, so a later pause has no tail to fade */
         }
         memcpy(prev, ch->mix, sizeof ch->mix);
     }
@@ -477,6 +479,11 @@ static void voice_depop_prepare(AudioRenderer *r, ServerVoice *v) {
         if (v->last[c][b] != 0 && mix_valid(r, mix) && b < r->mixes[mix].buffer_count && m->offset[mix] + b < m->nbuf) m->depop[m->offset[mix] + b] += v->last[c][b];
         v->last[c][b] = 0;
     }
+}
+/* A voice that was stopped or paused but is released or reused before the next render frame (audio_renderer.c update_voice) still
+   hands its tail to the depop, as the frame that sees the stop would. A voice freed while it is still started is cut. */
+void audio_mixer_voice_release(AudioRenderer *r, ServerVoice *v) {
+    Mixer *m = r->mixer; if (m && m->ramp && v->was_started && v->state != SV_STARTED) voice_depop_prepare(r, v);
 }
 static void mix_depop(AudioRenderer *r, int mix) {
     Mixer *m = r->mixer; const float decay = r->param.sample_rate == 48000 ? 0.962189f : 0.943695f;

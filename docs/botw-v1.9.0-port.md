@@ -304,9 +304,9 @@ Every file under `games/totk` that this port changes (`git diff --stat ab4c9d2 H
 | `runtime/account.c` | `nn::account::PopOpenUsers` gives the one local user | `#ifdef GAME_BOTW` |
 | `runtime/aoc_romfs.c` | default DLC folder `extracted/<TOTK_GAME_DIR>/aoc` instead of the fixed `extracted/botw160/aoc` | the file is inside `#ifdef GAME_BOTW` |
 | `runtime/audio_mixer.h` | two fields keep the voice-drop parameter; four more keep the ramp state (`prev_volume`, `ramp_ready`, `was_started`, `last`) | `#ifdef GAME_BOTW` |
-| `runtime/audio_mixer.c` | volume ramps and depop (`voice_ramp_mix`, `voice_depop_prepare`, `mix_depop`) | `#ifdef GAME_BOTW` |
+| `runtime/audio_mixer.c` | volume ramps and depop (`voice_ramp_mix`, `voice_depop_prepare`, `mix_depop`, `audio_mixer_voice_release`) | `#ifdef GAME_BOTW` |
 | `runtime/audio_ramp.h` | new header with the ramp arithmetic | included only under `GAME_BOTW` |
-| `runtime/audio_renderer.c` | `IAudioRenderer` commands 12 and 13 (Set/GetVoiceDropParameter); the ramp state is reset with the voice; `probe_ramp` in the audio probe | `#ifdef GAME_BOTW` |
+| `runtime/audio_renderer.c` | `IAudioRenderer` commands 12 and 13 (Set/GetVoiceDropParameter); the ramp state is reset with the voice, after the tail of a stopped voice is queued; `probe_ramp` and `probe_ramp_edge` in the audio probe | `#ifdef GAME_BOTW` |
 | `runtime/game_patches_botw.c` | The 1.9.0 real-time, UI-step, physics-substep, held-count, docked 1080p, movie-hold and ultrawide-camera sites. The 1.6.0 sites are unchanged. A `runtime_render_res` stub answers 0 for the shared `romfs.c` of `466330d`. Without it, no BOTW binary links | `#ifdef GAME_BOTW160` / `#else`. Only BOTW binaries compile this file |
 | `runtime/game_version.h` | the 1.9.0 version block | `#elif defined(GAME_BOTW190)`, before the TOTK blocks |
 | `runtime/loader.c` | the five-argument `nn::init::Start` of SDK 20.5; `module_finis` is compiled for 1.9.0 too | `#ifdef GAME_BOTW160` / `#elif defined(GAME_BOTW)`; `#ifndef GAME_BOTW` became `#ifndef GAME_BOTW160` |
@@ -389,6 +389,11 @@ stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `V
 - `make probe-audio-botw190` (needs game data): a 0.8 voice ducks and stops, no sample steps more than 0.04. Run on the
   packaged binary of this branch (origin/main `daf270e`): it passes, and with `TOTK_AUDIO_RAMP=0` it fails with "volume
   step or stop is not smoothed".
+- The same probe has three edge cases of the depop: a voice that is stopped and then released, or reused by a new voice,
+  before the next frame still fades from its last sample, and a voice whose channel was muted for a frame adds nothing
+  when it is paused afterwards (its last added sample is 0). Run on a build of origin/main `a988b5e` with this
+  branch's runtime: without the fix the release and reuse cases step 0.8 and the mute-then-pause case adds 0.0032; with
+  it the probe passes (and fails with `TOTK_AUDIO_RAMP=0`). A voice freed while it is still started is cut.
 - Game A/B on the old base `bedb076` (Kakariko save, 7 pause-menu and map cycles, the same inputs, 30 s capture): 4
   clicks (steps 0.15-0.20, about 12 times the local step) with the old mixer, 0 with the fix, 0 underruns in both.
 - Game run on origin/main `daf270e` (bog save, 290 s, menu and map cycles from 100 s, 30 s capture): 0 clicks with the fix
