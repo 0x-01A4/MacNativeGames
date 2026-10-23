@@ -450,16 +450,32 @@ static void patch_output_res(Module *m){
    output width over 1920, on both axes (measured: 2560x1440 asked on a 2560x1440 canvas rendered 3408x1920, 3440x1440 on
    the 3440x1440 canvas 6160x2576). The data page therefore holds the asked size divided by that factor, rewritten when
    key 3 changes the canvas, so the scene is the size asked for on every canvas. */
-static uint8_t *render_page;static unsigned render_w,render_h;
+static uint8_t *render_page;static unsigned render_w,render_h;static int render_canvas;
 static void render_res_publish(unsigned canvas_w){
     if(!render_page)return;
     float k=canvas_w>1920?canvas_w/1920.0f:1.0f,v[2]={render_w/k,render_h/k};
+    if(render_canvas){v[0]=1920;v[1]=1080;render_w=(unsigned)(1920*k);render_h=(unsigned)(1080*k);}   /* the game's scaling makes it the canvas */
     memcpy(render_page+16,v,sizeof v);
     fprintf(stderr,"[totk] 1.4.3 render resolution: %ux%u on a %u-wide canvas (game size %.0fx%.0f, scaled by %.4f)\n",render_w,render_h,canvas_w,v[0],v[1],k);
 }
+/* On by default on both (user 2026-10-23: "两边默认都打开"; before, only with TOTK_RENDER_RES, as PR #19 brought it):
+   - Mac: the scene is the canvas's size, 1920x1080 on the 1080p canvas (the docked mode's own is 1600x900) and 2560x1440
+     on the 2K one (key 3), only ever up (the Mac never lowers resolution). The heaps grow with it (romfs.c picks the
+     <canvas>-scene-<size> HeapDef overlay build_app.py makes; the application pool follows).
+   - iPhone / iPad: 960x540 under the 1280x720 canvas, MetalFX upscaling it (totk_mfx_up.m, on by default there): the
+     phone's GPU and memory are at their limit; the same choice as on the old port (2026-10-16, GPU 24.3 -> 17.3 ms).
+   TOTK_RENDER_RES=<w>x<h> sets a size, =0 the game's own (no patch on the Mac; 1280x720 on the phone). */
 static int render_res(unsigned *w,unsigned *h){
     const char *e=getenv("TOTK_RENDER_RES");
-    if(!e||!*e||!strcmp(e,"0"))return 0;
+    if(e&&!strcmp(e,"0"))return 0;
+    if(!e||!*e){
+#if TARGET_OS_IPHONE
+        *w=960;*h=540;
+#else
+        render_canvas=1;unsigned ow,oh;if(runtime_output_res(&ow,&oh)){*w=ow;*h=oh;}else{*w=1920;*h=1080;}   /* the largest scene, for the heaps */
+#endif
+        return 1;
+    }
     char rest;
     if(sscanf(e,"%ux%u%c",w,h,&rest)!=2||*w<64||*h<64||*w>4096||*h>4096)runtime_fail("TOTK_RENDER_RES must be <width>x<height>");
     return 1;
