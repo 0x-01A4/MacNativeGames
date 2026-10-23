@@ -27,7 +27,7 @@ signature, or signed again by a dump tool once all four code modules match, shar
      games/totk/tools/totk_xlate/publish_native.sh); startup shaders are extracted from your selected RomFS and
      translated into a bundled seed, ready for GPU warm-up even with an empty cache on the first launch
   4. the game binary and either a macOS app bundle or an unsigned iPhone/iPad IPA (large game data is cloned when possible);
-     for the Mac the startup shaders are then compiled once into this Mac's Metal cache (about 2 minutes on an M4), so the
+     for the Mac the startup shaders are then compiled once into this Mac's Metal cache (about 12 minutes for 1.4.3 on an M4 Max), so the
      first start does not compile them in the background (games/totk/tools/warm_metal_cache.m); with --mod
      --install-mod-romfs the player's mod folder for this version is replaced by the mod's RomFS files and its manifest
      (games/totk/scripts/mod_folder.py, games/totk/scripts/make_mod_manifest.py), so the build is playable with the mod as
@@ -1451,7 +1451,9 @@ def step_warm_metal(tree, out, logs):
         say(f"4/4 app: {who} has Metal's shader cache open, so the startup shaders are compiled on the first start instead "
             '(what this build compiled now would be lost when that program quits)')
         return
-    say("4/4 app: compiling the startup shaders for this Mac's GPU once (about 2 minutes on an M4, about 25 on an 8 GB M1; minutes saved on the first start)")
+    # about 46 a second on an M4 Max (#410: 1.4.3's 33,266 in 720 s); 8 GB Macs swap and take much longer
+    say(f"4/4 app: compiling the {len(sources):,} prepared shaders for this Mac's GPU once (about {max(1, round(len(sources) / 46 / 60))} "
+        "minutes on an M4 Max, much longer on an 8 GB Mac; saved on the first start)")
     t0 = time.time()
     try:
         clone(tree / 'build/warm-metal-cache', tool)
