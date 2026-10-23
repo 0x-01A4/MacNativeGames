@@ -6996,6 +6996,11 @@ static int g_pp_more, g_pp_rescans; static uint64_t g_pp_sync; static scan_budge
 // Statistics line (pso_predict_rest, every 100 scans): guesses refused because the table was full, stale guesses freed,
 // time draws waited for a background compile, scans and which budget ended them.
 static uint64_t g_pp_full, g_pp_reclaimed, g_pp_waits, g_pp_wait_ns, g_pp_scans, g_pp_scan_ns, g_pp_stop[3];
+/* For the frame TSV (hle_nvn.c): the submit thread waiting for predicted libraries / pipelines, and its time in the
+   shader / pipeline prediction scans; with g_pp_sync, the pipelines it built itself. */
+void mtl_wait_stats(uint64_t *plib_ns, uint64_t *pso_ns) { *plib_ns = g_plib_wait_ns; *pso_ns = g_pp_wait_ns; }
+static uint64_t g_sp_ns;
+void mtl_scan_stats(uint64_t *shader_ns, uint64_t *pso_ns) { *shader_ns = g_sp_ns; *pso_ns = g_pp_scan_ns; }
 static void pso_predict_rest(void);
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
 // Called only with g_pp_mu held. An in-flight worker still owns its slot:
@@ -8734,7 +8739,7 @@ static void rt_sub(const p_set_rt *r, int k, uint64_t *ser, int *lv, int *sl);
    (g_prog_prefetch), and the other new variants are queued as usual. Those draws then wait in parallel. A scan that ends
    on its budget (TOTK_SHADER_PREDICT_SCAN commands, 8192; TOTK_SHADER_PREDICT_US, 2000) may run again from the next
    miss, up to 16 per submission. */
-static uint64_t g_sp_mark, g_sp_scans, g_sp_ns, g_sp_progs, g_sp_urgent, g_sp_queued; static int g_sp_n, g_sp_more;
+static uint64_t g_sp_mark, g_sp_scans, g_sp_progs, g_sp_urgent, g_sp_queued; static int g_sp_n, g_sp_more;
 static scan_budget g_sp_budget;
 static void shader_predict_rest(void) {
     static int enabled = -1, max_ops, max_us;
