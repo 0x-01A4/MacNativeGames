@@ -10,14 +10,10 @@
 #include <math.h>
 #include "game_patches.h"
 #include "game_version.h"
-#ifdef GAME_BOTW190
 #include "aspect_math.h"   /* key 4: TOTK_ASPECT parsing */
-#endif
 uint32_t runtime_thread_current_handle(void);
-#ifdef GAME_BOTW190
 static void botw_aspect_install(Module *m);   /* key 4, end of the file */
 static void botw_aspect_apply(void);
-#endif
 
 /* Real-time frame step (TOTK_REALTIME=0: as shipped). ksys::VFR (singleton pointer main+0x2d1e170, built at main+0x183eb98)
    keeps one frame ratio at +0x3c: the frame's length in 30 fps frames. Every per-core step the game reads derives from it:
@@ -149,9 +145,7 @@ static void pad_tick_advance(void) {
     }
 }
 void runtime_frame_step_update(uint64_t now_ns) {
-#ifdef GAME_BOTW190
     botw_aspect_apply();   /* key 4 */
-#endif
     if (!frame_step_data || !now_ns) return;
     frame_step_measure(now_ns);
     if (pad_tick) pad_tick_advance();
@@ -491,9 +485,7 @@ void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
     runtime_survey_init(m);   /* TOTK_SURVEY=1: survey pos / move (world_survey.c) */
     patch_render_1080(m);
-#ifdef GAME_BOTW190
     botw_aspect_install(m);
-#endif
     if (realtime_enabled()) patch_realtime(m);
     else fprintf(stderr, "[botw] real-time frame step off (TOTK_REALTIME=0): the game advances by its present interval\n");
     { const char *a = getenv("TOTK_EXCL_ACQUIRE");
@@ -611,8 +603,8 @@ int botw_jq_hook(void *context) {   /* SIGTRAP from loader.c crash(): 1 = it was
 }
 #undef U32
 #undef U64
-int runtime_output_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }   /* no scene size above 1600x900 for the heaps (romfs.c) */
+int runtime_output_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 uint64_t runtime_output_size_current(void) { return 1920ull | (1080ull << 32); }   /* the canvas this game draws (frontend.m's shortcut text); no output-size patch yet */
 uint64_t runtime_output_res_extra_bytes(void) { return 0; }
 /* Pre-rendered movies (the memories, the intro): the movie player advances one movie frame per game frame, so above
@@ -651,69 +643,126 @@ int runtime_output_mode_cycle(void) {
     fprintf(stderr, "[botw] key 3: %s\n", next ? "MetalFX 2K" : "关闭 2K");
     return 1;
 }
-#ifdef GAME_BOTW190
 /* Key 4 (runtime/input.c): ultrawide on / off (TOTK_ASPECT, default 21:9; also 32:9, 3440x1440 or 2.39; TOTK_ASPECT set
    also starts with it on). The game keeps drawing into its 16:9 canvas with the main camera's aspect ratio set to the wider
    one, so the picture holds the wider view squeezed horizontally; the present stretches it over the window
    (nvn_mtl.m present_stretch) and the UI drawn after the scene is squeezed back to the middle 16:9 (uw_ui_squeeze).
-   The main camera's projection is a sead::PerspectiveProjection (vtable main+0x1d05380; aspect +0xb0, dirty +8) at +0x38
+   The main camera's projection is a sead::PerspectiveProjection (1.9.0: vtable main+0x1d05380; aspect +0xb0, dirty +8) at +0x38
    in a singleton made at main+0x10ed664 (pointer main+0x1e39d10: two views at +0x28 and +0x118, each with its projection
    at +0x10). The game sets that aspect once, when the singleton is made, and recomputes the matrix every frame from the
    fields (the near plane changes per frame), so the ratio is written into the field and the projection marked dirty: at
    the next present after the key, and at every present while it is on (a new setup would write 16:9 again). Off puts
    16:9 back. Only a 16:9 value is replaced (the constructor's 4:3 before the setup is left alone); a main camera of
-   another class stops the game. 1.9.0 Mac only. */
+   another class stops the game. Mac only.
+   1.6.0 (2026-10-23): the same singleton, made inline after the "Camera" heap at main+0x1838a6c..0x1838be4 (the same
+   0x208-byte object, views at +0x28 / +0x118, the projection vtable stored at +0x38 and +0x128, the 4:3 aspect at
+   +0xe8, the dirty halfword at +0x40), pointer main+0x2cc4da0, projection vtable main+0x2bb4d48. */
+#ifdef GAME_BOTW190
+#define UW_CAMERA_SINGLETON 0x1e39d10
+#define UW_PERSPECTIVE_VTABLE 0x1d05380
+#else
+#define UW_CAMERA_SINGLETON 0x2cc4da0
+#define UW_PERSPECTIVE_VTABLE 0x2bb4d48
+#endif
 static uint8_t *g_uw_main;
 static float g_uw_wide;
 static _Atomic(uint32_t) g_uw_on;
 static int g_uw_written;   /* the field holds the wide ratio this code wrote (present thread only) */
+static _Atomic int g_uw_effective;   /* the wide ratio stayed in the field from one present to the next: the picture is wide */
 static float aspect_requested(void) {   /* TOTK's parser (aspect_math.h); "display" is not taken here */
     double a = aspect_parse(getenv("TOTK_ASPECT"));
     if (a < 0) runtime_fail("TOTK_ASPECT must be <w>:<h>, <w>x<h> or a ratio between 0.5 and 8");
     return (float)a;
 }
+#ifdef GAME_BOTW160
+/* 1.6.0 writes the main projection's aspect every frame (2026-10-23: a write of ours was undone 600 times in 10 s, the
+   picture flickered between wide and 16:9): the camera's update main+0x15c2030 pushes the active camera into the
+   singleton's views and stores the layer rectangle's width / height at main+0x15c214c (str s0, [x19, #0xe8]; x19 the
+   singleton, +0xe8 = projection +0x38 + aspect +0xb0). The straight run main+0x15c2118..0x15c214c (no branch lands in it)
+   is rewritten so that store takes a float from the data page after the module (+0x20) when it is not 0.0, else the
+   game's own ratio as shipped: near / far copied with one ldp / stp, the three repeated dirty-byte stores before the
+   aspect folded into one, x9 / s1..s3 / flags free there. Key 4 then only sets that word (g_uw_word). 1.9.0 has the
+   same path (main+0x10edaf8) yet kept a written ratio; not looked into. */
+static _Atomic uint32_t *g_uw_word;
+static void botw_aspect_writer(Module *m) {
+    static const uint32_t original[14] = {0x39010277, 0xb9406ec8, 0xb900d268, 0x39010277, 0xb94072c8, 0xb900d668, 0x39010277,
+                                          0x2d4806a0, 0x2d470ea2, 0x39010277, 0x1e233821, 0x1e223800, 0x1e211800, 0xbd00ea60};
+    const uint32_t at = 0x15c2118;
+    for (int i = 0; i < 14; i++) {
+        uint32_t w; memcpy(&w, m->base + at + 4 * i, 4);
+        if (w != original[i]) { fprintf(stderr, "[botw] ultrawide main+%#x: found %08x expected %08x\n", at + 4 * i, w, original[i]); runtime_fail("ultrawide requires the 1.6.0 camera update"); }
+    }
+    uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
+    if (data_off + 0x4000 != m->size) runtime_fail("ultrawide: no data page after the main module");
+    const uint64_t page = (uintptr_t)m->base + data_off;
+    const uint32_t patched[14] = {
+        0x39010277,   /* strb w23, [x19, #0x40]       dirty */
+        0x294da6c8,   /* ldp w8, w9, [x22, #0x6c]     near, far */
+        0x291a2668,   /* stp w8, w9, [x19, #0xd0] */
+        0x2d4806a0,   /* ldp s0, s1, [x21, #0x40]     the layer rectangle */
+        0x2d470ea2,   /* ldp s2, s3, [x21, #0x38] */
+        0x1e233821,   /* fsub s1, s1, s3 */
+        0x1e223800,   /* fsub s0, s0, s2 */
+        0x1e211800,   /* fdiv s0, s0, s1              the game's ratio */
+        adrp_reg(8, (uintptr_t)m->base + at + 32, page),
+        0xbd402101,   /* ldr s1, [x8, #0x20]          ours, 0.0 = none */
+        0x1e202028,   /* fcmp s1, #0.0 */
+        0x1e201c20,   /* fcsel s0, s1, s0, ne */
+        0x39010277,   /* strb w23, [x19, #0x40]       dirty */
+        0xbd00ea60,   /* str s0, [x19, #0xe8]         the aspect */
+    };
+    memcpy(m->base + at, patched, sizeof patched);
+    g_uw_word = (_Atomic uint32_t *)(void *)(page + 0x20);
+}
+static void botw_aspect_word(int on) { float v = on ? g_uw_wide : 0.0f; uint32_t b; memcpy(&b, &v, 4); if (g_uw_word) atomic_store(g_uw_word, b); }
+#else
+static void botw_aspect_writer(Module *m) { (void)m; }
+static void botw_aspect_word(int on) { (void)on; }
+#endif
 static void botw_aspect_install(Module *m) {
     float start = aspect_requested();
     g_uw_wide = start ? start : (float)ASPECT_WIDE;
     g_uw_main = m->base; atomic_store(&g_uw_on, start != 0);
-    fprintf(stderr, "[botw] 1.9.0 ultrawide: key 4 switches 16:9 / %.4f (TOTK_ASPECT), starts %s\n", g_uw_wide, start ? "wide" : "at 16:9");
+    botw_aspect_writer(m); botw_aspect_word(start != 0);
+    fprintf(stderr, "[botw] ultrawide: key 4 switches 16:9 / %.4f (TOTK_ASPECT), starts %s\n", g_uw_wide, start ? "wide" : "at 16:9");
 }
 static void botw_aspect_apply(void) {
     if (!g_uw_main) return;
-    uint64_t s; memcpy(&s, g_uw_main + 0x1e39d10, 8);
-    if (!s) return;   /* the camera singleton is not made yet */
+    uint64_t s; memcpy(&s, g_uw_main + UW_CAMERA_SINGLETON, 8);
+    if (!s) { static int told; if (atomic_load(&g_uw_on) && !told++) fprintf(stderr, "[botw] ultrawide: the main camera is not made yet\n"); return; }   /* the camera singleton is not made yet */
     uint8_t *proj = (uint8_t *)(uintptr_t)(s + 0x38);
     uint64_t vt; memcpy(&vt, proj, 8);
-    if (vt != (uintptr_t)g_uw_main + 0x1d05380) runtime_fail("ultrawide: the main camera is not a sead::PerspectiveProjection in this game version");
+    if (vt != (uintptr_t)g_uw_main + UW_PERSPECTIVE_VTABLE) runtime_fail("ultrawide: the main camera is not a sead::PerspectiveProjection in this game version");
     float now; memcpy(&now, proj + 0xb0, 4);
     const float game = 16.0f / 9.0f;
     if (atomic_load(&g_uw_on)) {
-        if (now == g_uw_wide) return;
+        if (now == g_uw_wide) { atomic_store(&g_uw_effective, 1); return; }
         if (fabsf(now - game) > 1e-4f) {   /* not set up yet (the constructor's 4:3) or another ratio: left as it is */
             static float told; if (now != told) { told = now; fprintf(stderr, "[botw] ultrawide: main camera aspect %g, not 16:9: left as it is\n", now); }
             return;
         }
-        memcpy(proj + 0xb0, &g_uw_wide, 4); g_uw_written = 1;
+        atomic_store(&g_uw_effective, 0);
+        memcpy(proj + 0xb0, &g_uw_wide, 4);
+        static unsigned rewrites;   /* the game set 16:9 again after a write of ours: it sets the aspect each frame here */
+        if (!g_uw_written && !rewrites) fprintf(stderr, "[botw] ultrawide: main camera %p, aspect %g -> %g\n", (void *)proj, now, g_uw_wide);
+        else if (g_uw_written && (++rewrites == 1 || rewrites % 600 == 0)) fprintf(stderr, "[botw] ultrawide: the game set 16:9 again (%u times)\n", rewrites);
+        g_uw_written = 1;
     } else {
         if (!g_uw_written || now != g_uw_wide) return;   /* only the ratio this code wrote is put back */
-        memcpy(proj + 0xb0, &game, 4); g_uw_written = 0;
+        memcpy(proj + 0xb0, &game, 4); g_uw_written = 0; atomic_store(&g_uw_effective, 0);
     }
     proj[8] = 1;   /* dirty: the matrix is rebuilt from the fields */
 }
-float runtime_aspect_now(void) { return g_uw_main && atomic_load(&g_uw_on) ? g_uw_wide : 0; }
+/* The present stretches the canvas only while the camera really draws wide (g_uw_effective): a ratio the game puts back,
+   or a camera not made yet, leaves the picture 16:9 instead of stretching it (2026-10-23, 1.6.0 stretched). */
+float runtime_aspect_now(void) { return g_uw_main && atomic_load(&g_uw_on) && atomic_load(&g_uw_effective) ? g_uw_wide : 0; }
 int runtime_aspect_toggle(void) {
     if (!g_uw_main) return 0;
-    int on = !atomic_load(&g_uw_on); atomic_store(&g_uw_on, on);
+    int on = !atomic_load(&g_uw_on); atomic_store(&g_uw_on, on); botw_aspect_word(on);
     fprintf(stderr, "[botw] key 4: aspect ratio %s\n", on ? "wide" : "16:9 (the game's own)");
     return 1;
 }
-/* Upstream's key 4 (#120) cycles 16:9 -> fit to the window -> 21:9 for TOTK; on 1.9.0 key 4 switches 16:9 / wide only, so
+/* Upstream's key 4 (#120) cycles 16:9 -> fit to the window -> 21:9 for TOTK; here key 4 switches 16:9 / wide only, so
    the panel sees step 0 or 2 and the window size is not followed. */
 int runtime_aspect_step(void) { return g_uw_main ? (atomic_load(&g_uw_on) ? 2 : 0) : -1; }
 void runtime_aspect_view(double w, double h) { (void)w; (void)h; }
-#else
-float runtime_aspect_now(void) { return 0; }
-int runtime_aspect_toggle(void) { return 0; }
-void runtime_aspect_view(double w, double h) { (void)w; (void)h; }
-int runtime_aspect_step(void) { return -1; }
-#endif
