@@ -44,7 +44,9 @@ vpx_env=dict(os.environ,PATH=str(bindir)+os.pathsep+os.environ.get('PATH',''))
 run([str(vpx/'configure'),'--target=arm64-darwin-gcc','--disable-examples','--disable-tools',
      '--disable-docs','--disable-unit-tests','--disable-webm-io','--enable-pic','--disable-shared','--enable-static',
      f'--extra-cflags=-target arm64-apple-ios26.0 -isysroot {sdklink} -miphoneos-version-min=26.0'], cwd=vpxout, env=vpx_env)
-run(['make','-j',str(os.cpu_count() or 4),'libvpx.a'],cwd=vpxout,env=vpx_env)
+# make takes the environment as its variables, and a DEVELOPER_DIR with a space ("/Volumes/x/Tears of the Kingdom /Xcode.app")
+# ends up in a shell command unquoted (127, 2026-10-23); the tools are the links in ios-bin, so make does not need it.
+run(['make','-j',str(os.cpu_count() or 4),'libvpx.a'],cwd=vpxout,env={k:v for k,v in vpx_env.items() if k!='DEVELOPER_DIR'})
 lib=out/'lib'; include=out/'include'; lib.mkdir(exist_ok=True); include.mkdir(exist_ok=True)
 import shutil
 shutil.copy2(opus_build/'libopus.a',lib/'libopus.a')
