@@ -74,6 +74,10 @@ HACTOOL = ('https://github.com/SciresM/hactool.git', '1d64a83450e025622f3468c28f
 APP_NAME = 'Tears of the Kingdom'
 IOS_APP_NAME = 'TOTK'   # the iPhone / iPad home screen name: "Tears of the Kingdom" was cut to "Tears of the…" (user 2026-10-22)
 BUNDLE_ID = 'org.macnativegames.totk'
+# The languages the runtime gives the game (games/totk/runtime/services.c desired_language), as Info.plist
+# CFBundleLocalizations: macOS offers a per-app language in System Settings only for an app that lists them.
+# pt-BR only where the RomFS has the official USpt text (the 1.4.3 build, Breath of the Wild 1.9.0).
+GAME_LANGUAGES = ('en', 'ja', 'fr', 'de', 'es', 'it', 'nl', 'ru', 'ko', 'zh-Hans', 'zh-Hant')
 LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 # Pinned upstream sources fetched at build time (repository, commit)
 SPIRV_CROSS = ('https://github.com/KhronosGroup/SPIRV-Cross.git', 'aa217aeb6c9f0ace7a0ab233b28807edf45eb165')
@@ -1318,7 +1322,8 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
                 CFBundleDisplayName=app_name, CFBundlePackageType='APPL', CFBundleShortVersionString=expected['display_version'],
                 CFBundleVersion=str(expected['version'] + 1), LSMinimumSystemVersion='26.0', NSHighResolutionCapable=True,
                 LSApplicationCategoryType='public.app-category.action-games', LSSupportsGameMode=True,
-                GCSupportsControllerUserInteraction=True)
+                GCSupportsControllerUserInteraction=True,
+                CFBundleLocalizations=list(GAME_LANGUAGES) + (['pt-BR'] if version in ('v143', 'botw190') else []))
     icon = tree / 'build/AppIcon.icns'
     if icon.exists():
         clone(icon, tmp / 'Contents/Resources/AppIcon.icns')
