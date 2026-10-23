@@ -230,4 +230,3 @@ void fps_overlay_note(uint64_t ticket, double now_s) { rate_note(&g_game, ticket
 int fps_overlay_value(void) { return atomic_load(&g_game.value); }
 void fps_overlay_note_gen(uint64_t n, double now_s) { rate_note(&g_gen, n, now_s); }
 int fps_overlay_gen_value(void) { return atomic_load(&g_gen.value); }
-

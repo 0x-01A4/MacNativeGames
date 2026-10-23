@@ -121,4 +121,3 @@ _runtime_gate:
     mov sp, x16
     ldp x16, x17, [sp], #16
     ret
-

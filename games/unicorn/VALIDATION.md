@@ -2,7 +2,7 @@
 
 环境：Apple M5、16 GiB、macOS 26.4。仅验证 macOS ARM64；没有构建或测试 iOS。
 版本：亚洲版 `010054B01AD92000`，1.05 / v262144；DLC `010054B01AD93001`、`010054B01AD93002`。
-本轮工作在 `codex/unicorn-pr-readiness`，基于上游 `a988b5e`；尚未创建或推送 PR。
+本轮验证分支为 `codex/unicorn-pr-readiness`，基于上游 `a988b5e`；提交形式为 Draft，尚未请求合并。
 
 ## 2026-10-23：干净构建与回归
 
@@ -84,3 +84,15 @@ GPU 工作 p50 从开启时约 3–4 ms 增至约 8–9 ms，说明关闭保活�
 此次增加 `gameplay-resumed.log`、`save-before-restart.json`、`load-new-process.log`、
 `controlled-phases.json`、`controlled-{a1-on,b-off,a2-on}.{jsonl,log,txt}` 和 `thermal-gameplay-resumed.jsonl`。
 旧版 1.0.0 的记录仍保留，但当前源码固定为 1.05，不能把旧二进制留存称作当前源码支持两版。
+
+## Draft 前清理回归
+
+移除 BY3 1.2.0 的补丁生成、分辨率生成脚本及 `BY3_PATCHES` 装载入口；
+保留图形层实际调用的关闭状态接口。符号化工具与系统字体错误提示改为当前 1.05 工作目录。
+README 将旧版验证移到历史说明，并统一当前 303 项源码测试结果。
+
+清理后的 `make runtime shader-tools app test-opus` 通过；重新编译运行层后，
+`probe-memory`、CPU `probe-gfx`、`probe-addons` 均退出 0，App 严格签名检查通过。
+根目录测试重新运行 303 项，跳过 1 项，其余通过。该次清理没有重新进行游戏战斗测试；
+上文游玩与跨进程存档结果来自清理前版本，默认启动原本不执行任何 BY3 补丁。
+日志为 `pr-cleanup-build.log`、`pr-cleanup-source-tests.log` 和 `pr-cleanup-probe-*.log`。
