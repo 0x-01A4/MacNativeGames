@@ -2,7 +2,7 @@
 
 # English
 
-**Breath of the Wild 1.6.0 and 1.9.0 are now officially supported on Mac!** (Mac only for now: no iPhone or iPad build yet.)
+**Breath of the Wild 1.6.0 and 1.9.0 are now officially supported on Mac!** 1.6.0 also runs on the iPhone (first played on an iPhone 14, October 23).
 **Tears of the Kingdom 1.0.0, 1.2.1 and 1.4.3 are now officially supported on Mac, iPhone and iPad!**
 
 > **Use your AI assistant to help you build the Mac app. We recommend Claude Code, Codex, or any other AI assistant you prefer.**
@@ -34,6 +34,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 23 | iPhone | **Breath of the Wild 1.6.0** on the iPhone: full screen, add-on content, saves copied from the Mac; both games render at 960x540 on the phone and use their own upscale to 1280x720 (no MetalFX) |
 | Oct 23 | Mac | **Super Mario Odyssey 1.3.0** (community port, early): Cap Kingdom and Bonneton playable at 60 fps on an M3, own runtime in [`games/odyssey`](games/odyssey/README.md), which has the build steps |
 | Oct 23 | iPhone, iPad | **Tears of the Kingdom** fills the screen, 60 fps by default, MetalFX upscaling |
 | Oct 23 | Mac | **Breath of the Wild 1.6.0**: key 2 interpolates again, and Link no longer shakes at 30+30; key 3 switches to native 2K; key 4 (21:9 ultrawide) and key 5 (edge smoothing) now work; every shader is prepared at build time, so far fewer translate in play |
@@ -218,13 +219,13 @@ python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Gam
 
 Both versions use the work folder `BotW_build` next to the game file and make `Breath of the Wild.app` (bundle `org.macnativegames.botw`), with its own data folder `~/Library/Application Support/MacNativeGames/BotW` and log `~/Library/Logs/MacNativeGames/botw.log`. Every step is checked against `games/botw/assets/expected-v1.6.0.json` or `expected-v1.9.0.json`; a fresh 1.6.0 build takes about 16 minutes on an M4 (the 15 GB RomFS merge is most of it).
 
-What works on 1.6.0 (October 20, an M4 Mac, a Great Plateau save): title, the add-on content list, loading and saving, the plateau at about 90–120 fps (the game advances by real time; held-button repeats count by real time too), the two DLC packs mounted and read, key 1 (overlays), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited, every game frame interpolated on the plateau) and key 3 (MetalFX 2K on / off: MetalFX replaces the game's own upscale of the 1600x900 picture into the 1080p canvas and the window output above 1080p); a 30-minute session on the plateau at about 95 fps with memory steady (+170 MB). Since October 23 (Mac): key 2 works again (its scene detection had kept a shader key from before an October 20 change and found no frame, #177) and gives what moves with the camera, such as Link, no camera motion, so he no longer shakes at 30+30; key 3's MetalFX again replaces the game's own upscale; key 4 switches 21:9 as on 1.9.0 (1.6.0's camera writes 16:9 every frame, so the game's own write is changed); key 5 smooths edges (#178). Key 3 now cycles off → MetalFX 2K → native 2K → off as on Tears of the Kingdom 1.4.3 (native 2K renders the scene and the canvas at 2560x1440; the app starts with a 2560x1440 swapchain and bigger heaps, `TOTK_OUTPUT_RES=0` keeps the shipped 1080p only). Not yet: iPhone / iPad, the DLC quests themselves (only verified as mounted and read). This is an early port: expect rough edges.
+What works on 1.6.0 (October 20, an M4 Mac, a Great Plateau save): title, the add-on content list, loading and saving, the plateau at about 90–120 fps (the game advances by real time; held-button repeats count by real time too), the two DLC packs mounted and read, key 1 (overlays), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited, every game frame interpolated on the plateau) and key 3 (MetalFX 2K on / off: MetalFX replaces the game's own upscale of the 1600x900 picture into the 1080p canvas and the window output above 1080p); a 30-minute session on the plateau at about 95 fps with memory steady (+170 MB). Since October 23 (Mac): key 2 works again (its scene detection had kept a shader key from before an October 20 change and found no frame, #177) and gives what moves with the camera, such as Link, no camera motion, so he no longer shakes at 30+30; key 3's MetalFX again replaces the game's own upscale; key 4 switches 21:9 as on 1.9.0 (1.6.0's camera writes 16:9 every frame, so the game's own write is changed); key 5 smooths edges (#178). Key 3 now cycles off → MetalFX 2K → native 2K → off as on Tears of the Kingdom 1.4.3 (native 2K renders the scene and the canvas at 2560x1440; the app starts with a 2560x1440 swapchain and bigger heaps, `TOTK_OUTPUT_RES=0` keeps the shipped 1080p only). Not yet: the DLC quests themselves (only verified as mounted and read). This is an early port: expect rough edges.
 
 What works on 1.9.0 (October 20, an M1 Pro Mac with its built-in 120 Hz display, both DLC packs): title, loading saves, autosaves, six places from the Shrine of Resurrection to the Hyrule Castle exit at 58.4–77.5 fps standing still and 58.6–81.4 fps walking with a warm shader cache, a 25-minute run in Korok Forest with Link moving, the game advancing by real time at any frame rate (held-button counts too), the two DLC packs (the Kakariko route starts the DLC quest "EX Treasure: Garb of Winds"), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited; on the Great Plateau, standing still, the game ran at 69, 30, 58 and 61 fps and the screen showed about 67, 60, 115 and 115 pictures a second) and key 3 (MetalFX replaces the game's own upscale). Since October 21, 1.9.0 also has 1.6.0's fixes above 30 fps (menus and the HUD at normal speed, six physics steps a frame, movies held at 30 fps), renders docked play at native 1080p, and has key 5 (MetalFX temporal anti-aliasing: smoother edges, about 9 fps less on the plateau at 1600x900, 67.7 to 58.6). Key 4 switches a 21:9 ultrawide view on 1.9.0 (Mac: the camera sees more at the sides and the picture fills a wider window; `TOTK_ASPECT=32:9` or `3440x1440` picks another shape and starts with it on; the HUD and menus keep their shape in the middle 16:9, the map with black bars at the sides; markers that follow objects in the world are not moved out yet). Both versions now run uncapped on a 120 Hz display too, up to 120 fps (measured on 1.9.0); before, the game's present interval held them at 60 fps there. Walking into a place for the first time stutters while new pipelines compile. Not yet: native 2K, iPhone / iPad, and a fix for Link's legs, which sink into the stone path after a save at one Great Plateau spot loads (the old autosave and a new save made there). See [the 1.9.0 test record](docs/botw-v1.9.0-port.md).
 
 ### iPhone and iPad
 
-Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild has no iPhone/iPad build yet: `--platform ios` stops with an error for both versions.
+Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild 1.6.0 has been played on the iPhone 14 (title, loading a save, walking around; October 23): build it with `--platform ios --ios-game-data documents` and install it with `games/totk/ios/tools/install_device.py` like Tears of the Kingdom. It fills the screen and renders at 960x540 with the game's own upscale to 1280x720, as Tears of the Kingdom does on the phone. Not yet: the 1.9.0 phone render size, a 30 fps lock on the phone.
 
 - **First launch:** the app checks the game data (about 15 seconds) and imports the shaders it carries, with a progress bar. On an iPhone 14 this takes about 3 minutes before the title appears. Later launches show the title in about 8 seconds.
 - **Picture:** the game runs in handheld mode, as a Switch does without its dock: 1280×720.
@@ -318,7 +319,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 # 中文说明
 
-**正式支持旷野之息 1.6.0 和 1.9.0 mac了！**（目前只有 Mac 版，还不能打包 iPhone / iPad 版。）
+**正式支持旷野之息 1.6.0 和 1.9.0 mac了！** 1.6.0 也能在 iPhone 上玩了（10 月 23 日在 iPhone 14 上首次实玩）。
 **正式支持王国之泪 1.0.0,1.2.1，1.4.3 Mac iPhone iPad了！**
 
 > **请使用你的 AI 助理帮你完成 Mac App 的构建。推荐 Claude Code、Codex，或其他你喜欢的 AI 助理。**
@@ -350,6 +351,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 23 日 | iPhone | **旷野之息 1.6.0** 上 iPhone：铺满屏幕、带 DLC、可拷入 Mac 的存档；两款游戏在手机上都是内部 960×540，用游戏自己的放大到 1280×720（不用 MetalFX） |
 | 10 月 23 日 | Mac | **超级马力欧 奥德赛 1.3.0**（社区移植，早期）：帽子王国和 Bonneton 在 M3 上 60 帧可玩，运行时独立放在 [`games/odyssey`](games/odyssey/README.md)，构建步骤见那里 |
 | 10 月 23 日 | iPhone、iPad | **王国之泪** 铺满屏幕 默认锁 60、MetalFX放大|
 | 10 月 23 日 | Mac | **旷野之息 1.6.0**：2 键补帧恢复，30+30 下林克不再抖；3 键可以切到原生 2K；4 键（21:9 宽屏）和 5 键（边缘平滑）可以用了；打包时准备好全部着色器，游玩中当场翻译的少了很多 |
@@ -514,13 +516,13 @@ python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Gam
 
 两个版本的工作目录都是游戏文件旁边的 `BotW_build`，App 都是 `Breath of the Wild.app`（`org.macnativegames.botw`），数据目录 `~/Library/Application Support/MacNativeGames/BotW`，日志 `~/Library/Logs/MacNativeGames/botw.log`。每一步对 `games/botw/assets/expected-v1.6.0.json` 或 `expected-v1.9.0.json` 核对；1.6.0 在 M4 上从头打包约 16 分钟（大头是 15 GB 的 RomFS 合并）。
 
-1.6.0 已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。10 月 23 日起（Mac）：2 键补帧恢复（它认“场景画完”用的着色器键是 10 月 20 日改键之前记的，一帧都认不出来，#177），跟着镜头走的东西（林克）不再套用镜头运动，30+30 下林克不再抖；3 键的 MetalFX 又能代替游戏自己的放大；4 键和 1.9.0 一样切换 21:9（1.6.0 的镜头每帧把比例写回 16:9，所以改的是游戏自己写的那一步）；5 键边缘平滑（#178）。3 键现在和王国之泪 1.4.3 一样循环：关 → MetalFX 2K → 原生 2K → 关（原生 2K 时场景和画布都是 2560x1440；App 启动时就按 2560x1440 建交换链、加大内存堆，`TOTK_OUTPUT_RES=0` 只保留原来的 1080p）。还没有：iPhone / iPad、DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
+1.6.0 已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。10 月 23 日起（Mac）：2 键补帧恢复（它认“场景画完”用的着色器键是 10 月 20 日改键之前记的，一帧都认不出来，#177），跟着镜头走的东西（林克）不再套用镜头运动，30+30 下林克不再抖；3 键的 MetalFX 又能代替游戏自己的放大；4 键和 1.9.0 一样切换 21:9（1.6.0 的镜头每帧把比例写回 16:9，所以改的是游戏自己写的那一步）；5 键边缘平滑（#178）。3 键现在和王国之泪 1.4.3 一样循环：关 → MetalFX 2K → 原生 2K → 关（原生 2K 时场景和画布都是 2560x1440；App 启动时就按 2560x1440 建交换链、加大内存堆，`TOTK_OUTPUT_RES=0` 只保留原来的 1080p）。还没有：DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
 
 1.9.0 已验证（10 月 20 日，M1 Pro Mac 的内置 120 Hz 屏幕，两个 DLC 内容包）：标题、读档和自动存档、六个测试地点（从 Shrine of Resurrection 到海拉鲁城出口）站着不动 58.4–77.5 帧，着色器缓存已预热时走动 58.6–81.4 帧、在克洛格森林让林克一直走动的 25 分钟测试、游戏在任何帧率下都按真实时间推进（按住按键的计数也一样）、两个 DLC 内容包（卡卡利科村的路线会触发 DLC 任务 “EX Treasure: Garb of Winds”）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧；在初始台地站着不动时，游戏分别跑 69、30、58 和 61 帧，屏幕每秒显示约 67、60、115 和 115 张画面）和 3 键（MetalFX 代替游戏自己的放大）。从 10 月 21 日起，1.9.0 也有了 1.6.0 在 30 帧以上的修复（菜单和 HUD 速度正常、每帧六次物理步进、过场动画保持 30 帧），底座模式按原生 1080p 渲染，并支持 5 键（MetalFX 时间性抗锯齿：边缘更平滑，1600x900 时台地上约少 9 帧，67.7 降到 58.6）。4 键在 1.9.0 上切换 21:9 宽屏（Mac：镜头两侧看得更多，画面填满更宽的窗口；`TOTK_ASPECT=32:9` 或 `3440x1440` 选别的比例并在启动时就打开；HUD 和菜单在中间 16:9 里保持原来的形状，地图两侧有黑边；跟随世界中物体的标记还没有往外移）。两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的）；以前游戏的呈现间隔在这种显示器上把帧率压在 60。第一次走进一个地方时，新管线编译会造成卡顿。还没有：原生 2K、iPhone / iPad，以及林克腿陷进石头路的修复（在初始台地的一个地点读档后出现，旧的自动存档和在那里新存的档都一样）。详见 [1.9.0 测试记录](docs/botw-v1.9.0-port.md)。
 
 ### iPhone 和 iPad
 
-1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息还没有 iPhone / iPad 版：两个版本加 `--platform ios` 都会报错退出。
+1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息 1.6.0 已在 iPhone 14 上实际游玩（标题、读档、走动；10 月 23 日）：加 `--platform ios --ios-game-data documents` 构建，和王国之泪一样用 `games/totk/ios/tools/install_device.py` 安装。画面铺满屏幕，内部 960×540，用游戏自己的放大到 1280×720，和王国之泪在手机上一样。还没有：1.9.0 的手机渲染尺寸、手机上锁 30 帧。
 
 - **第一次启动：** App 先校验游戏数据（约 15 秒），再导入随 App 准备的着色器，有进度条。iPhone 14 上约 3 分钟后出现标题画面；之后的启动约 8 秒出标题。
 - **画面：** 游戏以掌机模式运行，和 Switch 不接底座时一样：1280×720。

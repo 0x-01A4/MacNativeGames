@@ -87,31 +87,27 @@ void runtime_shortcut_help_toggle(void) {}
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     static BOOL started; if (started) return; started = YES;
+    /* What happens before the game starts is said on the boot screen (runtime/frontend_ios.m), not on a label of its own:
+       one laid over it showed both texts on top of each other (2026-10-23). */
+    BOOL zh = [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"];   // the same rule as the boot screen (totk_ui_lang.h)
     if (g_no_game_data) {
-        UILabel *say = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 40, 40)];
-        say.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        say.text = g_no_game_data; say.textColor = UIColor.whiteColor; say.numberOfLines = 0; say.textAlignment = NSTextAlignmentCenter;
-        [self.view addSubview:say];
+        runtime_boot_status(zh ? "无法开始游戏" : "Cannot start the game", g_no_game_data.UTF8String);
         return;
     }
     if (g_seed_pack) {   // shaders installed as a pack: unpack once, on screen, then start (not on the main thread: a long launch is killed)
-        BOOL zh = [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"];
-        UILabel *say = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 40, 40)];
-        say.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        say.textColor = UIColor.whiteColor; say.numberOfLines = 0; say.textAlignment = NSTextAlignmentCenter;
-        say.text = zh ? @"正在准备着色器（更新后只做一次）…" : @"Preparing the shaders (once after an update)…";
-        [self.view addSubview:say];
+        static const char *stage_zh = "正在准备着色器（更新后只做一次）", *stage_en = "Preparing the shaders (once after an update)";
+        const char *stage = zh ? stage_zh : stage_en;
+        runtime_boot_progress(stage, 0, 0);
         NSString *pack = g_seed_pack, *to = g_seed_unpack_to; g_seed_pack = nil;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
-            NSString *why = seed_unpack(pack, to, ^(uint64_t done, uint64_t total) {
-                dispatch_async(dispatch_get_main_queue(), ^{ say.text = [NSString stringWithFormat:zh ? @"正在准备着色器（更新后只做一次）… %d%%" : @"Preparing the shaders (once after an update)… %d%%", (int)(done * 100 / (total ? total : 1))]; });
-            });
+            NSString *why = seed_unpack(pack, to, ^(uint64_t done, uint64_t total) { runtime_boot_progress(stage, done, total); });
             fprintf(stderr, "[totk] shader pack: %s in %.1f s\n", why ? why.UTF8String : "ready", CFAbsoluteTimeGetCurrent() - t0);
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (why) { say.text = zh ? [NSString stringWithFormat:@"着色器准备失败（%@）。请在 Mac 上用 ios/tools/install_device.py 重新安装。", why]
-                                         : [NSString stringWithFormat:@"Could not prepare the shaders (%@). Install again from the Mac with ios/tools/install_device.py.", why]; return; }
-                [say removeFromSuperview]; [self startGame];
+                if (why) { runtime_boot_status(zh ? "着色器准备失败" : "Could not prepare the shaders", (zh
+                               ? [NSString stringWithFormat:@"%@。请在 Mac 上用 ios/tools/install_device.py 重新安装。", why]
+                               : [NSString stringWithFormat:@"%@. Install again from the Mac with ios/tools/install_device.py.", why]).UTF8String); return; }
+                [self startGame];
             });
         });
         return;
@@ -260,6 +256,8 @@ static void audio_observe(void) {
     setenv("TOTK_ROMFS_PATCHES",[res stringByAppendingPathComponent:@"romfs-patches"].fileSystemRepresentation,1);
     setenv("TOTK_ROMFS_PATCHES_OUT",[res stringByAppendingPathComponent:@"romfs-patches-out"].fileSystemRepresentation,1);
     setenv("TOTK_SHARED_FONTS",[res stringByAppendingPathComponent:@"shared-fonts"].fileSystemRepresentation,1);
+    NSString *aoc = [res stringByAppendingPathComponent:@"aoc"];   // Breath of the Wild's add-on content packs (build_ipa.py; runtime/aoc_romfs.c)
+    if ([fm fileExistsAtPath:aoc]) setenv("TOTK_AOC",aoc.fileSystemRepresentation,1);
     setenv("TOTK_SHADER_SEED_DIR",seedDir.fileSystemRepresentation,1);
     /* One folder per translation chain, as on the Mac: the runtime refuses translations of another chain, and the seed
        import keeps files that are already there. Builds before the v5 chain (2026-10-20) kept them directly in
