@@ -376,12 +376,14 @@ void totk_rt_contrib_line(NSString *line) {   // totk_contrib_add_line under the
    A miss no longer stops the game: the caller skips the draws / dispatches that need this variant (draw-skip reason
    "shader-missing"). The request is written once per variant; after fill_shaders.py pushed the translation, the next
    start compiles it in the background (totk_rt_warm_filled) and moves the request to shader-requests/done/. */
+static _Atomic uint64_t g_missed;   // distinct variants missed this run (the iPhone's shader box)
+uint64_t totk_rt_missed(void) { return atomic_load(&g_missed); }
 static void record_miss(NSString *shader, NSDictionary *rq, NSDictionary *answers) {   // g_rt_lock held
     NSString *variant = rq[@"variant"];
     [NSFileManager.defaultManager createDirectoryAtPath:@"shader-requests" withIntermediateDirectories:YES attributes:nil error:nil];
     static NSMutableSet<NSString *> *missed; if (!missed) missed = [NSMutableSet set];
     if ([missed containsObject:variant]) return;
-    [missed addObject:variant];
+    [missed addObject:variant]; atomic_fetch_add(&g_missed, 1);
     [[json_string(rq) dataUsingEncoding:NSUTF8StringEncoding] writeToFile:[NSString stringWithFormat:@"shader-requests/%@.json", variant] atomically:YES];
     if (contrib_wanted(shader, variant)) totk_contrib_add(shader, answers);   // not in the prepared seed, so not in the shared shader list yet
     LOG("[shader-miss] %s %s 不在手机的翻译缓存里：跳过用到它的绘制，请求已存 shader-requests/（第 %lu 个；在 Mac 上 ios/tools/fill_shaders.py 补上后下次启动预热）",

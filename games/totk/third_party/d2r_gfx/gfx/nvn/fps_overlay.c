@@ -214,7 +214,13 @@ void shader_overlay_text(char *out, size_t n, uint64_t fresh, int64_t total, uin
     char t[16];
     (void)pipelines;   // user 2026-10-17: the pipeline count is not shown
     if (total < 0) snprintf(t, sizeof t, "--"); else snprintf(t, sizeof t, "%lld", (long long)(total > 999999 ? 999999 : total));
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+    // The phone translates nothing: "fresh" is the shaders it was missing this run (their draws are skipped until the
+    // Mac fills them, ios/tools/fill_shaders.py).
+    snprintf(out, n, TOTK_UI("缺着色器 %llu / 总计 %s", "Missing shaders %llu / total %s"), (unsigned long long)(fresh > 99999 ? 99999 : fresh), t);
+#else
     snprintf(out, n, TOTK_UI("新着色器 %llu / 总计 %s", "New shaders %llu / total %s"), (unsigned long long)(fresh > 99999 ? 99999 : fresh), t);
+#endif
 }
 /* The render pipeline line under the shaders (user 2026-10-22: "fps和着色器下面 现在显示渲染管线 信息，新/总计"): pipelines
    this run built that this profile had never built (new to its warm list), and every render pipeline ready this run
