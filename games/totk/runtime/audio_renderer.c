@@ -604,21 +604,25 @@ void runtime_audio_probe(void) {
         }
         checked += 3;
         x.flush_wave_buffer_count = 0; x.in_use = 0; update_voice(r, &x);
-#if AUDIO_EOS_PLAYS_ON
-        /* 8. A buffer marked end of stream with another queued behind it: the voice plays on into that one in the same
-           frame (Breath of the Wild streams its music so; a frame of silence at each join was heard as a stutter). */
+        /* 8. EOS with another buffer queued: BotW continues within this frame; TOTK resumes on the next one.
+           Check both paths, including the played-sample count returned to the game's audio client. */
         x.in_use = 1; x.is_new = 1; x.wave_buffer_index = 0;
         x.wave_buffers[0] = (AudrenWaveBuffer){.address = (uint64_t)(uintptr_t)a7, .size = sizeof a7, .end = 100, .end_of_stream = 1};
         x.wave_buffers[1] = (AudrenWaveBuffer){.address = (uint64_t)(uintptr_t)b7, .size = sizeof b7, .end = 480, .end_of_stream = 1};
         x.wave_buffers[2] = (AudrenWaveBuffer){.sent = 1}; x.wave_buffers[3] = (AudrenWaveBuffer){.sent = 1};
         update_voice(r, &x); audio_voices_prepare(r); audio_mixer_render(r, frame); advance_voice(r, sv7, frame);
-        if (sv7->consumed != 1 || sv7->index != 1 || sv7->offset != 140 || sv7->played != 140) {
-            fprintf(stderr, "end of stream: consumed %u index %u offset %llu played %llu, want 1 1 140 140\n", sv7->consumed, sv7->index, (unsigned long long)sv7->offset, (unsigned long long)sv7->played);
-            runtime_fail("audio probe: an end-of-stream buffer held up the buffer behind it");
+        unsigned eos_offset = AUDIO_EOS_PLAYS_ON ? 140 : 0;
+        if (sv7->consumed != 1 || sv7->index != 1 || sv7->offset != eos_offset || sv7->played != eos_offset) {
+            fprintf(stderr, "end of stream: consumed %u index %u offset %llu played %llu, want 1 1 %u %u\n", sv7->consumed, sv7->index, (unsigned long long)sv7->offset, (unsigned long long)sv7->played, eos_offset, eos_offset);
+            runtime_fail("audio probe: end-of-stream frame boundary");
         }
         checked += 4;
+        x.is_new = 0; x.wave_buffers[0].sent = x.wave_buffers[1].sent = 1; update_voice(r, &x);
+        audio_voices_prepare(r); audio_mixer_render(r, frame); advance_voice(r, sv7, frame);
+        if (sv7->consumed != 1 || sv7->index != 1 || sv7->offset != eos_offset + 240 || sv7->played != eos_offset + 240)
+            runtime_fail("audio probe: voice did not resume after an end-of-stream boundary");
+        checked += 4;
         x.in_use = 0; update_voice(r, &x);
-#endif
     }
     printf("{\"status\":\"pass\",\"probe\":\"probe-audio\",\"checked\":%d,\"scope\":\"REV15 wire parsing, native float voice/splitter biquads and consecutive request state; PCM16 channel mix, pitch interpolation, DSP-ADPCM decode, splitter to submix to final mix, device sink, stereo cascaded biquads, ordered submix reverb, auxiliary ring exchange, output limiter, bypass, frame continuity and reset\"}\n", checked);
 }

@@ -389,6 +389,10 @@ probe-depth16-clear: $(RENDER_PROBE_DIR)/depth16-clear-probe
 	$(GAME_SLOT_RUN) "$(RENDER_PROBE_DIR)/depth16-clear-probe"
 
 .PHONY: probe-fbread
+.PHONY: probe-gpu-writeback
+probe-gpu-writeback: runtime-botw160
+	MTL_DEBUG_LAYER=1 build/totk-native-botw160 rewritten/botw160 probe-gpu-writeback
+
 # Decals reading the attachment they write (nvn_fbread.h): overlapping draws see each other only through the tile read.
 $(RENDER_PROBE_DIR)/fbread-probe: tests/fbread/probe.m third_party/d2r_gfx/gfx/nvn/nvn_fbread.h
 	@mkdir -p "$(RENDER_PROBE_DIR)"

@@ -141,8 +141,9 @@ packaging compiles it into the app; in Ukouh Shrine 16 shaders got one.
 
 `make -C games/totk probe-fbread` draws four overlapping decals in SPIRV-Cross form in one pass over memory holding 0, each
 adding 0.25 to what it samples at its own pixel. Rewritten, all 49,152 pixels reach 1.0; the original function, the
-negative control, reaches 1.0 in none. A sample one texel to the side still reads memory (0.25 everywhere), and a texture
-that is also `read()` is refused. In the game frame the squares are gone with no store left before the decals.
+negative control, reaches 1.0 in none. The neighbouring-texel case draws only even columns and samples untouched odd
+columns: drawn pixels stay at 0.25 and untouched pixels at zero, independent of when a tile is stored. A texture that
+is also `read()` is refused. The original game's 1.2.1 report found the squares gone with no store left before the decals.
 
 ## The build (build_app.py)
 

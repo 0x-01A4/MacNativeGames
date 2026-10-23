@@ -3701,6 +3701,15 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb) {
     int live = 0, peak = 0, cap = 0; nvn_dirty_stat(&live, &peak, &cap);
     MLOG("内存 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB，延迟释放队列 %lu，驻留集 %lu 个，内存池 %d 个（峰值 %d / 跟踪表容量 %d），贴图重传累计 %llu 次", frame, rss_mb, gpu, nd, nr, live, peak, cap, (unsigned long long)g_pkg_reuploads);
     MLOG("已死序号纹理累计 %llu 张（替换前即为泄漏来源）", (unsigned long long)g_dead_put_total);
+    /* Exact-writeback snapshots are host allocations, absent from Metal's allocatedSize. Include them in the existing
+       diagnostic so an iPhone run can attribute the cost of the larger terrain-normal snapshots (PR #188). */
+    size_t snap_bytes = 0; unsigned snap_count = 0;
+    pthread_mutex_lock(&g_smu);
+    for (uint32_t i = 0; g_wb.vals && i < g_wb.cap; i++) {
+        const wb_ent *e = g_wb.vals[i]; if (e && e->snap) { snap_bytes += e->snap_n; snap_count++; }
+    }
+    pthread_mutex_unlock(&g_smu);
+    MLOG("[writeback] live snapshots %u, %zu bytes (per-target limit %u bytes)", snap_count, snap_bytes, WB_SNAP_MAX);
     pthread_mutex_lock(&g_smu); uint64_t dead_n = g_dead_serial.n, owned_n = g_gpu_owned.n;
     uint64_t serial_bytes = g_dead_serial.bytes + g_gpu_owned.bytes, serial_pages = g_dead_serial.pages + g_gpu_owned.pages; pthread_mutex_unlock(&g_smu);
     registry_lock(); unsigned refs_n = g_treg_refs.n; registry_unlock();
@@ -11369,7 +11378,7 @@ frz_plain:;
        a sub-pixel, a small sphere covers a few more or fewer samples each frame (338 / 345 for an egg lamp), and the game
        scales the light by that count, so lamps and what they light pulsed while standing still. */
     double jx = 0, jy = 0; unsigned nv = di ? di->count : dw ? dw->count : 0;
-    if (taa_jittered() && nv > 6 && vo == 0 && vs == 1 && ux == 1 && uy == 1 && !g_vis_counting && !att_n && !(!att_store_on() && draw_att_reads(pr, att_rs)))
+    if (taa_jittered() && nv > 6 && vo == 0 && vs == 1 && ux == 1 && uy == 1 && !g_vis_counting && !fb_fn && !att_n && !(!att_store_on() && draw_att_reads(pr, att_rs)))
         taa_jitter(&jx, &jy);
     if (S.has_vp) enc_r_viewport(en, (MTLViewport){vx + jx, vy + jy, vw, vh, S.dr[0], S.dr[1]});
     else enc_r_viewport(en, (MTLViewport){vx + jx, vy + jy, vw, vh, 0, 1});
@@ -15673,6 +15682,8 @@ void botw_serial_note(uint64_t serial, const char *what) {
 typedef struct { tex_t t; uint8_t *snap; size_t lp, lr; } tiny_ent;
 static tiny_ent g_tiny[TINY_MAX]; static __strong id<MTLTexture> g_tiny_tex[TINY_MAX]; static int g_ntiny;
 void botw_tiny_note(const void *tp, const void *op) {
+    static int on = -1; if (on < 0) { const char *e = getenv("TOTK_BOTW_TINY_WB"); on = !(e && !strcmp(e, "0")); }
+    if (!on) return;   // diagnostic negative control: the CPU keeps the old pool bytes
     const tex_t *t = tp; id o = (__bridge id)op;
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     if (bpb <= 0 || bw != 1 || bh != 1 || t->d.levels != 1 || t->d.samples > 1 || t->d.target == 2 || t->L.layers > 1) return;
@@ -15686,9 +15697,12 @@ void botw_tiny_note(const void *tp, const void *op) {
     if (g_tiny[i].snap) memcpy(g_tiny[i].snap, t->mem, t->L.size);
 }
 static __strong id<MTLBuffer> g_tiny_buf[64];
+static uint64_t g_tiny_fence[64];   // a slot remains owned until its CPU write-back has completed
 void botw_tiny_commit(void) {   // in mtl_sub_commit, after the last render pass: copy the tiny targets out, then into memory on completion
     if (!g_ntiny) return;
     uint64_t fence = g_fence + 1;
+    if (g_tiny_fence[fence % 64]) mtl_wait(g_tiny_fence[fence % 64], UINT64_MAX);
+    g_tiny_fence[fence % 64] = fence;
     id<MTLBuffer> buf = g_tiny_buf[fence % 64];
     if (!buf) { buf = g_tiny_buf[fence % 64] = [g_dev newBufferWithLength:TINY_WB * TINY_MAX options:MTLResourceStorageModeShared]; if (!buf) MDIE("tiny write-back buffer"); res_add(buf); res_commit(); }
     for (int i = 0; i < g_ntiny; i++) {
@@ -15790,3 +15804,4 @@ int botw_wb_from_stage(void *ev) {
 
 #include "nvn_sampler_border_probe.h"
 #include "nvn_texels_region_probe.h"
+#include "nvn_writeback_probe.h"

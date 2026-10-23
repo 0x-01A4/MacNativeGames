@@ -2,8 +2,9 @@
    SPIRV-Cross form samples the colour attachment it writes, at its own pixel, and adds 0.25; four draws of it overlap in one
    render pass whose attachment memory holds 0. Rewritten, each draw must see the one before it (1.0 everywhere, as on a GPU
    that renders straight to memory). The original function is the negative control: it reads memory, so it cannot reach
-   1.0. A sample one texel to the side must still read memory, and a texture used by anything but plain sample calls must
-   be refused. Run alone through the shared game slot. */
+   1.0. A sample one texel to the side must still read memory: draw only the even columns so the sampled odd columns stay
+   zero, independent of when a tile is stored. A texture used by anything but plain sample calls must be refused.
+   Run alone through the shared game slot. */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include "nvn_fbread.h"
@@ -61,11 +62,12 @@ int main(void) { @autoreleasepool {
         {"original (negative control)", 0, 0, 0, 1.0f, 1},
         {"rewritten", 1, 0, 0, 1.0f, 0},
         {"rewritten, gl_FragCoord already a parameter", 1, 1, 0, 1.0f, 0},
-        {"rewritten, sample one texel to the side", 1, 0, 1, 0.25f, 0},
+        {"rewritten, sample an untouched neighbouring column", 1, 1, 1, 0.25f, 0},
     };
     unsigned failed = 0;
     for (unsigned c = 0; c < sizeof cases / sizeof *cases; c++) { @autoreleasepool {
-        NSString *src = decal(cases[c].has_pos ? @", float4 gl_FragCoord [[position]]" : @"", @"");
+        NSString *src = decal(cases[c].has_pos ? @", float4 gl_FragCoord [[position]]" : @"",
+                              cases[c].shift ? @"    if (uint(gl_FragCoord.x) & 1u) discard_fragment();\n" : @"");
         if (cases[c].rewrite) { src = nvn_fbread_src(src, @"main0", aid, att, 1); check(src != nil, "rewrite of the decal form"); }
         id<MTLLibrary> lib = [dev newLibraryWithSource:src options:nil error:&e];
         if (!lib) fprintf(stderr, "%s\n", e.localizedDescription.UTF8String);
@@ -92,10 +94,13 @@ int main(void) { @autoreleasepool {
                   toBuffer:read destinationOffset:0 destinationBytesPerRow:W * 8 destinationBytesPerImage:W * H * 8];
         [b endEncoding]; [cb commit]; [cb waitUntilCompleted];
         check(cb.status != MTLCommandBufferStatusError, "command buffer");
-        const __fp16 *px = read.contents; unsigned match = 0, columns = cases[c].shift ? W - 1 : W;   // the shifted sample leaves the last column
-        for (unsigned y = 0; y < H; y++) for (unsigned x = 0; x < columns; x++) match += (float)px[(y * W + x) * 4] == cases[c].want;
-        unsigned total = columns * H; int ok = cases[c].negative ? match < total : match == total;
-        printf("{\"case\":\"%s\",\"pixels\":%u,\"equal_to_%.2f\":%u,\"pass\":%s,\"game_data\":false}\n", cases[c].name, total, cases[c].want, match, ok ? "true" : "false");
+        const __fp16 *px = read.contents; unsigned match = 0;
+        for (unsigned y = 0; y < H; y++) for (unsigned x = 0; x < W; x++) {
+            float want = cases[c].shift && (x & 1) ? 0 : cases[c].want;
+            match += (float)px[(y * W + x) * 4] == want;
+        }
+        unsigned total = W * H; int ok = cases[c].negative ? match < total : match == total;
+        printf("{\"case\":\"%s\",\"pixels\":%u,\"matching_expected\":%u,\"pass\":%s,\"game_data\":false}\n", cases[c].name, total, match, ok ? "true" : "false");
         failed += !ok;
     }}
     check(failed == 0, "decals must see the decals before them only through the rewrite, and only at their own pixel");

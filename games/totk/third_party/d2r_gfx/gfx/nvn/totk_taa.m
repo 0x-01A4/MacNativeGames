@@ -59,7 +59,8 @@ static struct {
     unsigned jit_i; double jx, jy;
     __unsafe_unretained id<MTLTexture> last_src; uint64_t frame, encoded_frame;
     uint64_t done, resets, missing;
-    struct { id obj; uint64_t frame; } old[TAA_OLD * 3]; int nold;
+    /* Each size change retires the scaler and five textures. Keep every one alive for the in-flight frames. */
+    struct { id obj; uint64_t frame; } old[TAA_OLD * 6]; int nold;
 } g;
 static void keep_old(id obj) {   // released (and dropped from the residency set) TAA_OLD frames later, when the GPU is done with it
     if (!obj) return;
