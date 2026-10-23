@@ -28,7 +28,7 @@ games/unicorn/
 ## Evidence
 
 - **Before:** 项目没有本游戏的构建入口；独立适配时曾出现启动黑屏、分配器不一致和 GPU 池对齐耗尽。
-  **After:** 本地 1.05 已显示中文开场、战场及交战后的 WIN 画面；对应改动有内存、GPU 地址及六声道探针。详见 [VALIDATION.md](VALIDATION.md)。
+  **After:** 本地 1.05 已显示中文开场、战场及交战后的 WIN 画面；独立 profile 手动保存后，退出并以新进程读档恢复同一战场。对应改动有内存、GPU 地址及六声道探针。详见 [VALIDATION.md](VALIDATION.md)。
 - **Before:** CPU `probe-gfx` 在预测探针的 `control+0x714` 读取退出 139。
   **After:** 相同命令通过；24/26/27 三个语义负对照仍拒绝错误行为。
 - 从原始 NSP 的新工作目录构建通过；303 项根目录测试跳过 1 项，其余通过；App 严格签名检查通过。

@@ -96,7 +96,8 @@ mkdir -p "$WORK/containers"
 1.05 的验证记录位于 `UNICORN_build-1.05/logs/`：两个模块结构检查通过，
 新版 main 的 3264 个改写点无语义偏差，50 个注入错误全部被检出；源码测试共 256 项，1 项跳过，其余通过。
 实际启动已确认标题、键盘确认与中文开场剧情；游戏已查询并收到两个 DLC 编号。
-本轮已实际看到教程交战的 WIN 画面；DLC 的后续纹章选择及保存后重启读档尚未验证。
+本轮已实际看到教程交战的 WIN 画面，并通过独立测试 profile 的手动保存、退出和新进程读档。
+DLC 的后续纹章选择仍未验证；性能与温度的短时对照见 [VALIDATION.md](VALIDATION.md)。
 `probe-addons` 已验证镜像哈希、列表分页与输出边界；损坏或缺失 DLC 的负向检查也已通过。
 
 1.0.0 的重写校验记录保留在 `UNICORN_build/struct-main.log`、`struct-sdk.log`、
