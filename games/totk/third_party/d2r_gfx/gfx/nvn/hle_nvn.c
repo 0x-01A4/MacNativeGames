@@ -2340,13 +2340,13 @@ static int g_paced_hz;   // the display-following rate, used instead of the unca
    pre-rendered movie, which advances one movie frame per game frame). The game is then paced exactly as in the 30+30
    mode, without the interpolation. Weak: Tears of the Kingdom has none. */
 __attribute__((weak)) int runtime_game_fps_limit(void) { return 0; }
-/* The phone holds 30 fps the same way (user 2026-10-23: "手机锁30帧"; in the world it runs about 30 anyway, GPU 22-26 ms):
-   presents every second refresh of its 60 Hz screen, frame step and present interval agreeing. Lowering the uncapped
-   clock to 30 Hz instead (the first try) left the game's interval in 60 Hz units: it raised it to 3 and the title ran at
-   about 10 fps (100 ms frames). TOTK_PHONE_FPS=60 for the screen's rate. */
+/* TOTK_PHONE_FPS=30: the phone holds 30 fps the same way, presenting every second refresh of its 60 Hz screen, frame
+   step and present interval agreeing (lowering the uncapped clock to 30 Hz instead left the game's interval in 60 Hz
+   units: it raised it to 3 and the title ran at about 10 fps). The default is the screen's rate, at most 60 on an iPhone
+   14 (user 2026-10-23: 30 for an hour, then "iphone 改成锁60"). */
 static int phone_holds_30(void) {
 #if TARGET_OS_IPHONE
-    static int v = -1; if (v < 0) { const char *e = getenv("TOTK_PHONE_FPS"); v = !(e && atoi(e) > 30); }
+    static int v = -1; if (v < 0) { const char *e = getenv("TOTK_PHONE_FPS"); v = e && atoi(e) == 30; }
     return v;
 #else
     return 0;
@@ -2697,7 +2697,7 @@ static int g_hz = -1, g_display_mode;
 static int uncapped_cap(int scr) {
     const char *e = getenv("TOTK_UNCAPPED_HZ");
 #if TARGET_OS_IPHONE
-    if (!e) e = "display";   // 30 fps on the phone is held by phone_holds_30, not by this ceiling
+    if (!e) e = "display";   // at most the screen's rate (60 on an iPhone 14); TOTK_PHONE_FPS=30 holds 30 (phone_holds_30)
 #endif
     int v = !e ? UNCAPPED_DEFAULT_HZ : !strcmp(e, "display") ? (scr > 0 ? scr : 60) : atoi(e);
     return v < 30 ? 30 : v > UNCAPPED_HZ ? UNCAPPED_HZ : v;
@@ -2829,12 +2829,19 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     // mistakenly stall the title rather than the save-loading screen.
     // Hold that first frame behind the loading screen if cache warm-up is still
     // active. This does not claim that an undiscovered variant cannot appear.
+    // The Mac waits until the warm-up is done, however long (user 2026-10-23: play
+    // starts with every listed pipeline ready); the phone keeps the 15 s limit.
     { static int gate; static uint64_t last_draws;
       uint64_t passes, draws; mtl_stats(&passes, &draws);
       uint64_t this_draws = draws >= last_draws ? draws - last_draws : 0;
       last_draws = draws;
       if (!gate && ((g_nvn_loadscreen_up && g_nvn_loadscreen_up()) || this_draws > 2000)) {
-          gate = 1; extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(15000);
+#if TARGET_OS_IPHONE
+          const int warm_limit_ms = 15000;
+#else
+          const int warm_limit_ms = -1;
+#endif
+          gate = 1; extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(warm_limit_ms);
           if (ms) LOG("[nvn] 首次进局等管线预热 %d ms（本帧绘制 %llu）", ms, (unsigned long long)this_draws);
       } }
     present_cfg(o);

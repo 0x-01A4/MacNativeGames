@@ -67,7 +67,8 @@ shader code and save formats are unchanged.
 
 - Check the current macOS output device and volume. Test a known system sound;
   if that also fails, inspect the device connection first.
-- Check `~/Library/Logs/MacNativeGames/totk.log` for CoreAudio setup failures,
+- Turn on the log (`defaults write org.macnativegames.totk TOTK_DEBUG_LOG -bool YES`,
+  then start the game again) and check `~/Library/Logs/MacNativeGames/totk.log` for CoreAudio setup failures,
   decode errors and output-level reports. A nonzero mixed level does not by
   itself prove the selected physical output is audible.
 - For local file-open diagnostics, quit the game normally and launch with:

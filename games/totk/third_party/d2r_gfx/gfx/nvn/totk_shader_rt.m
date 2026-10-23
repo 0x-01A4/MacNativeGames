@@ -279,6 +279,18 @@ static int no_translator(void) {
 #endif
 }
 int totk_rt_can_translate(void) { return !no_translator(); }
+/* The submit thread's service, started in the background when the warm-up starts: with a seed holding every default
+   variant the first translation can come minutes into play, and it paid the service start there (BotW 1.6.0: 455 / 498 ms
+   in one frame, 72 ms for the same variant with the service running; 2026-10-23). Stalls in the first 20 s after the
+   start do not count (user 2026-10-23). */
+void totk_rt_service_prestart(void) {
+    if (no_translator()) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        pthread_mutex_lock(&g_rt_lock);   // g_svc is used under it (totk_rt_variant)
+        service_start(&g_svc);
+        pthread_mutex_unlock(&g_rt_lock);
+    });
+}
 
 /* The cached variant whose deps match the answers, or nil (g_rt_lock held). A variant whose Metal source is missing or
    could not be compiled before is dropped from the index, so it is translated again. */
