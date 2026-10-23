@@ -89,7 +89,7 @@ static void skip_empty(AudioRenderer *r, ServerVoice *v) {
         if (b->loop && b->loop_count < 0) break;   /* an endless empty loop starves the voice, as on the DSP */
         v->valid[v->index] = 0; v->consumed++; v->offset = 0; v->loops_done = 0; v->index = (v->index + 1) & 3;
         if (r) r->empty_played++;
-        if (b->end_of_stream) v->played = 0;
+        if (b->end_of_stream) { v->played = 0; if (!AUDIO_EOS_PLAYS_ON) break; }
     }
 }
 static int stop_release(void) {
@@ -243,11 +243,13 @@ static void advance_voice(AudioRenderer *r, ServerVoice *v, double out_seconds) 
         v->offset += step; v->played += step; samples -= step;
         if (v->offset < length) break;
         if (b->loop && (b->loop_count < 0 || v->loops_done < b->loop_count)) { v->loops_done++; v->offset = b->loop_start > b->start && b->loop_start < b->end ? (uint64_t)(b->loop_start - b->start) : 0; continue; }
-        /* End of stream only restarts the played-sample count (Ryujinx MarkEndOfBufferWaveBufferProcessing): the voice
-           goes on into the next queued buffer in the same frame. Breath of the Wild marks every streamed music buffer
-           so; stopping there left up to a frame of silence at each join, a steady stutter in the music (2026-10-22). */
+        /* End of stream restarts the played-sample count (Ryujinx MarkEndOfBufferWaveBufferProcessing). Breath of the
+           Wild: the voice goes on into the next queued buffer in the same frame; it marks every streamed music buffer
+           so, and stopping there left up to a frame of silence at each join, a steady stutter in the music (2026-10-22).
+           Tears of the Kingdom: the voice stops for the rest of the frame, as before; playing on left 1.1.2 silent for
+           the whole session after the title (output level 0 from 5 s on, 2026-10-22; AUDIO_EOS_PLAYS_ON). */
         v->valid[v->index] = 0; v->consumed++; v->offset = 0; v->loops_done = 0; v->index = (v->index + 1) & 3;
-        if (b->end_of_stream) v->played = 0;
+        if (b->end_of_stream) { v->played = 0; if (!AUDIO_EOS_PLAYS_ON) break; }
         skip_empty(r, v);
     }
 }
@@ -602,6 +604,7 @@ void runtime_audio_probe(void) {
         }
         checked += 3;
         x.flush_wave_buffer_count = 0; x.in_use = 0; update_voice(r, &x);
+#if AUDIO_EOS_PLAYS_ON
         /* 8. A buffer marked end of stream with another queued behind it: the voice plays on into that one in the same
            frame (Breath of the Wild streams its music so; a frame of silence at each join was heard as a stutter). */
         x.in_use = 1; x.is_new = 1; x.wave_buffer_index = 0;
@@ -615,6 +618,7 @@ void runtime_audio_probe(void) {
         }
         checked += 4;
         x.in_use = 0; update_voice(r, &x);
+#endif
     }
     printf("{\"status\":\"pass\",\"probe\":\"probe-audio\",\"checked\":%d,\"scope\":\"REV15 wire parsing, native float voice/splitter biquads and consecutive request state; PCM16 channel mix, pitch interpolation, DSP-ADPCM decode, splitter to submix to final mix, device sink, stereo cascaded biquads, ordered submix reverb, auxiliary ring exchange, output limiter, bypass, frame continuity and reset\"}\n", checked);
 }
