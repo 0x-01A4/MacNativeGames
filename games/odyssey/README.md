@@ -33,65 +33,51 @@ Exact measurements and logs are in the development log below and in the project'
 
 ## What you need
 
-- An Apple silicon Mac with macOS 26 or newer, and Xcode with the Metal 4 SDK (tested with Xcode 27.1; install the Metal Toolchain
-  component for the optional shader precompile step).
+- An Apple silicon Mac with macOS 26 or newer, and Xcode with the Metal 4 SDK (tested with Xcode 27.1).
 - Super Mario Odyssey with the **1.3.0** update, as a combined XCI or NSP that you dumped yourself. Other versions are
   rejected by hash, including **1.4.1**: it has the same executables but slightly different data, and is not
   supported yet (see "Version naming" below).
 - `prod.keys` dumped from your own Switch.
+- Your Switch's **firmware** files (its NCA folder), dumped from your own Switch: the system fonts come from there.
+  Some game cards carry them in their system-update partition, but not all (the tested 1.3.0 card doesn't).
 - Homebrew `opus` and `libvpx` (`brew install opus libvpx`), and Python 3 with `capstone`, `cryptography` and `lz4`.
-- About 20 GB of free disk space for the build folder.
+- About 12 GB of free disk space.
 
-Everything the steps write goes to `games/odyssey/Odyssey_build/`, which Git ignores. Never commit or share anything
-from it: it contains game data.
+Everything the build writes goes to a work folder inside `games/odyssey` (default `Odyssey_build/`), which Git
+ignores. Never commit or share anything from it: it contains game data.
 
 ## Build your own copy
 
-These are the steps used on the test Mac. They have not yet been wrapped in one script or tested on a second Mac;
-open an issue if a step fails for you. Run them from `games/odyssey/`; `GAME` is your XCI or NSP and `KEYS` your
-`prod.keys`.
+From `games/odyssey/`:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install capstone cryptography lz4
-mkdir -p Odyssey_build
-
-# 1. Check the input: title, version and integrity (prints no keys or game data)
-.venv/bin/python scripts/inspect_input.py "$GAME" --keys "$KEYS"
-
-# 2. Program modules (main, sdk, subsdk0) and the merged base + update RomFS
-.venv/bin/python scripts/extract_code.py "$GAME" --keys "$KEYS" --output Odyssey_build/extracted
-.venv/bin/python scripts/merge_romfs.py "$GAME" --keys "$KEYS" --output Odyssey_build/extracted/local/romfs
-ln -s .. Odyssey_build/extracted/local/exefs
-
-# 3. System fonts, from the game card's own system-update partition (NSP: use --firmware <unpacked firmware NCAs>)
-.venv/bin/python ../totk/scripts/extract_shared_fonts.py --keys "$KEYS" --xci "$GAME" \
-    --output Odyssey_build/extracted/firmware/shared-fonts
-
-# 4. Rewrite the ARM64 modules ahead of time (each output is checked against the pinned hashes in step 5)
-mkdir -p Odyssey_build/rewritten && ln -s ../rewritten Odyssey_build/rewritten/local
-for m in main sdk subsdk0; do
-  DM_RULESET=native DM_PRIVATE_GATES=0 .venv/bin/python ../by3/third_party/d2r/patch_nso.py \
-      Odyssey_build/extracted/$m Odyssey_build/rewritten $m
-done
-
-# 5. Loader tables (verifies the ExeFS, the rewrite and the RomFS against assets/expected-local-update.json)
-.venv/bin/python scripts/prepare_runtime.py
-
-# 6. Shader tools and the runtime
-git clone https://github.com/KhronosGroup/SPIRV-Cross.git Odyssey_build/src/SPIRV-Cross
-git -C Odyssey_build/src/SPIRV-Cross checkout aa217aeb6c9f0ace7a0ab233b28807edf45eb165
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make -j8 runtime
-
-# 7. Whole-game shader seed (takes a while; avoids most shader stutter on first play)
-.venv/bin/python scripts/prepare_odyssey_shader_seed.py --output Odyssey_build/build/shader-seed
-
-# 8. The app: Odyssey_build/Odyssey.app, with saves, shader cache and logs in Odyssey_build/Odyssey Data
-.venv/bin/python scripts/package_native_app.py
+.venv/bin/python scripts/build_odyssey.py --game YOUR_GAME.xci --keys prod.keys --firmware YOUR_FIRMWARE_FOLDER
 open Odyssey_build/Odyssey.app
 ```
 
-Optional, after the first launch: `scripts/precompile_cached_shaders.py` compiles the translated shaders into Metal
-libraries ahead of time, then run step 8 again.
+The script runs eight steps and stops with a clear message if something is missing:
+
+1. check the input (title, version, integrity; it prints no keys or game data);
+2. extract the program modules and merge the base game with the update;
+3. extract the system fonts;
+4. rewrite the ARM64 modules ahead of time;
+5. verify the modules, the rewrite and the game data against the pinned 1.3.0 hashes;
+6. build the shader tools (pinned SPIRV-Cross) and the runtime;
+7. prepare the whole-game shader seed, so first play stutters much less (`--skip-seed` leaves it out);
+8. extract the game's icon and package `Odyssey.app`, with saves, shader cache and logs in `Odyssey Data` beside it.
+
+Each step is skipped when its verified output is already there, so after an error you fix the cause and run the same
+command again. Other options: `--work FOLDER` (a folder inside `games/odyssey` whose name ends in `_build`, with no
+space in its path below `games/odyssey`, since `make` can't handle spaces), `--developer-dir` for another Xcode.
+
+**Tested 23 October 2026** from an empty folder on the M3 test Mac with a 1.3.0 card dump: about 9 minutes in all
+(the shader seed about 6, packaging about 2). The rewritten modules, the merged game data and all 129,602 shader-seed files came
+out byte-identical to the known-good build, and the new app started and showed the game's opening screen. Not yet
+tried on a second Mac or with an NSP.
+
+Optional, after you've played a while: `scripts/precompile_cached_shaders.py` compiles the shaders your game has
+translated into Metal libraries ahead of time; then run the build command again to repackage.
 
 ## Playing
 

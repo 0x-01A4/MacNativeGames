@@ -12,7 +12,7 @@ from pathlib import Path
 import subprocess
 
 GAME = Path(__file__).resolve().parents[1]
-BUILD = GAME / 'Odyssey_build/build'
+BUILD = Path(os.environ.get('ODYSSEY_WORK', GAME / 'Odyssey_build')).resolve() / 'build'   # ODYSSEY_WORK: another build folder
 CACHE = BUILD / 'shader-cache/rt-totk-native-v4-unverified'
 OUTPUT = BUILD / 'shader-libs'
 FLAGS = ('-fmetal-math-mode=safe',)

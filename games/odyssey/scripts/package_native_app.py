@@ -14,7 +14,7 @@ import shutil
 import subprocess
 
 GAME = Path(__file__).resolve().parents[1]
-BUILD = GAME / "Odyssey_build"
+BUILD = Path(os.environ.get("ODYSSEY_WORK", GAME / "Odyssey_build")).resolve()   # ODYSSEY_WORK: another build folder (scripts/build_odyssey.py)
 APP = BUILD / "Odyssey.app"
 DATA = BUILD / "Odyssey Data"
 ICON = BUILD / "app-assets/OdysseyIcon.jpg"
@@ -47,7 +47,7 @@ def seed_data():
             shutil.copytree(best / "save", profile / "save", dirs_exist_ok=True)
             print(f"Seeded the save from {best.relative_to(BUILD)}.")
     cache = DATA / "shader-cache"
-    if not cache.exists():
+    if not cache.exists() and (BUILD / "build/shader-cache").is_dir():
         subprocess.run(["cp", "-cR", str(BUILD / "build/shader-cache"), str(cache)], check=True)
         print("Seeded the shader cache.")
     minutes = DATA / "session-minutes.txt"

@@ -22,8 +22,9 @@ def main():
     parser.add_argument('--output', type=Path,
                         default=HERE / 'Odyssey_build/app-assets/OdysseyIcon.jpg')
     args = parser.parse_args()
-    require(args.output.resolve().is_relative_to((HERE / 'Odyssey_build').resolve()),
-            'Icon output must stay under ignored Odyssey_build')
+    out = args.output.resolve()   # a *_build folder in games/odyssey: ignored by .gitignore, like Odyssey_build
+    require(any(parent.parent == HERE.resolve() and parent.name.endswith('_build') for parent in out.parents),
+            'Icon output must stay under an ignored *_build folder of games/odyssey')
     keys = load_keys(args.keys)
     with args.game.open('rb') as source:
         _, entries = container_entries(source, args.game.stat().st_size)

@@ -19,12 +19,13 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import sys
 
 GAME = Path(__file__).resolve().parents[1]
-BUILD = GAME / "Odyssey_build"
+BUILD = Path(os.environ.get("ODYSSEY_WORK", GAME / "Odyssey_build")).resolve()   # ODYSSEY_WORK: another build folder
 UPSTREAM = GAME.parent / "totk/scripts/prepare_shader_seed.py"
 STAGE_NUMBER = {"vs": 0, "ps": 1, "cs": 5}   # NVN stage numbers in pso_manifest.tsv rows
 
