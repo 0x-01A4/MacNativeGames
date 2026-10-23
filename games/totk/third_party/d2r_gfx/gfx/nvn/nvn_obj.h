@@ -175,17 +175,15 @@ int botw_dead_keep(uint64_t serial);
 void botw_dead_forget(const uint64_t *serials, size_t n);
 #define BOTW_DEAD_FORGET(s, n) botw_dead_forget((s), (n));
 /* Key 3 (MetalFX 2K): Breath of the Wild's own upscale of the finished 1600x900 picture into the 1920x1080 canvas is the
-   fragment shader 0af88d51 (a 3-vertex triangle: five texel reads around the fragment's own coordinates, an edge-directed
+   fragment shader bd7ffdd4 (a 3-vertex triangle: texel reads around the fragment's own coordinates, an edge-directed
    sharpening of the sampled colour; no dynamic resolution, so the valid region is the whole source). MetalFX replaces the
    whole draw (mfxup_dock; botw.md). */
 void botw_mfx_scene_ready(void);   /* the upscale draw happened (or MetalFX replaced it): the canvas holds the scene */
-/* 1.9.0's upscale draw is bd7ffdd4 (nine texel reads; same canvas, source, mask and full-canvas draw), found by its
-   1600x900 source and 1920x1080 target on the Kakariko route. */
-#ifdef GAME_BOTW190
+/* The same shader in 1.6.0 and 1.9.0. It was first recorded as 0af88d51, the key the runtime gave it before the control
+   section's own size went into the key (2026-10-20, botw.md); its code is byte for byte that of bd7ffdd4, the key since,
+   so 1.6.0 never matched the old one: no scene for key 2 (#177) and no MetalFX in place of the upscale for key 3
+   (2026-10-23). 1.9.0 found bd7ffdd4 by its 1600x900 source and 1920x1080 target on the Kakariko route. */
 #define BOTW_MFXUP_KEY "bd7ffdd435c6c3bc997653d5fb9a0cc7f2f411dd51ce88c3cafe6574c8624908-"
-#else
-#define BOTW_MFXUP_KEY "0af88d51bb12a2346b03bb2586d131def5a631271df192779b701efba6eb7f70-"
-#endif
 #define BOTW_MFXUP_DOCK_KEY(fs) int botw_ = !strncmp((fs)->key, BOTW_MFXUP_KEY, 65); if (botw_) botw_mfx_scene_ready();
 #define BOTW_AND_NOT_DOCK && !botw_
 #define BOTW_MFXUP_DOCK_REGION(cw, ch, src) if (botw_ && !why) { (cw) = (src).width; (ch) = (src).height; }
