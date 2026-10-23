@@ -14,6 +14,7 @@
 uint32_t runtime_thread_current_handle(void);
 static void botw_aspect_install(Module *m);   /* key 4, end of the file */
 static int patch_output_res(Module *m);   /* native output size, after runtime_output_res */
+static void botw_output_tick(void);       /* the size static follows the canvas after the start */
 static void botw_aspect_apply(void);
 
 /* Real-time frame step (TOTK_REALTIME=0: as shipped). ksys::VFR (singleton pointer main+0x2d1e170, built at main+0x183eb98)
@@ -147,6 +148,7 @@ static void pad_tick_advance(void) {
 }
 void runtime_frame_step_update(uint64_t now_ns) {
     botw_aspect_apply();   /* key 4 */
+    botw_output_tick();    /* key 3 */
     if (!frame_step_data || !now_ns) return;
     frame_step_measure(now_ns);
     if (pad_tick) pad_tick_advance();
@@ -606,70 +608,122 @@ int botw_jq_hook(void *context) {   /* SIGTRAP from loader.c crash(): 1 = it was
 #undef U64
 int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }   /* no scene size above 1600x900 for the heaps (romfs.c) */
 #ifdef GAME_BOTW160
-/* Native output size, 1.6.0 (TOTK_OUTPUT_RES=<w>x<h>, e.g. 2560x1440; for now at the start only, key 3 does not switch
-   it yet). The game takes its TV size from two places (2026-10-23, both found in the code): a function-local static
-   {1920, 1080} at main+0x2cceb10 that six guarded initialisers write (the framework's swapchain, made once at the start,
-   the system task's TV size, the dungeon map and the noise gauge read it), and the docked branch of the display-mode
-   function (main+0x1821670..0x18216ac), which writes the screen and render widths (+0x1290: 1920.0 and the shipped
-   1600.0, which patch_render_1080 makes 1920.0), the system task's TV size (+0x4c0) and the window crop. Both become
-   <w>x<h>, the scene included (render width = screen width, as the 1080p patch already has it). The heaps are fixed in
-   the code (no HeapDef): the render-target heap 115 -> 320 MiB, the graphics system's (the swapchain's) 48 -> 64 MiB,
-   SetMemoryHeapSize and the root heap +224 MiB, and the host's application pool the same (runtime_output_res_extra_bytes,
-   services.c). The sizes are a first estimate, to be measured in play. */
-static unsigned g_out_w, g_out_h;
+/* Output size, 1.6.0: key 3 cycles off -> MetalFX 2K -> native 2K -> off, as on Tears of the Kingdom 1.4.3 (user
+   2026-10-23). The game takes its TV size from two places (both found in the code): a function-local static {1920, 1080}
+   at main+0x2cceb10 that six guarded initialisers write (the framework makes the swapchain from it once at the start; the
+   system task's TV size, the dungeon map and the noise gauge read it), and the docked branch of the display-mode function
+   (main+0x1821670..0x18216ac), which writes the screen and render widths (+0x1290: 1920.0 and the shipped 1600.0), the
+   system task's TV size (+0x4c0, which Renderer::calc pushes to the TV display every frame) and the window crop.
+   TOTK_OUTPUT_RES unset or auto (the default): the initialisers make a 2560x1440 swapchain, the docked branch takes its
+   sizes from the data page after the module (+16 {screen, render width} floats, +24 {width, height}), starting at
+   1920x1080 drawn in the swapchain's top-left (the window crop), and key 3 rewrites them and asks the display-mode
+   function to apply the current mode again (+0x123d = +0x123e of *(main+0x2cceaf0), as the game itself does at
+   main+0x1821624; it takes the request under its lock at main+0x1821644). The static follows the canvas after the start.
+   <w>x<h>: that size from the start, fixed. 0: the shipped 1920x1080 swapchain, no switching (patch_render_1080 then
+   renders the scene at 1080p). Heaps are fixed in the code (no HeapDef): render targets 115 -> 320 MiB, the graphics
+   system (the swapchain) 48 -> 64 MiB, SetMemoryHeapSize and the root block +224 MiB, the host's application pool the
+   same (runtime_output_res_extra_bytes, services.c); native 2K was played without a heap failure (user 2026-10-23). */
+enum { OUT_OFF, OUT_AUTO, OUT_FIXED };
+static int g_out_mode = -1;
+static unsigned g_out_w, g_out_h;            /* the largest canvas: the swapchain and the heaps are made for it */
+static _Atomic uint64_t g_out_cur;           /* the canvas now, w | h << 32 */
+static _Atomic uint64_t *g_out_page;         /* the data page + 16: [0] {screen, render width} floats, [1] {width, height} */
+static uint8_t *g_out_main;
+static void output_parse(void) {
+    if (g_out_mode >= 0) return;
+    const char *e = getenv("TOTK_OUTPUT_RES"); unsigned a, b; char tail;
+    if (e && !strcmp(e, "0")) { g_out_mode = OUT_OFF; return; }
+    if (!e || !*e || !strcmp(e, "auto")) { g_out_mode = OUT_AUTO; g_out_w = 2560; g_out_h = 1440; return; }
+    if (sscanf(e, "%ux%u%c", &a, &b, &tail) != 2 || a < 1280 || b < 720 || a > 7680 || b > 4320)
+        runtime_fail("TOTK_OUTPUT_RES must be auto, 0 or <width>x<height> (1280x720 .. 7680x4320)");
+    g_out_mode = OUT_FIXED; g_out_w = a; g_out_h = b;
+}
 int runtime_output_res(unsigned *w, unsigned *h) {
-    static int parsed;
-    if (!parsed) {
-        parsed = 1;
-        const char *e = getenv("TOTK_OUTPUT_RES"); unsigned a, b; char tail;
-        if (e && *e && strcmp(e, "0") && strcmp(e, "auto")) {
-            if (sscanf(e, "%ux%u%c", &a, &b, &tail) != 2 || a < 1280 || b < 720 || a > 7680 || b > 4320 || a > 0xffff || b > 0xffff)
-                runtime_fail("TOTK_OUTPUT_RES must be <width>x<height> (1280x720 .. 7680x4320)");
-            float f = (float)a; uint32_t bits; memcpy(&bits, &f, 4);
-            if (bits & 0xffff) runtime_fail("TOTK_OUTPUT_RES: this width cannot be written by the patched mov / movk (its float has low bits)");
-            g_out_w = a; g_out_h = b;
-        }
-    }
-    if (!g_out_w) return 0;
+    output_parse();
+    if (g_out_mode == OUT_OFF) return 0;
     if (w) *w = g_out_w;
     if (h) *h = g_out_h;
     return 1;
 }
-uint64_t runtime_output_size_current(void) { unsigned w = 1920, h = 1080; runtime_output_res(&w, &h); return w | ((uint64_t)h << 32); }
+uint64_t runtime_output_size_current(void) { uint64_t c = atomic_load(&g_out_cur); return c ? c : 1920ull | (1080ull << 32); }
 #define OUTPUT_EXTRA (224ull << 20)
 uint64_t runtime_output_res_extra_bytes(void) { return runtime_output_res(NULL, NULL) ? OUTPUT_EXTRA : 0; }
 static uint32_t movz_x(unsigned rd, unsigned imm16, unsigned hw) { return 0xd2800000u | (hw << 21) | (imm16 << 5) | rd; }
 static uint32_t movk_x(unsigned rd, unsigned imm16, unsigned hw) { return 0xf2800000u | (hw << 21) | (imm16 << 5) | rd; }
+static uint64_t output_floats(unsigned screen, unsigned render) {
+    float a = (float)screen, b = (float)render; uint32_t x, y; memcpy(&x, &a, 4); memcpy(&y, &b, 4);
+    return x | ((uint64_t)y << 32);
+}
+static void output_page(unsigned w, unsigned h) {   /* what the docked branch writes from its next run on */
+    const char *e = getenv("TOTK_RENDER_RES");
+    unsigned render = w == 1920 && h == 1080 && e && !strcmp(e, "900") ? 1600 : w;   /* the shipped 1600x900 scene at 1080p only */
+    atomic_store(&g_out_page[0], output_floats(w, render));
+    atomic_store(&g_out_page[1], w | ((uint64_t)h << 32));
+    atomic_store(&g_out_cur, w | ((uint64_t)h << 32));
+}
+static void output_static(void) { uint64_t c = atomic_load(&g_out_cur); memcpy(g_out_main + 0x2cceb10, &c, 8); }
+static int output_reapply(void) {
+    uint64_t g; memcpy(&g, g_out_main + 0x2cceaf0, 8);
+    if (!g) return 0;
+    volatile uint8_t *gfx = (volatile uint8_t *)(uintptr_t)g;
+    uint8_t mode = gfx[0x123e];
+    if (mode != 0 && mode != 2) return 0;   /* docked only: handheld and VR keep their own sizes */
+    gfx[0x123d] = mode;
+    return 1;
+}
+static void output_switch(unsigned w, unsigned h) {
+    output_page(w, h); output_static();
+    int ok = output_reapply();
+    fprintf(stderr, "[botw] output %ux%u%s\n", w, h, ok ? " (the display mode applies it at the next frame)" : ": the game is not in a docked mode now; it applies when it is");
+}
+/* At each present: once the framework has made the swapchain from the static, the static follows the canvas (the dungeon
+   map and the noise gauge scale by it every call). */
+static void botw_output_tick(void) {
+    static int done;
+    if (done || g_out_mode != OUT_AUTO || !g_out_page) return;
+    done = 1; output_static();
+}
 static int patch_output_res(Module *m) {
     unsigned w, h; if (!runtime_output_res(&w, &h)) return 0;
+    if (w > 0xffff || h > 0xffff) runtime_fail("TOTK_OUTPUT_RES too large");
     static const uint32_t size_init[] = {0xe563dc, 0xe56410, 0x113fb48, 0x1140208, 0x1186ce0, 0x1805028};
     static const struct { uint32_t off, original; } check[] = {
-        {0x1821670, 0xd2a89e08}, {0x1821674, 0xf2e89908}, {0x1821678, 0xf9094b88}, {0x1821684, 0xd280f009}, {0x1821688, 0xf2c08709},
-        {0x182168c, 0xf9026109}, {0x18216ac, 0xf8054109},
+        {0x1821670, 0xd2a89e08}, {0x1821674, 0xf2e89908}, {0x1821678, 0xf9094b88}, {0x182167c, 0xf000a508}, {0x1821680, 0xf9408108},
+        {0x1821684, 0xd280f009}, {0x1821688, 0xf2c08709}, {0x182168c, 0xf9026109}, {0x18216ac, 0xf8054109},
         {0x1804c44, 0x52a0e608}, {0xe550a0, 0x320807e0}, {0xe536dc, 0x52b86000}, {0xe53fa0, 0x52b82015},
     };
     uint32_t word;
     for (size_t i = 0; i < sizeof size_init / sizeof *size_init; i++) {
         memcpy(&word, m->base + size_init[i], 4); uint32_t k; memcpy(&k, m->base + size_init[i] + 12, 4);
-        if (word != 0xd280f009u || k != 0xf2c08709u) { fprintf(stderr, "[botw] output size main+%#x: %08x / %08x\n", size_init[i], word, k); runtime_fail("native output size requires the 1.6.0 size initialisers"); }
+        if (word != 0xd280f009u || k != 0xf2c08709u) { fprintf(stderr, "[botw] output size main+%#x: %08x / %08x\n", size_init[i], word, k); runtime_fail("the output size requires the 1.6.0 size initialisers"); }
     }
     for (size_t i = 0; i < sizeof check / sizeof *check; i++) {
         memcpy(&word, m->base + check[i].off, 4);
-        if (word != check[i].original) { fprintf(stderr, "[botw] output size main+%#x: found %08x expected %08x\n", check[i].off, word, check[i].original); runtime_fail("native output size requires the 1.6.0 display-mode and heap instructions"); }
+        if (word != check[i].original) { fprintf(stderr, "[botw] output size main+%#x: found %08x expected %08x\n", check[i].off, word, check[i].original); runtime_fail("the output size requires the 1.6.0 display-mode and heap instructions"); }
     }
-    uint32_t mw = movz_x(9, w, 0), mh = movk_x(9, h, 2);
+    uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
+    if (data_off + 0x4000 != m->size) runtime_fail("the output size: no data page after the main module");
+    const uint64_t page = (uintptr_t)m->base + data_off;
+    g_out_main = m->base; g_out_page = (_Atomic uint64_t *)(void *)(page + 16);
+    output_page(g_out_mode == OUT_AUTO ? 1920 : w, g_out_mode == OUT_AUTO ? 1080 : h);
+    uint32_t mw = movz_x(9, w, 0), mh = movk_x(9, h, 2);   /* the swapchain at the largest size */
     for (size_t i = 0; i < sizeof size_init / sizeof *size_init; i++) { memcpy(m->base + size_init[i], &mw, 4); memcpy(m->base + size_init[i] + 12, &mh, 4); }
-    float f = (float)w; uint32_t fb; memcpy(&fb, &f, 4);
-    uint32_t fs = movz_x(8, fb >> 16, 1), fr = movk_x(8, fb >> 16, 3);   /* {screen width, render width} = {w, w} */
-    memcpy(m->base + 0x1821670, &fs, 4); memcpy(m->base + 0x1821674, &fr, 4);
-    memcpy(m->base + 0x1821684, &mw, 4); memcpy(m->base + 0x1821688, &mh, 4);
+    const uint32_t branch[4] = {
+        adrp_reg(9, (uintptr_t)m->base + 0x1821670, page),   /* adrp x9, page */
+        0xf9400928u,                                         /* ldr x8, [x9, #16]: {screen, render width} */
+        0xf9400d29u,                                         /* ldr x9, [x9, #24]: {width, height} (at 0x1821684) */
+        0xd503201fu,                                         /* nop */
+    };
+    memcpy(m->base + 0x1821670, &branch[0], 4); memcpy(m->base + 0x1821674, &branch[1], 4);
+    memcpy(m->base + 0x1821684, &branch[2], 4); memcpy(m->base + 0x1821688, &branch[3], 4);
     const uint32_t heap_render = 0x52a28008u;   /* mov w8, #0x14000000: 320 MiB */
     const uint32_t heap_gfx = 0x320603e0u;      /* mov w0, #0x4000000: 64 MiB */
     const uint32_t heap_size = 0x52ba2000u;     /* mov w0, #0xd1000000: SetMemoryHeapSize +224 MiB */
     const uint32_t heap_root = 0x52b9e015u;     /* mov w21, #0xcf000000: the root block +224 MiB */
     memcpy(m->base + 0x1804c44, &heap_render, 4); memcpy(m->base + 0xe550a0, &heap_gfx, 4);
     memcpy(m->base + 0xe536dc, &heap_size, 4); memcpy(m->base + 0xe53fa0, &heap_root, 4);
-    fprintf(stderr, "[botw] native output %ux%u (TOTK_OUTPUT_RES): the swapchain, the scene and the window crop at that size; heaps: render 320 MiB, graphics 64 MiB, +224 MiB (21 instructions verified)\n", w, h);
+    fprintf(stderr, "[botw] output: a %ux%u swapchain, starting at %s; heaps: render 320 MiB, graphics 64 MiB, +224 MiB (23 instructions verified)%s\n",
+            w, h, g_out_mode == OUT_AUTO ? "1920x1080" : "that size", g_out_mode == OUT_AUTO ? "; key 3: off -> MetalFX 2K -> native 2K" : "");
     return 1;
 }
 #else
@@ -677,6 +731,7 @@ int runtime_output_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 uint64_t runtime_output_size_current(void) { return 1920ull | (1080ull << 32); }   /* the canvas this game draws (frontend.m's shortcut text); no output-size patch yet */
 uint64_t runtime_output_res_extra_bytes(void) { return 0; }
 static int patch_output_res(Module *m) { (void)m; return 0; }
+static void botw_output_tick(void) {}
 #endif
 /* Pre-rendered movies (the memories, the intro): the movie player advances one movie frame per game frame, so above
    30 fps they ran fast, out of step with their sound, and a cutscene could wait for ever (2026-10-20). main+0x2cbef40
@@ -702,12 +757,23 @@ int runtime_game_fps_limit(void) {
     return movie ? 30 : 0;
 }
 int runtime_output_res_toggle(void) { return 0; }
-/* Key 3 (runtime/input.c): MetalFX 2K on / off. On: MetalFX replaces the game's own upscale of the 1600x900 picture into
-   the 1080p canvas (nvn_mtl.m mfxup_dock, BOTW_MFXUP_DOCK_KEY) and upscales the canvas into a window or full screen bigger
-   than 1080p at the present (the output stage). This game has no native-2K mode yet: its canvas size is not patched. */
+/* Key 3 (runtime/input.c). MetalFX 2K: MetalFX replaces the game's own upscale of the scene into the 1080p canvas
+   (nvn_mtl.m mfxup_dock, BOTW_MFXUP_DOCK_KEY) and upscales the canvas into a window or full screen bigger than 1080p at
+   the present (the output stage). 1.6.0 with a 2K-capable start (TOTK_OUTPUT_RES auto, the default): off -> MetalFX 2K ->
+   native 2K (the canvas and the scene at 2560x1440, output_switch) -> off; otherwise MetalFX 2K on / off. */
 int runtime_output_mode_cycle(void) {
     extern int mfxup_enabled(void);
     extern void dm_gfx_set_flag(const char *name, int value);
+#ifdef GAME_BOTW160
+    if (g_out_mode == OUT_AUTO && g_out_page) {
+        unsigned cw = (unsigned)(atomic_load(&g_out_cur) & 0xffffffffu);
+        if (cw > 1920) { output_switch(1920, 1080); fprintf(stderr, "[botw] key 3: 关闭 2K\n"); return 1; }
+        if (mfxup_enabled()) {
+            dm_gfx_set_flag("mfx_output", 0); dm_gfx_set_flag("mfx_upscale", 0);
+            output_switch(g_out_w, g_out_h); fprintf(stderr, "[botw] key 3: 原生 2K\n"); return 1;
+        }
+    }
+#endif
     int next = !mfxup_enabled();
     dm_gfx_set_flag("mfx_output", next);
     dm_gfx_set_flag("mfx_upscale", next);
