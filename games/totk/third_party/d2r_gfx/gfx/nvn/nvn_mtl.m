@@ -6741,7 +6741,6 @@ static id<MTLRenderPipelineState> pso_new(MTLRenderPipelineDescriptor *d, NSStri
     }
     if (key && g_par_on) par_count(0);
     ps = [g_dev newRenderPipelineStateWithDescriptor:d error:e];
-    atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
 }
@@ -6758,7 +6757,6 @@ static id<MTLComputePipelineState> cs_new(NvShader *cs, NSError **e) {
     }
     if (g_par_on) par_count(0);
     ps = [g_dev newComputePipelineStateWithDescriptor:d options:MTLPipelineOptionNone reflection:nil error:e];
-    atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
 }
@@ -7378,6 +7376,10 @@ static void warm_worker(NSArray<NSString *> *paths, NSArray<NSString *> *files,
         NSUInteger path_index = 0;
         MLOG("后台预热：着色器库用 %d 个线程编（TOTK_WARM_THREADS），进世界后最多 2 个", warm_threads());
         g_variant_bg = 1;   // patched variants pso_desc and warm_border compile here are no stall (variant_library)
+        /* A pipeline the archive lacks (one met in play last time, from pso_user.tsv) goes into it as soon as this compiled
+           it, so the next start takes it from there (par_add). Before, play-time pipelines waited for an idle moment in the
+           world, which an iPhone never reported, and every start compiled them again (763, 2026-10-22). */
+        par_write_in_place = 1;
         uint64_t done = 0;
         for (NSString *path in paths) {
             NSString *txt = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
@@ -7490,7 +7492,7 @@ static void warm_worker(NSArray<NSString *> *paths, NSArray<NSString *> *files,
              (unsigned long long)atomic_load(&g_warm_pipeline_count),atomic_load(&g_warm_pipeline_ns)/1e6);
         MLOG("预热库来源：预编译 %llu 次，源码编译 %llu 次", (unsigned long long)atomic_load(&g_rt_prebuilt), (unsigned long long)atomic_load(&g_rt_compiled));
     }
-    g_variant_bg = 0;
+    g_variant_bg = 0; par_write_in_place = 0;   // a queue thread: other work may run on it next
     atomic_store(&g_warm_running, 0);
     if (runtime_warm_done) runtime_warm_done();
 }
@@ -7545,10 +7547,6 @@ static void warm_filled(void) {
    cache take a few ms each. TOTK_WARM_LIGHT=0 turns it off. */
 static _Atomic int g_world_on;   // set at the first world frame (hle_nvn.c, nvnQueuePresentTexture)
 void mtl_note_world(void) { atomic_store(&g_world_on, 1); }
-static int par_game_idle(void) {   // totk_pipeline_archive.h: additions to the archive wait for this
-    return atomic_load(&g_world_on) && !atomic_load(&g_warm_running) &&
-           clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - atomic_load(&g_par_last_compile_ns) > PAR_IDLE_NS;
-}
 static void warm_light(void) {
 #if TARGET_OS_IPHONE
     const char *e = getenv("TOTK_WARM_LIGHT"); if (e && !atoi(e)) return;
@@ -7594,7 +7592,7 @@ static void warm_light(void) {
 static void warm_fill_archive(NSArray<NSString *> *paths) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
         uint64_t t0 = bp_now(), nr = 0, nc = 0, nfail = 0; NSMutableSet<NSString *> *seen = [NSMutableSet set];
-        atomic_store(&par_filling, 1); par_on_fill_thread = 1;
+        atomic_store(&par_filling, 1); par_write_in_place = 1;
         NSMutableDictionary<NSString *, NvShader *> *dict = [NSMutableDictionary dictionary];
         MLOG("管线存档：后台填充开始（%lu 份管线清单，每条建完写成自己的文件就丢）", (unsigned long)paths.count);
         for (NSString *path in paths) {
@@ -7620,7 +7618,7 @@ static void warm_fill_archive(NSArray<NSString *> *paths) {
             }
         }
         [dict removeAllObjects];
-        atomic_store(&par_filling, 0); par_on_fill_thread = 0;
+        atomic_store(&par_filling, 0); par_write_in_place = 0;
         MLOG("管线存档：后台填充完成，渲染管线 %llu 条、计算管线 %llu 条，失败 / 缺着色器 %llu，用时 %.1f s；下次启动从存档取",
              nr, nc, nfail, (bp_now() - t0) / 1e9);
     });
