@@ -7110,6 +7110,12 @@ static int g_pp_more, g_pp_rescans; static uint64_t g_pp_sync; static scan_budge
 // Statistics line (pso_predict_rest, every 100 scans): guesses refused because the table was full, stale guesses freed,
 // time draws waited for a background compile, scans and which budget ended them.
 static uint64_t g_pp_full, g_pp_reclaimed, g_pp_waits, g_pp_wait_ns, g_pp_scans, g_pp_scan_ns, g_pp_stop[3];
+/* The frame's scan budget (4 ms) was spent early in a burst, and every later miss of the frame was then built here one
+   after another: 37 pipelines in 865 ms in one frame (Tears of the Kingdom 1.1.2, a new area, 2026-10-23), while the
+   cores the background builds use sat idle. Adaptive budget: a frame may also scan as long as it has spent on
+   synchronous builds, so one 23 ms build pays for about ten scans that hand the rest of the submission to the
+   background. TOTK_PSO_SCAN_ADAPT=0 turns it off. */
+static uint64_t g_pp_sync_frame, g_pp_sync_frame_ns;   // the frame of the synchronous builds below, and their time in it
 static void pso_predict_rest(void);
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
 // Called only with g_pp_mu held. An in-flight worker still owns its slot:
@@ -7305,12 +7311,17 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
     ps = g_pso_lmap ? nil : pso_pend_take(&k);
     if (ps) g_pp_taken++;
     else {
-        static int frame_us = -1; if (frame_us < 0) frame_us = env_us("TOTK_PSO_PREDICT_FRAME_US", 4000);
-        if (!scan_budget_left(&g_pp_budget, frame_us)) { if (g_pp_submit_mark != g_sub_serial) { g_pp_submit_mark = g_sub_serial; g_pp_rescans = 0; g_pp_more = 0; } }   // this frame's scans are spent
-        else if (g_pp_submit_mark != g_sub_serial) { g_pp_submit_mark = g_sub_serial; g_pp_rescans = 0; g_pp_more = 0; pso_predict_rest(); }   // 本次提交第一次缺：先把后面的丢出去并行编，再同步编眼前这条 | First miss in this submission: first kick the later ones out to compile in parallel, then synchronously compile the one at hand
+        static int frame_us = -1, adapt = -1;
+        if (frame_us < 0) { frame_us = env_us("TOTK_PSO_PREDICT_FRAME_US", 4000); const char *a = getenv("TOTK_PSO_SCAN_ADAPT"); adapt = !a || atoi(a); }
+        uint64_t cf = atomic_load(&g_cur_frame); if (g_pp_sync_frame != cf) { g_pp_sync_frame = cf; g_pp_sync_frame_ns = 0; }
+        int left = scan_budget_left(&g_pp_budget, frame_us) || (adapt && g_pp_budget.used_ns < g_pp_sync_frame_ns);   // the first call resets the budget at a new frame
+        if (!left) { if (g_pp_submit_mark != g_sub_serial) { g_pp_submit_mark = g_sub_serial; g_pp_rescans = 0; g_pp_more = adapt; } }   // this frame's scans are spent (adaptive: a later miss, once a build has paid for it, scans)
+        else if (g_pp_submit_mark != g_sub_serial) { g_pp_submit_mark = g_sub_serial; g_pp_rescans = 0; g_pp_more = 0; pso_predict_rest(); }   // 本次提交第一次缺：先把后面的丢出去并行编，再同步编眼前这条 | First miss in this submission: first kick the later ones out to compile in parallel, then synchronously compile the one at hand 
         else if (g_pp_more && g_pp_rescans < pso_rescans()) { g_pp_rescans++; pso_predict_rest(); }   // TOTK: the last scan stopped early: go on from here
+        uint64_t b0 = bp_now();   // the build alone pays for scans (not the scan just above, or scans would pay for themselves)
         MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, fs, bfn ? bfn : g_pso_fsfn, g_pso_lmap != NULL);
         ps = pso_new(d, pso_archive_key(&k, vs, fs, g_pso_lmap != NULL), &e); g_pp_sync++;
+        g_pp_sync_frame_ns += bp_now() - b0;
     }
     g_bp_pso_n++; g_bp_pso_ns += bp_now() - bt;
     if (!ps) { static int said; if (said++ < 12) MLOG("【红】建渲染管线失败：%s（vs %s ps %s dfmt %d sfmt %d cfmt0 %d samples %d）", e.localizedDescription.UTF8String, vs->key, fs ? fs->key : "-", (int)k.dfmt, (int)k.sfmt, (int)k.cfmt[0], (int)k.samples); else if (said == 12) MLOG("【红】建渲染管线失败：后续不再逐条打印"); return nil; }
