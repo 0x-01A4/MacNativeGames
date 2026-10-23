@@ -3,9 +3,12 @@
    16:9 or 21:9, where it would show the same. TOTK_ASPECT=32:9, 16:10, 3440x1440 or 2.39 takes the place of 21:9 and
    starts on it; TOTK_ASPECT=display starts on fitting the window. iPhone / iPad: always the screen's shape (no key
    4; TOTK_ASPECT=0 keeps 16:9), see the TARGET_OS_IPHONE part of aspect_install.
-   The game keeps drawing into its 16:9 canvas, but with the camera's aspect ratio set to the other one, so the picture
-   holds the other view squeezed into it; the present pass then stretches it over the window (nvn_mtl.m
-   present_stretch asks runtime_aspect_now), which restores the proportions on a screen of that shape.
+   Not a stretched picture: the camera's projection takes the other aspect ratio, so more of the world is seen at the
+   sides and shapes keep their proportions (widening only the viewport's width / height division, the first try, gave a
+   stretched 16:9 view; the user saw it at once, 2026-10-19). The game still draws into its 16:9 canvas, which then
+   holds that wider view squeezed across; the present pass widens the canvas back over the window (nvn_mtl.m
+   present_stretch asks runtime_aspect_now). The pixels are the canvas's: across, 1920 of them (1280 on the phone) cover
+   the wider window, so it is that much less sharp across; the 3D scene keeps the game's own render size.
    The community's TOTK-Ultrawide mod for emulators (GPL; none of its code is used here) changes the camera parameter
    DefaultAspect (1.777778 in main's read-only data) and a viewport routine's width / height division. DefaultAspect is
    only copied when a camera is made, so it cannot follow a key; instead each place that hands an aspect ratio to the
@@ -99,9 +102,9 @@ int runtime_aspect_toggle(void) {
 static inline void aspect_install(Module *m, const char *version, const uint64_t *sites, unsigned nsite, unsigned ncam,
                                   uint64_t stub_off, uint64_t vert_off, uint64_t data_off) {
 #if TARGET_OS_IPHONE
-    /* The phone fills its screen (user 2026-10-23: "iphone 全屏"): the game keeps its 1280x720 canvas, the camera takes the
-       screen's shape (2.16 on an iPhone 14) and the present pass stretches the canvas over it, so it costs no memory; the
-       picture is 82% as sharp across. The stubs are already in the embedded main (the iOS export runs this function on
+    /* The phone fills its screen (user 2026-10-23: "iphone 全屏"), as key 4 on the Mac: the camera's projection takes the
+       screen's shape (2.16 on an iPhone 14), so shapes keep their proportions, and the 1280x720 canvas holding that view
+       is widened back over the 1558x720 drawable. No extra memory; 1280 pixels across cover the screen's width (82%). The stubs are already in the embedded main (the iOS export runs this function on
        the Mac), so here each site is only checked to branch to its stub and the ratio slot on the data page is used.
        TOTK_ASPECT=0 (or 16:9) keeps the game's 16:9 with bars at the sides. */
     (void)ncam; (void)vert_off;

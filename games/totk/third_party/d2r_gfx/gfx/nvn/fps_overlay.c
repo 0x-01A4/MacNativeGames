@@ -153,15 +153,17 @@ void fps_overlay_raster_line(const char *text, int highlight, int scale, uint8_t
 }
 
 void fps_overlay_text(const fps_overlay_info *info, char *text, size_t n) {
-    char fps[8], ss[12];
+    char fps[8], ss[12];   // ss: the output resolution, then the internal one in brackets
     if (info->fps < 0) snprintf(fps, sizeof fps, "--");
     else snprintf(fps, sizeof fps, "%d", info->fps > 999 ? 999 : info->fps);
     size_text(ss, sizeof ss, info->screen_w, info->screen_h);
+    char sc[16] = "";
+    if (info->scene_w > 0 && info->scene_h > 0) snprintf(sc, sizeof sc, " (%dx%d)", info->scene_w > 9999 ? 9999 : info->scene_w, info->scene_h > 9999 ? 9999 : info->scene_h);
     char gen[8] = "";
     if (info->gen > 0 && info->fps >= 0) snprintf(gen, sizeof gen, "+%d", info->gen > 999 ? 999 : info->gen);   // interpolated frames a second (key 2)
     // MetalFX did the upscale in the last frames (key 3 selects the manual MetalFX mode); 2K: true 2K output.
     // The whole line in the system font, so switching MetalFX does not switch the font.
-    snprintf(text, n, "FPS %s%s  %s%s%s", fps, gen, ss, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
+    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
 }
 
 void fps_overlay_raster(const fps_overlay_info *info, int scale, uint8_t *out, int *box_w, int *box_h) {
