@@ -2829,12 +2829,19 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     // mistakenly stall the title rather than the save-loading screen.
     // Hold that first frame behind the loading screen if cache warm-up is still
     // active. This does not claim that an undiscovered variant cannot appear.
+    // The Mac waits until the warm-up is done, however long (user 2026-10-23: play
+    // starts with every listed pipeline ready); the phone keeps the 15 s limit.
     { static int gate; static uint64_t last_draws;
       uint64_t passes, draws; mtl_stats(&passes, &draws);
       uint64_t this_draws = draws >= last_draws ? draws - last_draws : 0;
       last_draws = draws;
       if (!gate && ((g_nvn_loadscreen_up && g_nvn_loadscreen_up()) || this_draws > 2000)) {
-          gate = 1; extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(15000);
+#if TARGET_OS_IPHONE
+          const int warm_limit_ms = 15000;
+#else
+          const int warm_limit_ms = -1;
+#endif
+          gate = 1; extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(warm_limit_ms);
           if (ms) LOG("[nvn] 首次进局等管线预热 %d ms（本帧绘制 %llu）", ms, (unsigned long long)this_draws);
       } }
     present_cfg(o);
