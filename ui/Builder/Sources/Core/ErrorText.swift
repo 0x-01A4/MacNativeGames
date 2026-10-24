@@ -1,12 +1,13 @@
 import Foundation
 
 /// A build_app.py error code (BuildError.code) in plain language: what went wrong and what to do next. The script's own
-/// message is always shown under it, since it names the exact file, command or size.
+/// message is always shown under it, since it names the exact file, command or size. The games and their versions come
+/// from the checkout (games/*/game.json and their assets).
 struct ErrorText: Equatable {
     var title: String
     var next: String
 
-    init(code: String?) {
+    init(code: String?, games: [Game] = []) {
         switch code {
         case "toolchain":
             title = String(localized: "Developer tools are missing")
@@ -19,10 +20,15 @@ struct ErrorText: Equatable {
             next = String(localized: "Use prod.keys from the console the game was dumped on, and check that the dump is complete.")
         case "wrong_game":
             title = String(localized: "This isn't a supported game file")
-            next = String(localized: "Pick the base game of Tears of the Kingdom or Breath of the Wild, and its update as the update.")
+            next = games.isEmpty
+                ? String(localized: "Pick the base game, and its update as the update.")
+                : String(localized: "Pick the base game of one of these, and its update as the update: \(ListFormatter.localizedString(byJoining: games.map(\.name))).")
         case "unsupported_version":
             title = String(localized: "This version isn't supported")
-            next = String(localized: "Supported: Tears of the Kingdom 1.0.0 with no update or the 1.1.2, 1.2.1 or 1.4.3 update; Breath of the Wild 1.6.0 or 1.9.0.")
+            let known = games.filter { !$0.versions.isEmpty }
+            next = known.isEmpty
+                ? String(localized: "Check which game versions this checkout builds in its README.")
+                : String(localized: "Supported: \(known.map { "\($0.name) \(ListFormatter.localizedString(byJoining: $0.versions))" }.joined(separator: "; ")).")
         case "hash_mismatch":
             title = String(localized: "The game data doesn't match")
             next = String(localized: "The dump may be incomplete, damaged or another version. Dump the game again.")

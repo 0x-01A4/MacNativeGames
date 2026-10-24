@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """A stand-in for build_app.py --json-progress: the same events, no game files, nothing written. For the Builder's tests
 and for trying the app: BUILDER_SCRIPT=<this file> "MacNativeGames Builder.app/Contents/MacOS/MacNativeGamesBuilder".
-FAKE_BUILD=ok (default) | fail | slow | noheader | schema2; FAKE_GAME=totk (default) | botw (1.9.0, with DLC);
+FAKE_BUILD=ok (default) | fail | slow | noheader | schema1 (an older script); FAKE_GAME=totk (default) | botw (1.9.0, with
+DLC) | by3 (needs its update, Mac only);
 FAKE_DELAY: seconds between events (default 0.4)."""
 import json, os, signal, sys, time
 
 mode, delay = os.environ.get('FAKE_BUILD', 'ok'), float(os.environ.get('FAKE_DELAY', '0.4'))
-botw = os.environ.get('FAKE_GAME') == 'botw'
-APP = 'Breath of the Wild' if botw else 'Tears of the Kingdom'
+GAME = os.environ.get('FAKE_GAME', 'totk')
+botw, by3 = GAME == 'botw', GAME == 'by3'
+APP = {'totk': 'Tears of the Kingdom', 'botw': 'Breath of the Wild', 'by3': 'Bayonetta 3'}[GAME]
 
 
 def event(kind, /, **fields):
@@ -24,20 +26,26 @@ argv = sys.argv[1:]
 game = argv[0] if argv else 'game.xci'
 folder = os.path.dirname(os.path.abspath(game))
 if mode != 'noheader':
-    event('hello', schema=2 if mode == 'schema2' else 1)
+    event('hello', schema=1 if mode == 'schema1' else 2)
 print('a line that is not an event', file=sys.stderr, flush=True)
 if '--inspect' in argv:
     time.sleep(delay)
     update = '--update' in argv
-    if botw and '--mod' in argv:
+    if (botw or by3) and '--mod' in argv:
         event('error', code='input', message="--mod: merging a mod's main-module patches is only wired for Tears of the Kingdom so far", log=None)
         sys.exit(1)
+    if by3:
+        event('inspect', game='by3', app_name=APP, version='v120' if update else None, display_version='1.2.0' if update else None,
+              kind='nsp', needs_fonts=False, needs_update=not update, platforms=['macos'], dlc=False, mod=False,
+              space_gb={'macos': 20}, work=os.path.join(folder, 'BY3_build'), default_out=os.path.join(folder, APP + '.app'))
+        sys.exit(0)
     version = ('botw190' if update else 'botw160') if botw else ('v143' if update else 'v0')
-    event('inspect', game='botw' if botw else 'totk', app_name=APP, version=version,
+    event('inspect', game=GAME, app_name=APP, version=version,
           display_version={'botw190': '1.9.0', 'botw160': '1.6.0', 'v143': '1.4.3', 'v0': '1.0.0'}[version],
           kind='nsp' if game.endswith('.nsp') else 'xci',
           needs_fonts=(botw or game.endswith('.nsp')) and '--firmware' not in argv and '--shared-fonts' not in argv,
-          platforms=['macos'] if botw else ['macos', 'ios'], dlc=version == 'botw190',
+          needs_update=False, platforms=['macos'] if botw else ['macos', 'ios'], dlc=version == 'botw190', mod=not botw,
+          space_gb={'macos': 22} if botw else {'macos': 40 if update else 25, 'ios': 60 if update else 45},
           work=os.path.join(folder, 'BotW_build' if botw else 'TOTK_build'), default_out=os.path.join(folder, APP + '.app'))
     sys.exit(0)
 steps = [(0, 'prepare', 'fetching the pinned SPIRV-Cross sources'), (1, 'code', 'extracting the ExeFS from the game file'),
@@ -60,4 +68,4 @@ for i, (step, stage, message) in enumerate(steps):
         sys.exit(1)
 platform = argv[argv.index('--platform') + 1] if '--platform' in argv else 'macos'
 out = argv[argv.index('-o') + 1] if '-o' in argv else os.path.join(folder, APP + ('.ipa' if platform == 'ios' else '.app'))
-event('done', out=out, game='botw' if botw else 'totk', version='v0', platform=platform)
+event('done', out=out, game=GAME, version='v0', platform=platform)

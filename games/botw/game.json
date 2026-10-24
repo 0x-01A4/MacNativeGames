@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "botw",
+  "name": "Breath of the Wild",
+  "title_id": "01007EF00011E000",
+  "bundle_id": "org.macnativegames.botw",
+  "data_folder": "BotW",
+  "build": "build_app.py",
+  "sources": ["build_app.py", "games/totk", "games/botw"],
+  "shader_contribution": {
+    "step": 500,
+    "form": "https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list-botw.yml"
+  }
+}

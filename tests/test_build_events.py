@@ -200,17 +200,20 @@ class Inspect(unittest.TestCase):
         self.assertEqual(report['type'], 'inspect')
         self.assertEqual((report['game'], report['version'], report['display_version'], report['kind']), ('totk', 'v0', '1.0.0', 'xci'))
         self.assertEqual((report['needs_fonts'], report['platforms'], report['dlc']), (False, ['macos', 'ios'], False))
+        self.assertEqual((report['needs_update'], report['mod'], report['space_gb']), (False, True, {'macos': 25, 'ios': 45}))
         self.assertEqual(report['work'], str(self.folder.resolve() / 'TOTK_build'))
         self.assertEqual(report['default_out'], str(self.folder.resolve() / 'Tears of the Kingdom.app'))
 
     def test_totk_nsp_with_update_reports_the_missing_fonts_instead_of_failing(self):
         got = self.main(self.nsp('totk.nsp'), '--update', str(self.nsp('update.nsp')))
         self.assertEqual((got[-1]['version'], got[-1]['display_version'], got[-1]['needs_fonts']), ('v143', '1.4.3', True))
+        self.assertEqual(got[-1]['space_gb'], {'macos': 40, 'ios': 60})
 
     def test_botw_base_with_update(self):
         got = self.main(self.nsp('botw.nsp'), '--update', str(self.nsp('update.nsp')), game='botw')
         self.assertEqual((got[-1]['game'], got[-1]['version'], got[-1]['platforms'], got[-1]['dlc']),
                          ('botw', 'botw190', ['macos'], True))
+        self.assertEqual((got[-1]['mod'], got[-1]['space_gb']), (False, {'macos': 22}))
         self.assertEqual(got[-1]['default_out'], str(self.folder.resolve() / 'Breath of the Wild.app'))
 
 

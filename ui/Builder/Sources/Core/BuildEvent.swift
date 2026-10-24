@@ -1,8 +1,9 @@
 import Foundation
 
-/// One line of `build_app.py --json-progress` (schema 1, ui/README.md). The fields a type does not carry are nil.
+/// One line of `build_app.py --json-progress` (schema 2, ui/README.md); a game's own build script (game.json "build")
+/// writes the same. The fields a type does not carry are nil.
 struct BuildEvent: Decodable, Equatable {
-    static let schema = 1
+    static let schema = 2
 
     var type: String
     var time: Double?
@@ -26,8 +27,11 @@ struct BuildEvent: Decodable, Equatable {
     var displayVersion: String?
     var kind: String?
     var needsFonts: Bool?
+    var needsUpdate: Bool?             // the base game alone isn't enough: the build needs its update too
     var platforms: [String]?
     var dlc: Bool?
+    var mod: Bool?                     // the game takes --mod
+    var spaceGb: [String: Int]?        // what a first build needs free, per platform
     var work: String?
     var defaultOut: String?
 
@@ -59,21 +63,33 @@ struct BuildEvent: Decodable, Equatable {
     }
 }
 
-/// The build's four steps, as build_app.py numbers them ("1/4 code" ... "4/4 app"); "update" is the data step of an update.
-enum BuildStage: Int, CaseIterable {
-    case code = 1, data, shaders, app
+/// A build's steps as its script numbers them ("1/4 code" ... "4/4 app"): how many there are and what each is, learnt
+/// from its progress events, since every game's build script has its own. Before the first event, build_app.py's four.
+struct BuildSteps: Equatable {
+    static let usual = ["code", "data", "shaders", "app"]
 
-    init?(event: BuildEvent) {
-        guard let step = event.step, let stage = BuildStage(rawValue: step) else { return nil }
-        self = stage
+    var count = 4
+    var names: [Int: String] = [:]
+
+    mutating func see(_ event: BuildEvent) {
+        guard event.type == "progress" || event.type == "heartbeat" || event.type == "notice" else { return }
+        if let of = event.of, of > 0 { count = of }
+        if let step = event.step, step > 0, let stage = event.stage { names[step] = stage }
     }
 
-    var title: String {
-        switch self {
-        case .code: String(localized: "Rewrite the game code")
-        case .data: String(localized: "Extract and verify the game data")
-        case .shaders: String(localized: "Prepare the startup shaders")
-        case .app: String(localized: "Build and check the app")
+    /// The step's stage name: the one its events gave, or build_app.py's while a build of four hasn't reached it.
+    func name(_ step: Int) -> String? {
+        names[step] ?? (count == Self.usual.count && step >= 1 && step <= count ? Self.usual[step - 1] : nil)
+    }
+
+    func title(_ step: Int) -> String {
+        switch name(step) {
+        case "code": String(localized: "Rewrite the game code")
+        case "data", "update": String(localized: "Extract and verify the game data")   // "update": the data step of an update
+        case "shaders": String(localized: "Prepare the shaders")
+        case "app": String(localized: "Build and check the app")
+        case let other?: other.replacingOccurrences(of: "_", with: " ").capitalized
+        case nil: String(localized: "Step \(step)")
         }
     }
 }

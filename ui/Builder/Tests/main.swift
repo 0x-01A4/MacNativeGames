@@ -19,9 +19,15 @@ let lines = try String(contentsOf: fixtures.appendingPathComponent("totk-build.j
 let events = lines.map(BuildEvent.parse)
 expect(events.count == 12, "12 fixture lines")
 expect(events[0]?.type == "hello" && events[0]?.schema == BuildEvent.schema, "hello carries the schema")
-expect(events[2].flatMap(BuildStage.init(event:)) == .code, "step 1 is the code stage")
-expect(events[4]?.stage == "update" && events[4].flatMap(BuildStage.init(event:)) == .data, "update counts as the data step")
-expect(events[1].flatMap(BuildStage.init(event:)) == nil, "step 0 (prepare) is before the four steps")
+var steps = BuildSteps()
+expect(steps.count == 4 && steps.title(1) == BuildSteps().title(1) && steps.name(3) == "shaders", "build_app.py's four before any event")
+events.compactMap { $0 }.forEach { steps.see($0) }
+expect(steps.name(1) == "code" && steps.name(2) == "update", "each step's stage from its events")
+expect(steps.title(2) == BuildSteps().title(2), "update reads as the data step")
+expect(steps.names[0] == nil, "step 0 (prepare) is before the steps")
+var five = BuildSteps()
+five.see(BuildEvent(type: "progress", stage: "romfs_merge", step: 2, of: 5, message: "x"))
+expect(five.count == 5 && five.title(2) == "Romfs Merge" && five.title(5) == "Step 5" && five.name(1) == nil, "another script's steps")
 expect(events[3]?.type == "heartbeat", "heartbeat")
 expect(events[7]?.out == "/Games/Tears of the Kingdom.app" && events[7]?.version == "v143", "done names the app")
 expect(events[8] == nil, "a line that is not an event stays text")
@@ -75,7 +81,7 @@ do {
     expect(status == 0, "a finished build exits 0 (got \(status))")
     expect(got.events.first?.type == "hello", "the header comes first")
     expect(got.events.last?.type == "done" && got.events.last?.out == "/Out/TOTK.app", "done names the -o app")
-    expect(got.events.filter { $0.type != "notice" }.compactMap(BuildStage.init(event:)).map(\.rawValue) == [1, 1, 2, 2, 3, 4, 4], "the steps in order")
+    expect(got.events.filter { $0.type == "progress" }.compactMap(\.step).filter { $0 > 0 } == [1, 1, 2, 3, 4, 4], "the steps in order")
     expect(got.err.contains("a line that is not an event"), "stderr arrives as text")
     expect(got.events.contains { $0.type == "notice" && $0.code == "npdm_signed" }, "notices arrive during the build")
 
@@ -87,10 +93,16 @@ do {
     expect(botw.events.last?.dlc == true && botw.events.last?.platforms == ["macos"], "Breath of the Wild 1.9.0 takes DLC, Mac only")
     let (refused, mod) = try fakeRun("ok", ["/Games/botw.xci", "-k", "/Keys/prod.keys", "--mod", "/Mods/x", "--inspect", "--json-progress"])
     expect(refused == 1 && mod.events.last?.code == "input", "a mod for Breath of the Wild is refused at inspect")
+    setenv("FAKE_GAME", "by3", 1)
+    let (_, base) = try fakeRun("ok", ["/Games/by3.nsp", "-k", "/Keys/prod.keys", "--inspect", "--json-progress"])
+    expect(base.events.last?.needsUpdate == true && base.events.last?.displayVersion == nil, "a base game that needs its update")
+    expect(base.events.last?.mod == false && base.events.last?.spaceGb == ["macos": 20], "what the game takes and needs comes from inspect")
     unsetenv("FAKE_GAME")
 
     let (inspected, report) = try fakeRun("ok", ["/Games/totk.nsp", "-k", "/Keys/prod.keys", "--inspect", "--json-progress"])
     expect(inspected == 0 && report.events.last?.needsFonts == true, "inspect of an NSP asks for fonts")
+    expect(report.events.last?.mod == true && report.events.last?.needsUpdate == false, "a game that takes a mod")
+    expect(report.events.last?.spaceGb?["ios"] == 45, "space per platform")
 
     let (failed, error) = try fakeRun("fail", ["/Games/totk.xci", "-k", "/Keys/prod.keys", "--json-progress"])
     expect(failed == 1, "a failed build exits 1 (got \(failed))")
@@ -104,6 +116,39 @@ do {
 } catch {
     expect(false, "the runner started python: \(error)")
 }
+
+// games: this checkout's games/*/game.json, and the versions from their assets
+let checkout = fixtures.appendingPathComponent("../../../..").standardizedFileURL
+let games = Game.load(repo: checkout)
+expect(Preflight.isRepo(checkout), "the checkout is found by build_app.py and its game manifests")
+expect(Set(games.map(\.id)) == ["totk", "botw", "by3"], "every game folder with a game.json (got \(games.map(\.id)))")
+let totk = games.named("totk")
+expect(totk?.versions == ["1.0.0", "1.1.2", "1.2.1", "1.4.3"], "versions from the expected-*.json files (got \(totk?.versions ?? []))")
+expect(totk?.bundleId == "org.macnativegames.totk" && totk?.shaderContribution?.step == 100, "the manifest's fields")
+expect(games.named("by3")?.shaderContribution == nil && games.named("by3")?.build == "games/by3/build.py", "a game with its own build")
+expect(ErrorText(code: "unsupported_version", games: games).next.contains("Bayonetta 3 1.2.0"), "the versions in the error text")
+expect(Game.load(repo: nil).isEmpty && !Preflight.isRepo(fixtures), "no checkout, no games")
+expect(games.script(for: URL(fileURLWithPath: "/g/x.nsp")) == "build_app.py", "an NSP goes to build_app.py, which hands Bayonetta 3 on")
+expect(games.gameExtensions == ["nsp", "xci"] && games.updateExtensions == ["nsp", "nsz"], "the file types from the manifests")
+
+// another game's manifest: its own file types; a folder without a build script yet; one that doesn't parse
+let kinds = FileManager.default.temporaryDirectory.appendingPathComponent("builder-kinds-\(getpid())")
+for (folder, json) in [
+    ("next", #"{"schema": 1, "id": "next", "name": "Next", "title_id": "0100000000010000", "build": "games/next/build.py", "files": {"game": ["xci"]}}"#),
+    ("planned", #"{"schema": 1, "id": "planned", "name": "Planned", "title_id": "0100000000020000"}"#),
+    ("broken", #"{"schema": 1, "id": "broken"}"#),
+] {
+    let dir = kinds.appendingPathComponent("games/\(folder)")
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try! json.write(to: dir.appendingPathComponent("game.json"), atomically: true, encoding: .utf8)
+}
+let other = Game.load(repo: kinds)
+expect(other.map(\.id) == ["next", "planned"], "a manifest that doesn't parse is left out (got \(other.map(\.id)))")
+expect(other.named("next")?.files.update == nil && other.named("planned")?.files.game == ["xci", "nsp"], "file types, and the default")
+let mixed = games + other
+expect(Set(mixed.accepting(URL(fileURLWithPath: "/g/x.XCI")).map(\.id)) == ["botw", "totk", "next"], "by3 takes NSPs only; a game without its build script yet is not offered")
+expect(mixed.script(for: URL(fileURLWithPath: "/g/x.xci")) == "build_app.py", "several builds take an XCI: build_app.py hands it on")
+try? FileManager.default.removeItem(at: kinds)
 
 // library: a built app's record, the checkout comparison, the contribution file
 let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("builder-tests-\(getpid())")
@@ -125,13 +170,15 @@ write("""
 """, "TOTK.app/Contents/Resources/build-info.json")
 write(plist("com.example.other"), "Other.app/Contents/Info.plist")
 write(plist("org.macnativegames.totk"), "Old.app/Contents/Info.plist")   // built before build-info.json
-let built = BuiltApp(scratch.appendingPathComponent("TOTK.app"))
+let built = BuiltApp(scratch.appendingPathComponent("TOTK.app"), games: games)
 expect(built?.info?.displayVersion == "1.4.3" && built?.info?.inputs.sharedFonts == "/Fonts", "the build record is read")
 expect(built?.info?.inputs.installModRomfs == true && built?.info?.inputs.firmware == nil, "the record's inputs")
 expect(built?.info?.builtDate != nil, "the build date parses")
-expect(BuiltApp(scratch.appendingPathComponent("Other.app")) == nil, "another app is not a game app")
-expect(BuiltApp(scratch.appendingPathComponent("Old.app")).map { $0.info == nil } == true, "an app without a record is still listed")
-expect(Freshness.of(built?.info, repo: scratch) == .unknown, "no commit in the record: unknown")
+expect(built?.game == "totk", "the game from the bundle identifier")
+expect(BuiltApp(scratch.appendingPathComponent("Other.app"), games: games) == nil, "another app is not a game app")
+expect(BuiltApp(scratch.appendingPathComponent("TOTK.app"), games: []) == nil, "a checkout without games knows no apps")
+expect(BuiltApp(scratch.appendingPathComponent("Old.app"), games: games).map { $0.info == nil } == true, "an app without a record is still listed")
+expect(Freshness.of(built?.info, repo: scratch, games: games) == .unknown, "no commit in the record: unknown")
 
 let repo = scratch.appendingPathComponent("repo")
 write("x\n", "repo/build_app.py")
@@ -148,27 +195,28 @@ func record(_ commit: String) -> BuildInfo {
     info.commit = commit
     return info
 }
-expect(Freshness.of(record(first), repo: repo) == .current, "built from HEAD: current")
+expect(Freshness.of(record(first), repo: repo, games: games) == .current, "built from HEAD: current")
 write("z2\n", "repo/docs/b.md"); _ = git("commit", "-qam", "docs")
-expect(Freshness.of(record(first), repo: repo) == .current, "a change outside the build's folders keeps it current")
+expect(Freshness.of(record(first), repo: repo, games: games) == .current, "a change outside the build's folders keeps it current")
 write("y2\n", "repo/games/totk/a.txt"); _ = git("commit", "-qam", "game")
-expect(Freshness.of(record(first), repo: repo) == .changed, "a change in games/totk: changed")
-expect(Freshness.of(record(String(repeating: "0", count: 40)), repo: repo) == .unknown, "a commit the checkout lacks: unknown")
+expect(Freshness.of(record(first), repo: repo, games: games) == .changed, "a change in games/totk: changed")
+expect(Freshness.of(record(String(repeating: "0", count: 40)), repo: repo, games: games) == .unknown, "a commit the checkout lacks: unknown")
 
 let contrib = scratch.appendingPathComponent("TOTK/shader-list-contribution.txt")
 write("# rows\nV\ta\t{}\nV\ta\t{}\nR\tk\nB\tk\tv\tf\nnoise\n", "TOTK/shader-list-contribution.txt")
-var c = Contribution.read(game: "totk", file: contrib)!
+var c = Contribution.read(game: totk!, file: contrib)!
 expect(c.rows == 3 && c.remindedAt == nil && !c.never && c.unsent == 3, "distinct V, R and B rows count, as the game counts them")
 try? c.markSent()
-c = Contribution.read(game: "totk", file: contrib)!
+c = Contribution.read(game: totk!, file: contrib)!
 expect(c.remindedAt == 3 && c.unsent == 0, "sending moves the reminder on")
 try? c.stopReminders()
-expect(Contribution.read(game: "totk", file: contrib)!.never, "don't remind me again writes never, as the launcher does")
+expect(Contribution.read(game: totk!, file: contrib)!.never, "don't remind me again writes never, as the launcher does")
 expect((try? String(contentsOf: Contribution.remindedFile(contrib), encoding: .utf8)) == "never\n", "the launcher's own format")
 try? c.resumeReminders()
-expect(Contribution.read(game: "totk", file: contrib)!.never == false, "reminders back on")
-expect(Contribution.all(base: { scratch.appendingPathComponent($0) }).map(\.game) == ["totk"], "only the games with a file")
-expect(c.step == 100 && Contribution.read(game: "botw", file: contrib)!.step == 500, "each game's reminder step")
+expect(Contribution.read(game: totk!, file: contrib)!.never == false, "reminders back on")
+expect(Contribution.all(games: games, base: { scratch.appendingPathComponent($0) }).map(\.game.id) == ["totk"], "only the games with a file")
+expect(c.step == 100 && Contribution.read(game: games.named("botw")!, file: contrib)!.step == 500, "each game's reminder step")
+expect(Contribution.read(game: games.named("by3")!, file: contrib) == nil, "a game without a shared shader list has no contribution")
 try? FileManager.default.removeItem(at: scratch)
 
 print(failures == 0 ? "builder tests: all passed" : "builder tests: \(failures) failed")

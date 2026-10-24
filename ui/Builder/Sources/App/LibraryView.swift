@@ -49,11 +49,12 @@ struct LibraryView: View {
         loading = true
         let remembered = wizard.rememberedApps
         let repo = wizard.preflight.repo
+        let games = wizard.preflight.games
         let found = await Task.detached { () -> ([BuiltApp], [String: Freshness], [Contribution]) in
-            let apps = BuiltApp.find(remembered: remembered)
+            let apps = BuiltApp.find(remembered: remembered, games: games)
             var fresh: [String: Freshness] = [:]
-            for app in apps { fresh[app.id] = Freshness.of(app.info, repo: repo) }
-            return (apps, fresh, Contribution.all())
+            for app in apps { fresh[app.id] = Freshness.of(app.info, repo: repo, games: games) }
+            return (apps, fresh, Contribution.all(games: games))
         }.value
         (apps, freshness, contributions) = found
         loading = false
@@ -125,7 +126,7 @@ struct AppRow: View {
             Label("Up to date", systemImage: "checkmark.circle").foregroundStyle(.green)
         case .changed:
             Label("The checkout has changed since", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
-                .help(String(localized: "build_app.py or the game folders changed after this app was built: a rebuild picks up the changes."))
+                .help(String(localized: "The files this game is built from changed after this app was built: a rebuild picks up the changes."))
         case .unknown:
             EmptyView()
         }
@@ -147,7 +148,7 @@ struct Contributions: View {
             }
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("\(item.game == "botw" ? "Breath of the Wild" : "Tears of the Kingdom"): \(item.rows) rows, \(item.unsent) new since the last reminder")
+                    Text("\(item.game.name): \(item.rows) rows, \(item.unsent) new since the last reminder")
                     Text(item.never ? String(localized: "Reminders are off: the game no longer asks before it starts.")
                                     : String(localized: "The game asks before it starts once there are \(item.step) new rows."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -183,3 +184,4 @@ struct Contributions: View {
         if let fresh = Contribution.read(game: item.game, file: item.file) { items[index] = fresh }
     }
 }
+

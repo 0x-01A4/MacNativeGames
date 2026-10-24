@@ -47,14 +47,15 @@ final class Wizard: ObservableObject {
     @Published var inspecting = false
     @Published var out: URL?
     @Published var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
-    @Published var dlc: [URL] = []      // Breath of the Wild 1.9.0: up to the two add-on content packs
-    @Published var mod: URL?             // Tears of the Kingdom: a mod folder with exefs/ and/or romfs/ (docs/mods.md)
+    @Published var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
+    @Published var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
     @Published var installModRomfs = false
     @Published var shaderReminder = true
     @Published var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
     @Published var running = false
     @Published var progress: BuildEvent?
-    @Published var reached = 0          // the highest of build_app.py's steps (1-4) this build has reached
+    @Published var reached = 0          // the highest of the build's steps (1-n) it has reached
+    @Published var steps = BuildSteps()
     @Published var outcome: Outcome?
     @Published var lines: [String] = []
 
@@ -97,6 +98,13 @@ final class Wizard: ObservableObject {
     }
 
     var ready: Bool { preflight.python != nil && preflight.repo != nil }
+
+    /// A game its extension can be takes an update file.
+    var takesUpdate: Bool {
+        guard let game else { return false }
+        let candidates = preflight.games.accepting(game)
+        return candidates.isEmpty || candidates.contains { !($0.files.update ?? []).isEmpty }
+    }
 
     func setGame(_ url: URL) {
         game = url
@@ -159,7 +167,7 @@ final class Wizard: ObservableObject {
     var canContinue: Bool {
         switch step {
         case .keys: ready && keys != nil
-        case .game: report != nil && !inspecting && fontsSatisfied
+        case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
         case .target: out != nil && (platform != "ios" || preflight.iosMissing.isEmpty)
         case .build, .result: false
         }
@@ -186,9 +194,11 @@ final class Wizard: ObservableObject {
         return args
     }
 
-    /// build_app.py, or a stand-in for trying the Builder without game files (BUILDER_SCRIPT, ui/README.md).
+    /// The game's build script (build_app.py, or the one build of the games its extension can be: game.json "build"), or
+    /// a stand-in for trying the Builder without game files (BUILDER_SCRIPT, ui/README.md).
     private var script: String? {
-        ProcessInfo.processInfo.environment["BUILDER_SCRIPT"] ?? preflight.repo?.appendingPathComponent("build_app.py").path
+        ProcessInfo.processInfo.environment["BUILDER_SCRIPT"]
+            ?? preflight.repo?.appendingPathComponent(game.map(preflight.games.script(for:)) ?? "build_app.py").path
     }
 
     func inspect() {
@@ -224,6 +234,7 @@ final class Wizard: ObservableObject {
         outcome = nil
         progress = nil
         reached = 0
+        steps = BuildSteps()
         lines = []
         notices = []
         running = true
@@ -233,6 +244,7 @@ final class Wizard: ObservableObject {
             case "progress", "heartbeat":
                 self.progress = event
                 self.reached = max(self.reached, event.step ?? 0)
+                self.steps.see(event)
             case "notice": self.notices.append(event)
             case "done":
                 let app = URL(fileURLWithPath: event.out ?? out.path)

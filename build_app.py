@@ -70,6 +70,9 @@ TITLES = {'0100F2C0115B6000': 'totk', '01007EF00011E000': 'botw'}
 # Per game: app name, bundle identifier, executable name (= the player's data folder under
 # ~/Library/Application Support/MacNativeGames, games/totk/runtime/game_version.h GAME_FOLDER)
 APPS = {'totk': ('Tears of the Kingdom', 'org.macnativegames.totk', 'TOTK'), 'botw': ('Breath of the Wild', 'org.macnativegames.botw', 'BotW')}
+# Every game folder describes itself in games/<name>/game.json (the Builder reads the same files); the ones built by this
+# script repeat TITLES and APPS (tests/test_game_manifests.py), the others name the script that builds them.
+GAMES = [json.loads(p.read_text()) for p in sorted((REPO / 'games').glob('*/game.json'))]
 HACTOOL = ('https://github.com/SciresM/hactool.git', '1d64a83450e025622f3468c28fc4164dad2c5ef6')
 APP_NAME = 'Tears of the Kingdom'
 BUNDLE_ID = 'org.macnativegames.totk'
@@ -110,7 +113,7 @@ class BuildError(Exception):
 # lists the events). The stage comes from the "N/4 name:" prefix the messages already carry; a line without one
 # belongs to the stage before it.
 EVENTS = False
-EVENT_SCHEMA = 1
+EVENT_SCHEMA = 2
 STAGE = re.compile(r'(\d+)/(\d+) (\w+): ')
 stage = {'stage': 'prepare', 'step': 0, 'of': 4}
 
@@ -1562,7 +1565,8 @@ def step_warm_metal(tree, out, logs):
 
 # ---- Breath of the Wild (games/botw) ----
 def identify_game(tree, game, keys, logs):
-    """'totk' or 'botw' from the title IDs of the NCAs in the game file (scripts/identify_game.py); the name is not used."""
+    """'totk' or 'botw' from the title IDs of the NCAs in the game file (scripts/identify_game.py); the name is not used.
+    Another game's id when the file is one with its own build script (game.json "build"; main hands it over)."""
     log = logs / 'identify-game.log'
     try:
         run([tree / '.venv/bin/python', 'scripts/identify_game.py', game, '--keys', keys], log, cwd=tree, quiet=False)
@@ -1573,6 +1577,10 @@ def identify_game(tree, game, keys, logs):
     if not report:
         raise BuildError(f'could not read the game file (see {log})', code='keys_or_dump')
     found = sorted({TITLES[t] for t in report['titles'] if t in TITLES})
+    others = {g['title_id'].upper(): g['id'] for g in GAMES if g['build'] != 'build_app.py'}
+    theirs = sorted({others[a] for a in (title_kind(t)[0] for t in report['titles']) if a in others})
+    if not found and len(theirs) == 1:
+        return theirs[0]
     if not found:
         for title_id in ticket_title_ids(game):
             application, kind = title_kind(title_id)
@@ -1581,8 +1589,8 @@ def identify_game(tree, game, keys, logs):
                                  (': pass the base NSP as the game file with --update <update.nsp>, and this file with --dlc'
                                   if TITLES[application] == 'botw' else ', which this build does not support'), code='wrong_game')
     if len(found) != 1:
-        raise BuildError(f'the game file holds {report["titles"]}: expected Tears of the Kingdom (0100F2C0115B6000) or '
-                         f'Breath of the Wild (01007EF00011E000)', code='wrong_game')
+        raise BuildError(f'the game file holds {report["titles"]}: expected ' +
+                         ', '.join(f'{g["name"]} ({g["title_id"]})' for g in GAMES), code='wrong_game')
     return found[0]
 
 
@@ -1883,21 +1891,50 @@ def cancelled(signum, frame):
     raise KeyboardInterrupt   # SIGTERM from a front end ends the build as Ctrl-C does; the work folder is reused next time
 
 
-def inspected(which, version, kind, needs_fonts, work, out):
-    """--inspect: what the game file is and what the build still needs, without building."""
+def inspected(which, version, kind, needs_fonts, work, out, *, update=False):
+    """--inspect: what the game file is and what the build still needs, without building. space_gb: what the first build
+    needs free per platform (the checks in main); mod: whether --mod is wired for the game."""
     expected = VERSIONS[version]
     platforms = ['macos'] if which == 'botw' else ['macos', 'ios']
+    space = {'macos': 22} if which == 'botw' else {'macos': 40 if update else 25, 'ios': 60 if update else 45}
     if EVENTS:
         event('inspect', game=which, app_name=APPS[which][0], version=version, display_version=expected['display_version'],
-              kind=kind, needs_fonts=needs_fonts, platforms=platforms, dlc=version == 'botw190', work=str(work), default_out=str(out))
+              kind=kind, needs_fonts=needs_fonts, needs_update=False, platforms=platforms, dlc=version == 'botw190',
+              mod=which == 'totk', space_gb=space, work=str(work), default_out=str(out))
     else:
         say(f'{APPS[which][0]} {expected["display_version"]} ({kind}); platforms: {", ".join(platforms)}; '
             f'{"needs --firmware or --shared-fonts" if needs_fonts else "fonts available"}; work folder {work}; output {out}')
 
 
+def hand_off(args, argv):
+    """A game whose folder has its own build script (game.json "build", e.g. games/by3/build.py) takes over this process
+    with the same arguments, before anything is written; it speaks the same --json-progress events. The game is read
+    from the rights IDs of the NSP's tickets, without keys; those games are built from NSPs only."""
+    game = args.game.expanduser()
+    builds = {g['title_id'].upper(): g['id'] for g in GAMES if g['build'] != 'build_app.py'}
+    try:
+        if not builds or not game.is_file() or input_kind(game) != 'nsp':
+            return
+    except BuildError:   # not a game file: main says so, after its event header
+        return
+    for title_id in ticket_title_ids(game):
+        if which := builds.get(title_kind(title_id)[0]):
+            hand_over(which, argv)
+
+
+def hand_over(which, argv, hello_sent=False):
+    """Replace this process with game `which`'s own build script, with the same arguments. hello_sent: the event header
+    is already out (a card image is known only after identify_game), so the script doesn't write a second one."""
+    script = REPO / next(g['build'] for g in GAMES if g['id'] == which)
+    env = dict(os.environ, MACNATIVEGAMES_HELLO_SENT='1') if hello_sent else os.environ
+    sys.stdout.flush()
+    os.execve(sys.executable, [sys.executable, str(script), *argv], env)
+
+
 def main(argv):
     global EVENTS
     args = parse_args(argv)
+    hand_off(args, argv)
     if args.json_progress:
         EVENTS = True
         signal.signal(signal.SIGTERM, cancelled)
@@ -1961,6 +1998,10 @@ def main(argv):
     # The game decides the platforms, the work folder and the disk space needed, so it is identified before those checks.
     tree = prepare_work(work, py, logs)
     which = identify_game(tree, game, keys, logs)
+    if which not in APPS:   # a card image of a game with its own build script: the tickets of an NSP said so earlier
+        if fresh_work and not args.work:
+            shutil.rmtree(work)
+        hand_over(which, argv, hello_sent=EVENTS)
     if kind == 'nsp' and which != 'botw' and not fonts_given and not args.inspect:   # only Breath of the Wild's fonts passed the check above
         raise no_fonts
     if dlcs and which != 'botw':
@@ -2027,7 +2068,7 @@ def main(argv):
     if args.inspect:
         if update:
             version, _ = identify_update(tree, update, keys, logs)
-        return inspected('totk', version, kind, kind == 'nsp' and not fonts_given, work, out)
+        return inspected('totk', version, kind, kind == 'nsp' and not fonts_given, work, out, update=bool(update))
     work_volume=existing_volume_path(work.parent if work.parent.exists() else game.parent)
     output_volume=existing_volume_path(out.parent if out.parent.exists() else game.parent)
     free=shutil.disk_usage(work_volume).free/2**30

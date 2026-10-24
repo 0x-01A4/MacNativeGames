@@ -11,6 +11,7 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 | In-game overlay | Not in scope (non-goal) |
 | Platforms | The Builder runs on the Mac and also builds the iPhone/iPad IPA (Phase 2). There is no UI on iOS |
 | Where it lives | In this repository, `ui/`. One Builder serves every game, and the game folders stay separate |
+| Game agnostic | The Builder names no game. Every game is a Switch or Switch 2 game the player owns, built from their dump and `prod.keys`. Each game folder has a `games/<name>/game.json`; what a game takes comes from `--inspect` (schema 2), and the step list from its progress events. `build_app.py` stays the entry point and hands a game with its own build script over to it (an NSP by its tickets, a card image after identification) |
 | Technology | Native SwiftUI, **not sandboxed**: the build starts cc, clang, codesign, git and hactool, which a sandboxed app can't |
 | How it's built | `ui/Builder/make_app.sh` with `swiftc` only (no Xcode project or SwiftPM), ad-hoc signed. Distribution is "build from source" until Phase 5 |
 | Python 3.14 | Detected in the same places as `build_app.py` (`/opt/homebrew/bin`, `/usr/local/bin`). If it's missing, the first page shows the `brew install` command. It's not bundled, because the build needs Homebrew's opus/libvpx and the Xcode tools anyway |
@@ -25,7 +26,7 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 | Look | Stock macOS: a step list, grouped forms, system colors, dark/light mode |
 | Cover art | None. It would be game content |
 | Localization and accessibility | `String(localized:)` and accessibility labels from Phase 1. Chinese follows in Phase 5 without a retrofit |
-| Bayonetta 3 | Not driven by the Builder (its build is separate and manual) |
+| Bayonetta 3 | Built by the Builder through `games/by3/build.py`, the README's steps behind the same event contract (Mac only, base NSP plus the 1.2.0 update) |
 
 ## 2. Non-goals
 

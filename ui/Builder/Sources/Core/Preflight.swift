@@ -13,12 +13,14 @@ struct Preflight {
 
     var python: String?
     var repo: URL?
+    var games: [Game] = []           // the checkout's games/*/game.json
     var missing: [Missing] = []
     var iosMissing: [Missing] = []   // only for an iPhone/iPad build (build_app.py ios_prerequisites)
 
     static func check(repo: URL?, fileManager: FileManager = .default) -> Preflight {
         var p = Preflight()
         p.repo = repo
+        p.games = Game.load(repo: repo, fileManager: fileManager)
         p.python = toolPaths.flatMap { dir in ["python3.14", "python3.15"].map { "\(dir)/\($0)" } }
             .first { fileManager.isExecutableFile(atPath: $0) }
         if !fileManager.fileExists(atPath: "/Library/Developer/CommandLineTools/usr/bin/clang")
@@ -71,7 +73,6 @@ struct Preflight {
 
     static func isRepo(_ url: URL) -> Bool {
         let fm = FileManager.default
-        return fm.fileExists(atPath: url.appendingPathComponent("build_app.py").path)
-            && fm.fileExists(atPath: url.appendingPathComponent("games/totk/assets").path)
+        return fm.fileExists(atPath: url.appendingPathComponent("build_app.py").path) && !Game.load(repo: url, fileManager: fm).isEmpty
     }
 }

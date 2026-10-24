@@ -1,4 +1,4 @@
-{"type": "hello", "time": 1761235200.0, "schema": 1}
+{"type": "hello", "time": 1761235200.0, "schema": 2}
 {"type": "progress", "time": 1761235201.0, "stage": "prepare", "step": 0, "of": 4, "message": "fetching the pinned SPIRV-Cross sources"}
 {"type": "progress", "time": 1761235230.0, "stage": "code", "step": 1, "of": 4, "message": "rewriting main for Apple silicon (the big one: about a minute)"}
 {"type": "heartbeat", "time": 1761235290.0, "stage": "code", "step": 1, "of": 4, "message": "... still running (1 min)"}

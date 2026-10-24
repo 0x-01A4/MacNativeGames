@@ -153,8 +153,8 @@ func choose(_ types: [UTType], folder: Bool = false, message: String) -> URL? {
     return panel.runModal() == .OK ? panel.url : nil
 }
 
-let gameTypes = ["xci", "nsp"].compactMap { UTType(filenameExtension: $0) }
-let updateTypes = ["nsp", "nsz"].compactMap { UTType(filenameExtension: $0) }
+/// The file types the checkout's games are built from (game.json "files").
+func types(_ extensions: [String]) -> [UTType] { extensions.compactMap { UTType(filenameExtension: $0) } }
 
 struct FileRow: View {
     var label: LocalizedStringKey
@@ -272,12 +272,13 @@ struct GamePage: View {
                       detail: "Choose or drop the base game file (XCI or NSP). The Builder reads which game and version it is; the file name doesn't matter.")
             Form {
                 FileRow(label: "Game file", url: wizard.game, placeholder: "drop it here") {
-                    if let url = choose(gameTypes, message: String(localized: "Choose the base game (XCI or NSP)")) { wizard.setGame(url) }
+                    if let url = choose(types(wizard.preflight.games.gameExtensions), message: String(localized: "Choose the base game (\(wizard.preflight.games.gameExtensions.map { $0.uppercased() }.joined(separator: ", ")))")) { wizard.setGame(url) }
                 }
-                if wizard.game != nil {
+                if wizard.game != nil && wizard.takesUpdate {
                     HStack {
-                        FileRow(label: "Update (optional)", url: wizard.update, placeholder: "none") {
-                            if let url = choose(updateTypes, message: String(localized: "Choose the update (NSP or NSZ)")) { wizard.setUpdate(url) }
+                        FileRow(label: wizard.report?.needsUpdate == true ? "Update (needed)" : "Update (optional)", url: wizard.update,
+                                placeholder: wizard.report?.needsUpdate == true ? "needed: the game's code is in it" : "none") {
+                            if let url = choose(types(wizard.preflight.games.updateExtensions), message: String(localized: "Choose the update (\(wizard.preflight.games.updateExtensions.map { $0.uppercased() }.joined(separator: ", ")))")) { wizard.setUpdate(url) }
                         }
                         if wizard.update != nil {
                             Button("Remove") { wizard.setUpdate(nil) }
@@ -316,13 +317,13 @@ struct GamePage: View {
                         }
                         if wizard.dlc.count < 2 {
                             Button("Add Pack…") {
-                                if let url = choose(gameTypes, message: String(localized: "Choose an add-on content NSP")) { wizard.addDLC(url) }
+                                if let url = choose(types(["nsp"]), message: String(localized: "Choose an add-on content NSP")) { wizard.addDLC(url) }
                             }
                         }
                         Text("Each pack is its own NSP. A pack you leave out is not in the app.").foregroundStyle(.secondary)
                     }
                 }
-                if wizard.report?.game == "totk" || wizard.mod != nil {
+                if wizard.report?.mod == true || wizard.mod != nil {
                     Section("Mod (optional)") {
                         HStack {
                             FileRow(label: "Mod folder", url: wizard.mod, placeholder: "none") {
@@ -344,7 +345,7 @@ struct GamePage: View {
                     // a folder is never a game file: it's the firmware or the extracted fonts
                     guard wizard.game != nil else { return false }
                     wizard.fonts = url
-                } else if wizard.game != nil, url.pathExtension.lowercased() == "nsz" {
+                } else if wizard.game != nil, url.pathExtension.lowercased() == "nsz" || wizard.report?.needsUpdate == true {
                     wizard.setUpdate(url)
                 } else {
                     wizard.setGame(url)
@@ -366,6 +367,13 @@ struct Found: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(wizard.update == nil ? "Reading the game file…" : "Reading the game file and checking the update (up to a minute)…")
+            }
+        } else if let r = wizard.report, r.needsUpdate == true {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("\(r.appName ?? ""): the base game", systemImage: "plus.circle.fill")
+                    .font(.headline).foregroundStyle(.orange)
+                Text("This game is built from the base game and its update together. Add the update to continue.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         } else if let r = wizard.report {
             VStack(alignment: .leading, spacing: 6) {
@@ -444,10 +452,15 @@ struct TargetPage: View {
             if wizard.platform == "ios" && !wizard.preflight.iosMissing.isEmpty {
                 Missing(items: wizard.preflight.iosMissing, title: "An iPhone / iPad build needs these on this Mac")
             }
-            Text(wizard.platform == "ios"
-                 ? "The first iPhone / iPad build downloads and compiles device libraries and needs about 45 GB free (60 GB with an update)."
-                 : "The first build takes a while and needs about 25 GB free (40 GB with an update). The work folder is kept, so a later build, or one that was stopped, reuses what is already done.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Group {
+                if let space = wizard.report?.spaceGb?[wizard.platform] {
+                    Text(wizard.platform == "ios"
+                         ? "The first iPhone / iPad build downloads and compiles device libraries and needs about \(space) GB free."
+                         : "The first build takes a while and needs about \(space) GB free.")
+                }
+                Text("The work folder is kept, so a later build, or one that was stopped, reuses what is already done.")
+            }
+            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -459,16 +472,16 @@ struct BuildPage: View {
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "Building", detail: "You can keep using the Mac. Cancel stops at once; the next build continues from the finished steps.")
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(BuildStage.allCases, id: \.self) { stage in
-                    let done = wizard.reached > stage.rawValue || (wizard.outcome.map { if case .done = $0 { true } else { false } } ?? false)
-                    let current = wizard.reached == stage.rawValue && !done
+                ForEach(1...max(wizard.steps.count, 1), id: \.self) { step in
+                    let done = wizard.reached > step || (wizard.outcome.map { if case .done = $0 { true } else { false } } ?? false)
+                    let current = wizard.reached == step && !done
                     HStack(spacing: 10) {
                         Group {
                             if current { ProgressView().controlSize(.small) }
                             else { Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? .green : .secondary) }
                         }
                         .frame(width: 18)
-                        Text(stage.title).foregroundStyle(current || done ? .primary : .secondary)
+                        Text(wizard.steps.title(step)).foregroundStyle(current || done ? .primary : .secondary)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityValue(Text(done ? "done" : current ? "in progress" : "waiting"))
@@ -508,11 +521,12 @@ struct LogView: View {
 }
 
 struct Failure: View {
+    @EnvironmentObject var wizard: Wizard
     var code: String?
     var message: String
 
     var body: some View {
-        let text = ErrorText(code: code)
+        let text = ErrorText(code: code, games: wizard.preflight.games)
         VStack(alignment: .leading, spacing: 8) {
             Label(text.title, systemImage: "xmark.octagon.fill").font(.headline).foregroundStyle(.red)
             Text(text.next).fixedSize(horizontal: false, vertical: true)

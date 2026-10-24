@@ -36,21 +36,21 @@ struct BuildInfo: Decodable, Equatable {
     var builtDate: Date? { ISO8601DateFormatter().date(from: built) }
 }
 
-/// One built game app, found by its bundle identifier or because this Builder built it.
+/// One built game app, found by its bundle identifier (a game.json's bundle_id) or because this Builder built it.
 struct BuiltApp: Identifiable, Equatable {
-    /// build_app.py APPS: the identifiers its apps carry.
-    static let bundleIDs = ["org.macnativegames.totk", "org.macnativegames.botw"]
-
     var url: URL
     var name: String
     var version: String
+    var game: String          // the game's id (game.json)
     var info: BuildInfo?
     var id: String { url.path }
 
-    init?(_ url: URL) {
+    init?(_ url: URL, games: [Game]) {
         guard let plist = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
-              let bundleID = plist["CFBundleIdentifier"] as? String, Self.bundleIDs.contains(bundleID) else { return nil }
+              let bundleID = plist["CFBundleIdentifier"] as? String,
+              let game = games.first(where: { $0.bundleId == bundleID }) else { return nil }
         self.url = url
+        self.game = game.id
         name = plist["CFBundleName"] as? String ?? url.deletingPathExtension().lastPathComponent
         version = plist["CFBundleShortVersionString"] as? String ?? ""
         info = BuildInfo.read(url)
@@ -58,28 +58,28 @@ struct BuiltApp: Identifiable, Equatable {
 
     /// Spotlight's list of the game apps, plus the ones this Builder made (Spotlight may not index every volume). The
     /// folders build_app.py replaces or is still writing (".partial", ".replaced-<pid>") are not apps.
-    static func find(remembered: [String]) -> [BuiltApp] {
-        let query = bundleIDs.map { "kMDItemCFBundleIdentifier == '\($0)'" }.joined(separator: " || ")
+    static func find(remembered: [String], games: [Game]) -> [BuiltApp] {
+        guard !games.isEmpty else { return [] }
+        let query = games.compactMap(\.bundleId).map { "kMDItemCFBundleIdentifier == '\($0)'" }.joined(separator: " || ")
         let spotlight = Shell.run("/usr/bin/mdfind", [query]).output.split(separator: "\n").map(String.init)
         var seen = Set<String>()
         return (remembered + spotlight)
             .map { URL(fileURLWithPath: $0).standardizedFileURL }
             .filter { $0.pathExtension == "app" && seen.insert($0.path).inserted }
-            .compactMap(BuiltApp.init)
+            .compactMap { BuiltApp($0, games: games) }
             .sorted { ($0.info?.built ?? "") > ($1.info?.built ?? "") }
     }
 }
 
-/// Whether the checkout has changed what an app was built from: build_app.py and the game folders it builds from.
+/// Whether the checkout has changed what an app was built from: its game's sources (game.json), e.g. build_app.py and
+/// the game folders it builds from.
 enum Freshness: Equatable {
     case current        // built from this commit, or nothing that goes into the app changed since
     case changed        // a newer checkout builds a different app
-    case unknown        // no build record, no commit in it, or a commit this checkout does not have
+    case unknown        // no build record, no commit in it, a game this checkout doesn't have, or a commit it lacks
 
-    static let paths = ["build_app.py", "games/totk", "games/botw"]
-
-    static func of(_ info: BuildInfo?, repo: URL?) -> Freshness {
-        guard let commit = info?.commit, let repo else { return .unknown }
+    static func of(_ info: BuildInfo?, repo: URL?, games: [Game]) -> Freshness {
+        guard let commit = info?.commit, let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
         let r = Shell.run("/usr/bin/git", ["-C", repo.path, "diff", "--quiet", commit, "HEAD", "--"] + paths)
         switch r.status {
         case 0: return .current
@@ -90,30 +90,28 @@ enum Freshness: Equatable {
 }
 
 /// The shader list contribution file a game keeps in its data folder, and its reminder state (<file>.reminded), read and
-/// written the way the game's launcher does (third_party/d2r_gfx/gfx/nvn/totk_shader_contrib.h), so both agree.
+/// written the way the game's launcher does (third_party/d2r_gfx/gfx/nvn/totk_shader_contrib.h), so both agree. Only the
+/// games whose game.json has a shader_contribution keep one.
 struct Contribution: Equatable {
-    var game: String           // build_app.py's name: totk, botw
+    var game: Game
     var file: URL
     var rows: Int
     var remindedAt: Int?       // rows at the last reminder (or send); nil before the first
     var never: Bool            // "Don't remind me again"
-
-    /// games/totk/runtime/game_version.h: GAME_FOLDER and TOTK_CONTRIB_STEP; the issue forms in docs/shader-list.md.
-    static let games: [(game: String, folder: String, step: Int, form: String)] = [
-        ("totk", "TOTK", 100, "https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list.yml"),
-        ("botw", "BotW", 500, "https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list-botw.yml"),
-    ]
 
     static func data(_ folder: String) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/MacNativeGames/\(folder)")
     }
 
-    static func all(base: (String) -> URL = data) -> [Contribution] {
-        games.compactMap { read(game: $0.game, file: base($0.folder).appendingPathComponent("shader-list-contribution.txt")) }
+    static func all(games: [Game], base: (String) -> URL = data) -> [Contribution] {
+        games.compactMap { game in
+            game.dataFolder.flatMap { read(game: game, file: base($0).appendingPathComponent("shader-list-contribution.txt")) }
+        }
     }
 
-    static func read(game: String, file: URL) -> Contribution? {
+    static func read(game: Game, file: URL) -> Contribution? {
+        guard game.shaderContribution != nil else { return nil }
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         let rows = Set(text.split(separator: "\n", omittingEmptySubsequences: true)
             .filter { $0.hasPrefix("V\t") || $0.hasPrefix("R\t") || $0.hasPrefix("B\t") }).count
@@ -125,8 +123,8 @@ struct Contribution: Equatable {
 
     static func remindedFile(_ file: URL) -> URL { URL(fileURLWithPath: file.path + ".reminded") }
 
-    var form: URL { URL(string: Self.games.first { $0.game == game }!.form)! }
-    var step: Int { Self.games.first { $0.game == game }!.step }
+    var form: URL { URL(string: game.shaderContribution!.form)! }
+    var step: Int { game.shaderContribution!.step }
     /// New rows since the last reminder or send: what sending now would add for the first time.
     var unsent: Int { max(0, rows - (remindedAt ?? 0)) }
 
