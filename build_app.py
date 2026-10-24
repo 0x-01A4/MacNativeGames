@@ -1318,7 +1318,35 @@ def install_app(new, out, *, verify=None, remove=None):
     return kept
 
 
-def step_app(tree, out, logs, *, version="v0", game='totk'):
+BUILD_INFO = 'Contents/Resources/build-info.json'
+BUILD_INFO_SCHEMA = 1
+
+
+def checkout_commit():
+    """(commit, dirty) of the checkout this build runs from, or (None, None) outside a git checkout."""
+    try:
+        commit = subprocess.run(['git', '-C', REPO, 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=30)
+        if commit.returncode:
+            return None, None
+        dirty = subprocess.run(['git', '-C', REPO, 'status', '--porcelain', '--untracked-files=no'], capture_output=True,
+                               text=True, timeout=60)
+        return commit.stdout.strip(), bool(dirty.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None
+
+
+def build_info(game, version, platform, *, inputs):
+    """What an app was built from, kept in it (BUILD_INFO) for a front end's library (ui/README.md): the game and version,
+    the checkout, and the files given to the build so it can be built again. The keys file is never named in it."""
+    commit, dirty = checkout_commit()
+    return dict(schema=BUILD_INFO_SCHEMA, game=game, app_name=APPS[game][0], version=version,
+                display_version=VERSIONS[version]['display_version'], platform=platform,
+                built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty,
+                inputs={k: ([str(x) for x in v] if isinstance(v, list) else str(v) if isinstance(v, Path) else v)
+                        for k, v in inputs.items() if v not in (None, [], False)})
+
+
+def step_app(tree, out, logs, *, version="v0", game='totk', info=None):
     expected = VERSIONS[version]
     app_name, bundle_id, executable = APPS[game]
     tmp = out.with_name(out.name + '.partial')
@@ -1377,6 +1405,8 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
     import plistlib
     (tmp / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     (tmp / 'Contents/PkgInfo').write_bytes(b'APPL????')
+    if info:   # sealed with the rest of the app
+        (tmp / BUILD_INFO).write_text(json.dumps(info, indent=2) + '\n')
     sign_app(tmp, logs)  # A failed seal must not remove the previous working app.
     old_binary = out/'Contents/Resources/totk/build/totk-native'
     notified = 0
@@ -1837,6 +1867,7 @@ def main(argv):
     if kind not in ('xci', 'nsp'):
         raise BuildError('the base game must be an uncompressed XCI or NSP; NSZ is supported for update packages', code='input')
     update = args.update.expanduser().resolve() if args.update else None
+    update_given = update   # `update` becomes the decompressed container below; the library rebuilds from this one
     if update and (not update.is_file() or input_kind(update) not in ('nsp', 'nsz')):
         raise BuildError('--update must be a separate cumulative NSP or NSZ', code='input')
     mod = args.mod.expanduser().resolve() if args.mod else None
@@ -1931,7 +1962,8 @@ def main(argv):
         # The work folder's copy of games/botw (prepare_work), relative: make splits a path with spaces into several targets
         step_binary(tree, game, keys, {**env, 'SHADER_LIST': '../botw/assets/shader_list.tsv'}, logs, version=version, title='01007ef00011e000')
         say(f'4/4 app: assembling {out}')
-        step_app(tree, out, logs, version=version, game='botw')
+        step_app(tree, out, logs, version=version, game='botw', info=build_info('botw', version, 'macos', inputs=dict(
+            game=game, update=update_given, dlc=dlcs, firmware=firmware, shared_fonts=shared_fonts)))
         run([LSREGISTER, '-f', out], logs / 'register-app.log')
         say('4/4 app: macOS checks the app once (seconds when this app folder was checked before, a few minutes for a new one)')
         t1 = time.time()
@@ -2001,7 +2033,9 @@ def main(argv):
             except BuildError as e:
                 say(f'   the Mac reminder for iPhone / iPad shader contributions was not installed: {e}')
     else:
-        step_app(tree, out, logs, version=version)
+        step_app(tree, out, logs, version=version, info=build_info('totk', version, 'macos', inputs=dict(
+            game=game, update=update_given, firmware=firmware, shared_fonts=shared_fonts, mod=mod,
+            install_mod_romfs=args.install_mod_romfs)))
     # Refresh an existing app's version, executable and signing identity before
     # the next Finder launch; the desktop alias keeps pointing to this bundle.
     if args.platform=='macos': run([LSREGISTER, '-f', out], logs / 'register-app.log')
