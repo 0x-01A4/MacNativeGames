@@ -360,9 +360,10 @@ at 38 to 90 s after the start):
 | origin/main | sunk to the knees at 42 s; a bokoblin that stays hidden in the other runs attacks; Game Over at 60 s | no water: the ground shows through (milky, clear) |
 | origin/main with pull request #239 (tiny GPU targets copied to memory when their submission completes) | straight at 42, 60 and 90 s, bokoblin hidden, about 59 fps | dark and opaque water |
 
-So the cause above holds on current main and #239 cures both symptoms; this branch carries no fix of its own, because a
-second one would conflict with it. Not tested: our own write-back fix on current main (it did not run there; it
-passed on the old base only), and #239 on 1.6.0.
+So the cause above holds on current main. #239 cures the clear bog water; the straight legs in this row were not repeated:
+on #239's head (merged as `eda6340`) Link sank 3 of 3 times (2026-10-24). Pull request #511 (open) fixes the legs. This
+branch carries no fix of its own. Not tested: our own write-back fix on current main (it did not run there; it passed on
+the old base only), and #239 on 1.6.0.
 
 Leak fix: the first 25-minute run (Shrine route, `f3ad878` merged) stopped at 1509 s at the 5000 MB GPU budget. Its
 485,380 write-back stage buffers (2.9 GB) were never freed, because the game thread has no autorelease pool. `5ab49a2`
@@ -399,14 +400,15 @@ stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `V
 - Game run on origin/main `daf270e` (bog save, 290 s, menu and map cycles from 100 s, 30 s capture): 0 clicks with the fix
   and 0 without, the largest step 0.133 in both captures, 0 underruns, exit 0, about 60 fps. This scene did not repeat the
   clicks of the old base, so it proves no gain; it shows no harm.
-- Not tested: a listening test by the owner (pause menu, map, shrine, fast travel), splitter voices (BOTW opens none),
-  and BOTW 1.6.0, which also defines `GAME_BOTW`.
+- BOTW 1.6.0 (2026-10-24, M1 Pro, macOS 27, base v0 + 1.6.0 update, Great Plateau save, docked): the ramps act, and 5
+  pause-menu and map cycles gave 0 clicks with the ramps and 0 with `TOTK_AUDIO_RAMP=0`: no harm, no gain shown.
+- Not tested: a listening test by the owner (pause menu, map, shrine, fast travel) and splitter voices (BOTW opens none).
 - A run that ends in Game Over has no world sound (digital zero): the first runs of this check, started from the legs
   save on a build without the legs cure, were silent for that reason.
 
 ## Not tested and known issues
 
-- Sinking legs after a save loads, and the clear Bottomless Bog: cured in the test by pull request #239, not on main yet (see "Long run and the sinking legs").
+- Sinking legs after a save loads, and the clear Bottomless Bog: the clear water is cured by #239 (merged), the legs are not (pull request #511, open; see "Long run and the sinking legs").
 - GPU allocation grows about 4 MB/min after warm-up (1916 MB after 27 minutes): deferred. At that rate, the 5 GB
   budget is about 13 hours away.
 - Key 2 with no UI: fixed by `75cadf2`, with light proof (4 to 5 frames lost per HUD hide, against 408 before). A long
