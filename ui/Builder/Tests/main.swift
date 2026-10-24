@@ -311,6 +311,8 @@ expect(drop(["/d/fonts"]) == Dropped(), "a folder alone, before a game file, is 
 expect(drop(["/d/fonts"], game: "/d/base.nsp") == Dropped(fonts: u("/d/fonts")), "a folder is the fonts")
 expect(drop(["/d/mod"], game: "/d/base.nsp", takesMod: true) == Dropped(mod: u("/d/mod")), "a folder with exefs/ or romfs/ is the mod")
 expect(drop(["/d/mod"], game: "/d/base.nsp") == Dropped(), "a mod for a game that takes none is ignored")
+expect(drop(["/d/base.nsp", "/d/mod"]) == Dropped(game: u("/d/base.nsp"), mod: u("/d/mod")), "a mod with a new game file is kept for it")
+expect(drop(["/d/mod"]) == Dropped(), "a mod alone, before a game file, is ignored")
 
 print(failures == 0 ? "builder tests: all passed" : "builder tests: \(failures) failed")
 exit(failures == 0 ? 0 : 1)

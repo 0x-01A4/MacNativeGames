@@ -62,13 +62,11 @@ struct Game: Decodable, Equatable, Identifiable {
     /// The games of a checkout, by name; a game.json of another schema, or one that doesn't parse, is left out.
     static func load(repo: URL?, fileManager: FileManager = .default) -> [Game] {
         guard let repo else { return [] }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         let folders = (try? fileManager.contentsOfDirectory(atPath: repo.appendingPathComponent("games").path)) ?? []
         return folders.sorted().compactMap { folder -> Game? in
             let dir = repo.appendingPathComponent("games/\(folder)")
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("game.json")),
-                  var game = try? decoder.decode(Game.self, from: data), game.schema == schema else { return nil }
+                  var game = try? JSONDecoder.snakeCase.decode(Game.self, from: data), game.schema == schema else { return nil }
             if game.versions.isEmpty { game.versions = versions(dir.appendingPathComponent("assets"), fileManager) }
             return game
         }
@@ -114,19 +112,13 @@ extension Array where Element == Game {
     }
 
     /// Where files dropped on the Game page go. `game` is the game file chosen so far and `identified` the game
-    /// --inspect named in it (nil while it hasn't); `isMod` tells a mod folder (exefs/ or romfs/ in it) from a fonts one.
+    /// --inspect named in it (nil while it hasn't); `takesMod` says whether that game takes a mod; `isMod` tells a mod
+    /// folder (exefs/ or romfs/ in it) from a fonts one.
     func route(_ urls: [URL], game: URL?, identified: String?, takesMod: Bool,
                isFolder: (URL) -> Bool, isMod: (URL) -> Bool, size: (URL) -> Int64) -> Dropped {
         var dropped = Dropped()
         let known = Set(gameExtensions + updateExtensions)
         let files = urls.filter { !isFolder($0) && known.contains($0.pathExtension.lowercased()) }
-        for folder in urls.filter(isFolder) {
-            if isMod(folder) {
-                if takesMod, dropped.mod == nil { dropped.mod = folder }
-            } else if dropped.fonts == nil, game != nil || !files.isEmpty {
-                dropped.fonts = folder   // a folder is never a game file: it's the firmware or the extracted fonts
-            }
-        }
         if files.count > 1 {
             // a base game and its update together: an extension only a game file has decides, or else the larger file
             let gameOnly = Set(gameExtensions).subtracting(updateExtensions)
@@ -137,6 +129,14 @@ extension Array where Element == Game {
         } else if let file = files.first {
             let updates = named(identified)?.files.update ?? []
             if game != nil, updates.contains(file.pathExtension.lowercased()) { dropped.update = file } else { dropped.game = file }
+        }
+        for folder in urls.filter(isFolder) where game != nil || !files.isEmpty {
+            if isMod(folder) {
+                // a mod dropped with a new game file is kept for it: that game's --inspect says whether it takes one
+                if takesMod || dropped.game != nil, dropped.mod == nil { dropped.mod = folder }
+            } else if dropped.fonts == nil {
+                dropped.fonts = folder   // a folder is never a game file: it's the firmware or the extracted fonts
+            }
         }
         return dropped
     }

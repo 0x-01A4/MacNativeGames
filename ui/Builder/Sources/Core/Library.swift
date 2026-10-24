@@ -27,10 +27,8 @@ struct BuildInfo: Decodable, Equatable {
     var inputs: Inputs
 
     static func read(_ app: URL) -> BuildInfo? {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         guard let data = try? Data(contentsOf: app.appendingPathComponent("Contents/Resources/build-info.json")),
-              let info = try? decoder.decode(BuildInfo.self, from: data), info.schema == schema else { return nil }
+              let info = try? JSONDecoder.snakeCase.decode(BuildInfo.self, from: data), info.schema == schema else { return nil }
         return info
     }
 
@@ -76,20 +74,16 @@ struct BuiltApp: Identifiable, Equatable {
 /// has to stay, when it does. Deleting it only makes the next build start from the beginning.
 struct WorkFolder: Identifiable, Equatable {
     var url: URL
-    var game: String
     var keep: String?   // why it can't be deleted
     var id: String { url.path }
 
-    static func all(apps: [BuiltApp], current: (work: String, game: String?)?, games: [Game],
-                    fileManager: FileManager = .default) -> [WorkFolder] {
+    static func all(apps: [BuiltApp], current: (work: String, game: String?)?, games: [Game]) -> [WorkFolder] {
         var seen = Set<String>()
         let found: [(String, String?)] = apps.compactMap { app in app.info?.work.map { ($0, app.game) } }
             + [current].compactMap { $0.map { ($0.work, $0.game) } }
         return found.compactMap { path, game -> WorkFolder? in
             let url = URL(fileURLWithPath: path).standardizedFileURL
-            var folder: ObjCBool = false
-            guard seen.insert(url.path).inserted, fileManager.fileExists(atPath: url.path, isDirectory: &folder), folder.boolValue
-            else { return nil }
+            guard seen.insert(url.path).inserted, url.isFolder else { return nil }
             let known = games.named(game)
             var keep: String?
             if known?.workHoldsGameData == true {
@@ -97,7 +91,7 @@ struct WorkFolder: Identifiable, Equatable {
             } else if let inside = apps.first(where: { $0.url.standardizedFileURL.path.hasPrefix(url.path + "/") }) {
                 keep = String(localized: "\(inside.name) is inside it.")
             }
-            return WorkFolder(url: url, game: game ?? "", keep: keep)
+            return WorkFolder(url: url, keep: keep)
         }
     }
 
@@ -111,6 +105,14 @@ struct WorkFolder: Identifiable, Equatable {
             total += Int64(v.totalFileAllocatedSize ?? 0)
         }
         return total
+    }
+}
+
+extension URL {
+    /// A folder is there (a file, or nothing, is not).
+    var isFolder: Bool {
+        var folder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &folder) && folder.boolValue
     }
 }
 

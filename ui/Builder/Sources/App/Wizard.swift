@@ -1,11 +1,12 @@
 import AppKit
 import Foundation
+import Observation
 import UserNotifications
 
 /// The Builder's state: the files the player picked, what --inspect found, and the running build. Every build step is
 /// build_app.py's; this only collects its arguments and reads its events.
-@MainActor
-final class Wizard: ObservableObject {
+@MainActor @Observable
+final class Wizard {
     enum Step: Int, CaseIterable {
         case keys, game, target, build, result
 
@@ -33,45 +34,43 @@ final class Wizard: ObservableObject {
     }
 
     enum Mode: Hashable { case build, library }
-    @Published var mode = Mode.build
+    var mode = Mode.build
 
-    @Published var step = Step.keys
-    @Published var preflight: Preflight
-    @Published var keys: URL?
-    @Published var rememberKeys: Bool
-    @Published var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
-    @Published var game: URL?
-    @Published var update: URL?
-    @Published var fonts: URL?
-    @Published var fontsAreFirmware = true
-    @Published var report: BuildEvent?
+    var step = Step.keys
+    var preflight: Preflight
+    var keys: URL?
+    var rememberKeys: Bool
+    var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
+    var game: URL?
+    var update: URL?
+    var fonts: URL?
+    var fontsAreFirmware = true
+    var report: BuildEvent?
     // what the last --inspect of this game file said, kept while a re-inspect runs (report is nil then)
-    @Published var identified: String?   // the game's id
-    @Published var fontsNeeded: Bool?
-    @Published var inspectFailure: Outcome?
-    @Published var inspecting = false
-    @Published var out: URL?
-    @Published var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
-    @Published var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
-    @Published var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
-    @Published var installModRomfs = false
-    @Published var shaderReminder = true
-    @Published var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
-    @Published var running = false
-    @Published var cancelling = false   // Cancel was pressed and the build hasn't ended yet
-    @Published var progress: BuildEvent?
-    @Published var reached = 0          // the highest of the build's steps (1-n) it has reached
-    @Published var steps = BuildSteps()
-    @Published var outcome: Outcome?
-    @Published var lines: [String] = []
+    var identified: String?   // the game's id
+    var fontsNeeded: Bool?
+    var inspectFailure: Outcome?
+    var inspecting = false
+    var out: URL?
+    var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
+    var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
+    var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
+    var installModRomfs = false
+    var shaderReminder = true
+    var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
+    var running = false
+    var cancelling = false   // Cancel was pressed and the build hasn't ended yet
+    var progress: BuildEvent?
+    var reached = 0          // the highest of the build's steps (1-n) it has reached
+    var steps = BuildSteps()
+    var outcome: Outcome?
+    var lines: [String] = []
 
-    private var runner: BuildRunner?
-    private var generation = 0   // a newer --inspect or build makes the events of an older one stale
-    private var schemaChecked = false
-    private var rejected = false   // the script writes another event schema: what it sends after that is not read
-    private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
+    @ObservationIgnored private var runner: BuildRunner?
+    @ObservationIgnored private var job: Task<Void, Never>?   // reads the running script's output (start)
+    @ObservationIgnored private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
     /// Called once when the running build has ended (the app delegate waits on it to quit).
-    var onBuildEnded: (() -> Void)?
+    @ObservationIgnored var onBuildEnded: (() -> Void)?
 
     init() {
         let defaults = UserDefaults.standard
@@ -128,7 +127,15 @@ final class Wizard: ObservableObject {
 
     /// A new game file: what was chosen for the one before goes, except the fonts folder.
     private func choose(game url: URL) {
+        clearChoices()
         game = url
+    }
+
+    /// What belongs to one game file: the file, what --inspect named in it, and the choices made for it. The keys and
+    /// the fonts folder stay, since another game can use them too.
+    private func clearChoices() {
+        platform = "macos"   // first: its didSet would make an output from the old report's default
+        game = nil
         identified = nil
         fontsNeeded = nil
         update = nil
@@ -136,14 +143,13 @@ final class Wizard: ObservableObject {
         mod = nil
         installModRomfs = false
         out = nil
-        platform = "macos"
     }
 
-    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect.
+    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect, which replaces one
+    /// still running. A mod is taken while --inspect hasn't said: if the game takes none, the next one says so.
     func drop(_ urls: [URL]) -> Bool {
-        guard !inspecting else { return false }
-        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report?.mod == true,
-                                      isFolder: { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true },
+        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report.map { $0.mod == true } ?? true,
+                                      isFolder: \.isFolder,
                                       isMod: Self.isMod,
                                       size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
         guard d != Dropped() else { return false }
@@ -157,10 +163,7 @@ final class Wizard: ObservableObject {
 
     /// A folder with exefs/ or romfs/ in it is a mod (docs/mods.md).
     static func isMod(_ url: URL) -> Bool {
-        ["exefs", "romfs"].contains { name in
-            var folder: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.appendingPathComponent(name).path, isDirectory: &folder) && folder.boolValue
-        }
+        ["exefs", "romfs"].contains { url.appendingPathComponent($0).isFolder }
     }
 
     func setFonts(_ url: URL?) {
@@ -203,11 +206,7 @@ final class Wizard: ObservableObject {
         inspect()   // build_app.py checks the folder's layout and the game before the build
     }
 
-    var modHasRomfs: Bool {
-        guard let mod else { return false }
-        var folder: ObjCBool = false
-        return FileManager.default.fileExists(atPath: mod.appendingPathComponent("romfs").path, isDirectory: &folder) && folder.boolValue
-    }
+    var modHasRomfs: Bool { mod?.appendingPathComponent("romfs").isFolder == true }
 
     /// The platforms the found game builds for (inspect); iPhone/iPad and Vision Pro also need an Xcode on this Mac.
     var platforms: [String] { report?.platforms ?? ["macos"] }
@@ -388,11 +387,10 @@ final class Wizard: ObservableObject {
 
     /// Game files opened from Finder or with File > Open: the Game page, as if they were dropped there.
     func open(_ urls: [URL]) {
-        guard !running else { return }
+        guard !running, drop(urls) else { return }
         mode = .build
         if step != .keys { step = .game }
         outcome = nil
-        _ = drop(urls)
         if keys != nil && ready { step = .game }   // without the keys the Keys page asks first; the file is read after
     }
 
@@ -401,53 +399,69 @@ final class Wizard: ObservableObject {
         runner?.cancel()
     }
 
+    /// What the script's run sends: its output, line by line, and then how it ended.
+    private enum Output: Sendable {
+        case line(String, stdout: Bool)
+        case ended(Result<Int32, Error>)
+    }
+
+    /// Runs the script with `arguments`, ending the run before it: `event` gets its events and `finished` its exit status
+    /// (with the failure to show when it ended without saying why), both on the main actor. A newer run, or newBuild(),
+    /// cancels this one's task, so nothing of it arrives after that.
     private func start(_ arguments: [String], event: @escaping (BuildEvent) -> Void,
                        finished: @escaping (Int32, Outcome?) -> Void) {
         runner?.cancel()
+        job?.cancel()
         guard let python = preflight.python, let script else {
             finished(-1, .failed(code: "toolchain", message: String(localized: "Python 3.14 or the MacNativeGames folder was not found.")))
             return
         }
-        generation += 1
-        let mine = generation
         let runner = BuildRunner()
         self.runner = runner
-        schemaChecked = false
-        rejected = false
-        // The main queue keeps the lines in the order they were read; the result comes after the last of them.
-        let deliver: @Sendable (String, Bool) -> Void = { line, isStdout in
-            DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
-                guard let self, self.generation == mine else { return }
-                if self.rejected { return self.lines.append(line) }
-                guard isStdout, let e = BuildEvent.parse(line) else { return self.lines.append(line) }
-                if e.type == "hello" {
-                    self.schemaChecked = true
-                    if e.schema != BuildEvent.schema {   // a Builder from another revision of the repository
-                        self.lines.append(e.logText)
-                        self.rejected = true
-                        runner.cancel()
-                        return event(BuildEvent(type: "error", message: String(localized: "This Builder reads event schema \(BuildEvent.schema), but build_app.py writes \(e.schema ?? 0): build the Builder from the same checkout."), code: "build"))
-                    }
-                }
-                if e.type != "heartbeat" { self.lines.append(e.logText) }
-                event(e)
-            } }
-        }
+        let (output, send) = AsyncStream.makeStream(of: Output.self)
+        // its own thread, not a task: a build blocks in waitpid for up to an hour
         Thread.detachNewThread {
-            var failure: Outcome?
-            var status: Int32 = -1
-            do {
-                status = try runner.run(python, [script] + arguments, stdout: { deliver($0, true) }, stderr: { deliver($0, false) })
-            } catch {
-                failure = .failed(code: nil, message: String(localized: "build_app.py could not be started: \(error.localizedDescription)"))
-            }
-            DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
-                guard let self, self.generation == mine else { return }
-                if failure == nil && !self.schemaChecked && status != 130 {
-                    failure = .failed(code: "build", message: String(localized: "build_app.py did not send its event header: it may be older than this Builder."))
+            let ended = Result { try runner.run(python, [script] + arguments, stdout: { send.yield(.line($0, stdout: true)) },
+                                                stderr: { send.yield(.line($0, stdout: false)) }) }
+            send.yield(.ended(ended))   // after every line: run() returns once both pipes are read to the end
+            send.finish()
+        }
+        // One loop on the main actor keeps the lines in the order they were read.
+        job = Task {
+            var schemaChecked = false
+            var rejected = false   // the script writes another event schema: what it sends after that is not read
+            for await item in output {
+                guard !Task.isCancelled else { break }   // a cancelled stream still hands over what it had buffered
+                switch item {
+                case .line(let line, let isStdout):
+                    if rejected { lines.append(line); continue }
+                    guard isStdout, let e = BuildEvent.parse(line) else { lines.append(line); continue }
+                    if e.type == "hello" {
+                        schemaChecked = true
+                        if e.schema != BuildEvent.schema {   // a Builder from another revision of the repository
+                            lines.append(e.logText)
+                            rejected = true
+                            runner.cancel()
+                            event(BuildEvent(type: "error", message: String(localized: "This Builder reads event schema \(BuildEvent.schema), but build_app.py writes \(e.schema ?? 0): build the Builder from the same checkout."), code: "build"))
+                            continue
+                        }
+                    }
+                    if e.type != "heartbeat" { lines.append(e.logText) }
+                    event(e)
+                case .ended(let ended):
+                    var failure: Outcome?
+                    var status: Int32 = -1
+                    switch ended {
+                    case .success(let code): status = code
+                    case .failure(let error):
+                        failure = .failed(code: nil, message: String(localized: "build_app.py could not be started: \(error.localizedDescription)"))
+                    }
+                    if failure == nil && !schemaChecked && status != 130 {
+                        failure = .failed(code: "build", message: String(localized: "build_app.py did not send its event header: it may be older than this Builder."))
+                    }
+                    finished(status, status == 0 ? nil : failure)
                 }
-                finished(status, status == 0 ? nil : failure)
-            } }
+            }
         }
     }
 
@@ -468,16 +482,13 @@ final class Wizard: ObservableObject {
     func rebuild(_ app: BuiltApp) {
         guard let info = app.info, let gamePath = info.inputs.game else { return }
         let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
-        game = URL(fileURLWithPath: gamePath)
-        identified = nil
-        fontsNeeded = nil
+        choose(game: URL(fileURLWithPath: gamePath))
         update = path(info.inputs.update)
         dlc = (info.inputs.dlc ?? []).map { URL(fileURLWithPath: $0) }
         mod = path(info.inputs.mod)
         installModRomfs = info.inputs.installModRomfs ?? false
         fonts = path(info.inputs.firmware ?? info.inputs.sharedFonts)
         fontsAreFirmware = info.inputs.sharedFonts == nil
-        platform = "macos"
         out = app.url
         outcome = nil
         mode = .build
@@ -528,19 +539,11 @@ final class Wizard: ObservableObject {
     func newBuild() {
         guard !running else { return }
         runner?.cancel()   // an inspect still running for the old game
-        generation += 1    // and its events are stale now
-        game = nil
-        update = nil
-        dlc = []
-        mod = nil
-        installModRomfs = false
+        job?.cancel()      // and its events are stale now
+        clearChoices()
         report = nil
-        identified = nil
-        fontsNeeded = nil
         inspectFailure = nil
         inspecting = false
-        out = nil
-        platform = "macos"
         outcome = nil
         step = .game
     }
