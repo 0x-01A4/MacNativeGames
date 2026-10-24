@@ -2,14 +2,14 @@
 """A stand-in for build_app.py --json-progress: the same events, no game files, nothing written. For the Builder's tests
 and for trying the app: BUILDER_SCRIPT=<this file> "MacNativeGames Builder.app/Contents/MacOS/MacNativeGamesBuilder".
 FAKE_BUILD=ok (default) | fail | slow | noheader | schema1 (an older script); FAKE_GAME=totk (default) | botw (1.9.0, with
-DLC) | by3 (needs its update, Mac only);
+DLC) | by3 (needs its update, Mac only) | odyssey (one file with its update, eight steps);
 FAKE_DELAY: seconds between events (default 0.4)."""
 import json, os, signal, sys, time
 
 mode, delay = os.environ.get('FAKE_BUILD', 'ok'), float(os.environ.get('FAKE_DELAY', '0.4'))
 GAME = os.environ.get('FAKE_GAME', 'totk')
-botw, by3 = GAME == 'botw', GAME == 'by3'
-APP = {'totk': 'Tears of the Kingdom', 'botw': 'Breath of the Wild', 'by3': 'Bayonetta 3'}[GAME]
+botw, by3, odyssey = GAME == 'botw', GAME == 'by3', GAME == 'odyssey'
+APP = {'totk': 'Tears of the Kingdom', 'botw': 'Breath of the Wild', 'by3': 'Bayonetta 3', 'odyssey': 'Super Mario Odyssey'}[GAME]
 
 
 def event(kind, /, **fields):
@@ -34,6 +34,11 @@ if '--inspect' in argv:
     if (botw or by3) and '--mod' in argv:
         event('error', code='input', message="--mod: merging a mod's main-module patches is only wired for Tears of the Kingdom so far", log=None)
         sys.exit(1)
+    if odyssey:
+        event('inspect', game='odyssey', app_name=APP, version='v130', display_version='1.3.0', kind='xci', needs_fonts=False,
+              needs_update=False, platforms=['macos'], dlc=False, mod=False, space_gb={'macos': 12},
+              work=os.path.join(folder, 'Odyssey_build'), default_out=os.path.join(folder, 'Odyssey_build', 'Odyssey.app'))
+        sys.exit(0)
     if by3:
         event('inspect', game='by3', app_name=APP, version='v120' if update else None, display_version='1.2.0' if update else None,
               kind='nsp', needs_fonts=False, needs_update=not update, platforms=['macos'], dlc=False, mod=False,
@@ -53,9 +58,12 @@ steps = [(0, 'prepare', 'fetching the pinned SPIRV-Cross sources'), (1, 'code', 
          (2, 'data', 'extracting and verifying the RomFS (17 GB, a minute or two)'),
          (3, 'shaders', 'discovering and translating startup shaders from your game data'),
          (4, 'app', 'building the game binary and the launcher'), (4, 'app', 'assembling the app')]
+if odyssey:
+    steps = [(0, 'prepare', 'creating the Python environment')] + [(n, name, f'step {n}') for n, name in enumerate(
+        ['check', 'data', 'fonts', 'code', 'tables', 'runtime', 'shaders', 'app'], 1)]
 for i, (step, stage, message) in enumerate(steps):
     time.sleep(delay * (20 if mode == 'slow' and i == 2 else 1))
-    event('progress', stage=stage, step=step, of=4, message=message)
+    event('progress', stage=stage, step=step, of=8 if odyssey else 4, message=message)
     if i == 1:
         event('notice', stage=stage, step=step, of=4, code='npdm_signed',
               message='main.npdm is a Nintendo-signed 1.0.0 file from another dump; using it')

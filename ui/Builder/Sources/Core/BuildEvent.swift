@@ -84,8 +84,12 @@ struct BuildSteps: Equatable {
 
     func title(_ step: Int) -> String {
         switch name(step) {
+        case "check": String(localized: "Check the game file")
         case "code": String(localized: "Rewrite the game code")
         case "data", "update": String(localized: "Extract and verify the game data")   // "update": the data step of an update
+        case "fonts": String(localized: "Extract the system fonts")
+        case "tables": String(localized: "Verify and bind the game to the runtime")
+        case "runtime": String(localized: "Compile the runtime")
         case "shaders": String(localized: "Prepare the shaders")
         case "app": String(localized: "Build and check the app")
         case let other?: other.replacingOccurrences(of: "_", with: " ").capitalized

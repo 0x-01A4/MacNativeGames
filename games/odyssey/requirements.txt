@@ -1,0 +1,4 @@
+# What scripts/build_odyssey.py's steps import (build.py makes <work>/venv from this); the pins of games/totk/requirements.txt.
+cryptography==50.0.2   # decrypting the card image (NCA / XCI)
+lz4==4.4.5             # the code modules (NSO segments)
+capstone==5.0.9        # the code rewriter's disassembler

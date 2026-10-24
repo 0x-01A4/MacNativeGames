@@ -9,8 +9,9 @@ Status: Phase 3 of `UIPlans/ui-plan.md`. The Builder knows no game by name: it b
 `games/<name>/game.json` (below), and what each one takes (update, fonts, add-on content, a mod, iPhone/iPad) comes from
 `--inspect`. Today that is Tears of the Kingdom (Mac app, and the unsigned iPhone/iPad or Vision Pro IPA, which needs the full
 Xcode 26 plus `brew install xcodegen cmake ninja` and is installed with `games/totk/ios/tools/install_device.py`; a mod
-folder, `docs/mods.md`), Breath of the Wild (Mac or iPhone/iPad; 1.9.0 with its add-on content packs) and Bayonetta 3
-(Mac; base NSP plus the 1.2.0 update, through `games/by3/build.py`).
+folder, `docs/mods.md`), Breath of the Wild (Mac or iPhone/iPad; 1.9.0 with its add-on content packs), Bayonetta 3
+(Mac; base NSP plus the 1.2.0 update, through `games/by3/build.py`) and Super Mario Odyssey (Mac, needs the full Xcode;
+one XCI or NSP holding 1.3.0, through `games/odyssey/build.py`, eight steps).
 
 The **Library** (the switch at the top of the window) lists the game apps on this Mac: the ones Spotlight finds by
 their bundle identifier (`bundle_id` in a game.json) and the ones this Builder made. For each it shows what it was built
@@ -43,15 +44,16 @@ BUILDER_SCRIPT="$PWD/ui/Builder/Tests/Fixtures/fake_build.py" FAKE_BUILD=ok \
 
 `FAKE_BUILD` is `ok`, `fail` (a hash mismatch in step 2), `slow` (to try Cancel), `noheader` or `schema1` (an
 out-of-date script; `schema1` is one from before this schema). `FAKE_GAME=botw` makes it a Breath of the Wild file
-(1.9.0 with an update, so the DLC rows show); `FAKE_GAME=by3` a Bayonetta 3 base NSP, which asks for its update.
+(1.9.0 with an update, so the DLC rows show); `FAKE_GAME=by3` a Bayonetta 3 base NSP, which asks for its update;
+`FAKE_GAME=odyssey` a Super Mario Odyssey card image with eight steps.
 While `BUILDER_SCRIPT` is set, a yellow "Test mode" strip says so and no app is written.
 
 ## What the Builder keeps
 
 - In its preferences (`org.macnativegames.builder`): the checkout folder, and the location of `prod.keys` only if you
   turn on "Remember this location". The keys themselves are never copied or read.
-- Nothing else. The work folder (`TOTK_build/`, `BotW_build/` or `BY3_build/` next to the game file) is the build
-  script's, and it is reused by the next build, which is how a cancelled build resumes.
+- Nothing else. The work folder (`TOTK_build/`, `BotW_build/` or `BY3_build/` next to the game file;
+  `games/odyssey/Odyssey_build/` for Super Mario Odyssey) is the build script's, and it is reused by the next build, which is how a cancelled build resumes.
 - "Copy Full Log" copies the build's messages, which include the paths of your files but no key material.
 
 ## What an app records about its build
@@ -75,12 +77,14 @@ no change.
 | `schema`, `id`, `name` | required | `id` is the game's name in the events and in build-info.json |
 | `title_id` | required | the base game's title ID. `build_app.py` hands the game's files to `build`: an NSP at once (read from its tickets, without keys), a card image once `identify_game` has read it with the keys (`hand_over`; the script then writes no second `hello`) |
 | `bundle_id`, `data_folder` | | the app's identifier (the Library finds it by this) and its folder in `~/Library/Application Support/MacNativeGames` |
+| `data_beside_app` | instead of `data_folder` | the name of the folder next to the app that holds its saves (Super Mario Odyssey: `Odyssey Data`) |
 | `build` | | the build script, relative to the checkout (`build_app.py` for the Zelda games). Without one the game isn't offered |
 | `sources` | | the paths that go into its app, for "checkout changed" |
-| `files` | default: `{"game": ["xci", "nsp"], "update": ["nsp", "nsz"]}` | the file extensions it is built from; a file whose extension only one build takes goes to that script directly, others to `build_app.py` |
+| `files` | default: `{"game": ["xci", "nsp"], "update": ["nsp", "nsz"]}` | the file extensions it is built from (`"update": []`: one file holds the update); a file whose extension only one build takes goes to that script directly, others to `build_app.py` |
+| `versions` | optional | the versions it builds, when its `assets/expected-*.json` carry no `display_version` |
 | `shader_contribution` | optional | `step` and `form` of the game's shared shader list reminder |
 
-The versions in the error text come from the `display_version` of `games/<name>/assets/expected-*.json`.
+The versions in the error text come from `versions`, or else the `display_version` of `games/<name>/assets/expected-*.json`.
 
 ## The `build_app.py` contract (event schema 2)
 

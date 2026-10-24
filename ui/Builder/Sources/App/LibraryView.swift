@@ -41,7 +41,7 @@ struct LibraryView: View {
                             presenting: trash) { app in
             Button("Move to Trash", role: .destructive) { moveToTrash(app) }
         } message: { app in
-            Text("\(app.url.path)\n\nYour saves, settings and shader cache stay in ~/Library/Application Support/MacNativeGames. You can put the app back from the Trash.")
+            Text("\(app.url.path)\n\n\(savesText(app)) You can put the app back from the Trash.")
         }
     }
 
@@ -58,6 +58,13 @@ struct LibraryView: View {
         }.value
         (apps, freshness, contributions) = found
         loading = false
+    }
+
+    private func savesText(_ app: BuiltApp) -> String {
+        if let beside = wizard.preflight.games.named(app.game)?.dataBesideApp {
+            return String(localized: "Your saves, settings and shader cache stay in “\(beside)” next to it.")
+        }
+        return String(localized: "Your saves, settings and shader cache stay in ~/Library/Application Support/MacNativeGames.")
     }
 
     private func moveToTrash(_ app: BuiltApp) {

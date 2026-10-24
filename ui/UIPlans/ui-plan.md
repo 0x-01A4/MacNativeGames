@@ -27,6 +27,7 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 | Cover art | None. It would be game content |
 | Localization and accessibility | `String(localized:)` and accessibility labels from Phase 1. Chinese follows in Phase 5 without a retrofit |
 | Bayonetta 3 | Built by the Builder through `games/by3/build.py`, the README's steps behind the same event contract (Mac only, base NSP plus the 1.2.0 update) |
+| Super Mario Odyssey | Built by the Builder through `games/odyssey/build.py`, which runs `scripts/build_odyssey.py`'s eight steps (its own command line unchanged) behind the same event contract (Mac only, needs Xcode) |
 
 ## 2. Non-goals
 

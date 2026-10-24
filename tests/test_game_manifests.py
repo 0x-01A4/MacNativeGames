@@ -17,11 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT)]
 import build_app
 
-spec = importlib.util.spec_from_file_location('by3_build', ROOT / 'games/by3/build.py')
-by3 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(by3)
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-FIELDS = {'schema', 'id', 'name', 'title_id', 'bundle_id', 'data_folder', 'build', 'sources'}
+
+by3 = load('by3_build', 'games/by3/build.py')
+smo = load('odyssey_build', 'games/odyssey/build.py')
+
+FIELDS = {'schema', 'id', 'name', 'title_id', 'bundle_id', 'build', 'sources'}   # and data_folder or data_beside_app
 
 
 def ticket(title_id):
@@ -46,23 +52,25 @@ def nsp(path, title_id, nca=None):
     return path
 
 
-def events(argv):
-    """by3.main's JSON events and its BuildError (or None)."""
+def events(argv, script=None):
+    """A game build script's (by3 by default) JSON events from main, and its BuildError (or None)."""
+    script = script or by3
     out, error = io.StringIO(), None
-    with contextlib.redirect_stdout(out), mock.patch.object(by3, 'EVENTS', False), \
-            mock.patch.object(by3.signal, 'signal'):
+    with contextlib.redirect_stdout(out), mock.patch.object(script, 'EVENTS', False), \
+            mock.patch.object(script.signal, 'signal'):
         try:
-            by3.main(argv + ['--json-progress'])
-        except by3.BuildError as e:
+            script.main(argv + ['--json-progress'])
+        except script.BuildError as e:
             error = e
     return [json.loads(line) for line in out.getvalue().splitlines() if line.startswith('{')], error
 
 
 class Manifests(unittest.TestCase):
     def test_every_game_folder(self):
-        self.assertEqual({g['id'] for g in build_app.GAMES}, {'totk', 'botw', 'by3'})
+        self.assertEqual({g['id'] for g in build_app.GAMES}, {'totk', 'botw', 'by3', 'odyssey'})
         for g in build_app.GAMES:
             self.assertLessEqual(FIELDS, set(g), g['id'])
+            self.assertTrue({'data_folder', 'data_beside_app'} & set(g), g['id'])
             self.assertEqual(g['schema'], 1)
             self.assertTrue((ROOT / 'games' / g['id'] / 'game.json').is_file())
             self.assertTrue((ROOT / g['build']).is_file(), g['build'])
@@ -177,6 +185,75 @@ class By3Inspect(unittest.TestCase):
         self.assertEqual((info['game'], info['version'], info['platform']), ('by3', 'v120', 'macos'))
         self.assertEqual(info['inputs'], {'game': str(self.base), 'update': str(self.update)})
         self.assertNotIn('keys', json.dumps(info))
+
+
+class OdysseyBuild(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.keys = self.tmp / 'prod.keys'
+        self.keys.write_text('')
+        self.game = self.tmp / 'smo.nsp'
+        entries = [(f'{t.lower()}0000000000000000.tik', ticket(t)) for t in (smo.BASE_TITLE, smo.UPDATE_TITLE)]
+        strings, table, payload = b'', bytearray(), b''
+        for name, data in entries:
+            table += struct.pack('<QQII', len(payload), len(data), len(strings), 0)
+            strings += name.encode() + b'\0'
+            payload += data
+        self.game.write_bytes(b'PFS0' + struct.pack('<III', len(entries), len(strings), 0) + bytes(table) + strings + payload)
+
+    def test_manifest_agrees(self):
+        self.assertEqual((smo.GAME['title_id'], smo.BASE_TITLE), ('0100000000010000', '0100000000010000'))
+        self.assertIn(f'"CFBundleIdentifier": "{smo.GAME["bundle_id"]}"', (ROOT / 'games/odyssey/scripts/package_native_app.py').read_text())
+        self.assertIn(smo.GAME['data_beside_app'], (ROOT / 'games/odyssey/scripts/odyssey_app_launcher.c').read_text())
+
+    def test_build_app_hands_it_over(self):
+        argv = [str(self.game), '-k', str(self.keys)]
+        with mock.patch.object(build_app.os, 'execve') as execve:
+            build_app.hand_off(build_app.parse_args(argv), argv)
+        self.assertEqual(execve.call_args[0][1][1], str(ROOT / 'games/odyssey/build.py'))
+
+    def test_inspect_an_nsp(self):
+        got, error = events([str(self.game), '-k', str(self.keys), '--work', str(self.tmp / 'w'), '--inspect'], smo)
+        self.assertIsNone(error)
+        i = got[-1]
+        self.assertEqual((i['game'], i['display_version'], i['needs_fonts'], i['platforms'], i['mod']), ('odyssey', '1.3.0', True, ['macos'], False))
+        self.assertEqual(i['default_out'], str(self.tmp / 'w/Odyssey.app'))
+        got, _ = events([str(self.game), '-k', str(self.keys), '--firmware', str(self.tmp), '--work', str(self.tmp / 'w'), '--inspect'], smo)
+        self.assertFalse(got[-1]['needs_fonts'])
+        self.assertFalse((self.tmp / 'w').exists())   # an NSP is read without the Python environment
+
+    def test_refused(self):
+        for extra, code in ((['--update', str(self.game)], 'input'), (['--platform', 'ios'], 'platform'),
+                            (['--mod', str(self.tmp)], 'input'), ([], 'fonts')):   # []: an NSP build without fonts
+            _, error = events([str(self.game), '-k', str(self.keys), '--work', str(self.tmp / 'w')] + extra, smo)
+            self.assertEqual(error.code, code, extra)
+        other = self.tmp / 'other.nsp'
+        other.write_bytes(self.game.read_bytes().replace(bytes.fromhex(smo.BASE_TITLE), bytes(8)).replace(bytes.fromhex(smo.UPDATE_TITLE), bytes(8)))
+        _, error = events([str(other), '-k', str(self.keys), '--work', str(self.tmp / 'w'), '--inspect'], smo)
+        self.assertEqual(error.code, 'wrong_game')
+
+    def test_place_replaces_only_its_own_app(self):
+        app = self.tmp / 'w/Odyssey.app'
+        (app / 'Contents').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_text(smo.GAME['bundle_id'])
+        (self.tmp / 'w' / smo.DATA).mkdir()
+        foreign = self.tmp / 'Mine.app'
+        (foreign / 'Contents').mkdir(parents=True)
+        (foreign / 'Contents/Info.plist').write_text('com.example.other')
+        with self.assertRaises(smo.BuildError):
+            smo.place(app, foreign)
+        self.assertTrue(foreign.exists() and app.exists())
+        with mock.patch.object(smo, 'EVENTS', False), contextlib.redirect_stdout(io.StringIO()):
+            smo.place(app, self.tmp / 'Games/Odyssey.app')
+        self.assertTrue((self.tmp / 'Games/Odyssey.app/Contents/Info.plist').is_file() and not app.exists())
+        self.assertTrue((self.tmp / 'Games' / smo.DATA).is_dir())   # the saves go with it
+
+    def test_steps_report_through_the_caller(self):
+        # build_odyssey.build takes the caller's step/run/note; its own main still prints as before
+        import inspect as introspect
+        self.assertEqual(list(introspect.signature(smo.build_odyssey.build).parameters), ['args', 'py', 'step', 'done', 'run', 'note'])
+        self.assertNotIn('print(', introspect.getsource(smo.build_odyssey.build))
+        self.assertEqual(set(smo.STAGES), set(range(1, 9)))
 
 
 if __name__ == '__main__':

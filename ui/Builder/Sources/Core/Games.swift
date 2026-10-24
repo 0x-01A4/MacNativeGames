@@ -22,14 +22,15 @@ struct Game: Decodable, Equatable, Identifiable {
     var titleId: String
     var bundleId: String?          // what its app carries, to find it on the Mac
     var dataFolder: String?        // ~/Library/Application Support/MacNativeGames/<dataFolder>
+    var dataBesideApp: String?     // or a folder of this name next to the app (Super Mario Odyssey: "Odyssey Data")
     var build: String?             // the script that builds it, relative to the checkout
     var sources: [String]          // what goes into its app: a change there since an app's commit makes it out of date
     var files: Files               // the file extensions it is built from (lowercase, no dot)
     var shaderContribution: ShaderContribution?
-    var versions: [String] = []    // the display_version of each games/<id>/assets/expected-*.json, the versions it builds
+    var versions: [String] = []    // the versions it builds: game.json "versions", or each assets/expected-*.json's display_version
 
     private enum CodingKeys: String, CodingKey {
-        case schema, id, name, titleId, bundleId, dataFolder, build, sources, files, shaderContribution
+        case schema, id, name, titleId, bundleId, dataFolder, dataBesideApp, build, sources, files, versions, shaderContribution
     }
 
     init(from decoder: Decoder) throws {
@@ -40,10 +41,12 @@ struct Game: Decodable, Equatable, Identifiable {
         titleId = try c.decode(String.self, forKey: .titleId)
         bundleId = try c.decodeIfPresent(String.self, forKey: .bundleId)
         dataFolder = try c.decodeIfPresent(String.self, forKey: .dataFolder)
+        dataBesideApp = try c.decodeIfPresent(String.self, forKey: .dataBesideApp)
         build = try c.decodeIfPresent(String.self, forKey: .build)
         sources = try c.decodeIfPresent([String].self, forKey: .sources) ?? []
         files = try c.decodeIfPresent(Files.self, forKey: .files) ?? Files(game: ["xci", "nsp"], update: ["nsp", "nsz"])
         shaderContribution = try c.decodeIfPresent(ShaderContribution.self, forKey: .shaderContribution)
+        versions = try c.decodeIfPresent([String].self, forKey: .versions) ?? []
     }
 
     /// The checkout has its build script (game.json "build").
@@ -59,7 +62,7 @@ struct Game: Decodable, Equatable, Identifiable {
             let dir = repo.appendingPathComponent("games/\(folder)")
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("game.json")),
                   var game = try? decoder.decode(Game.self, from: data), game.schema == schema else { return nil }
-            game.versions = versions(dir.appendingPathComponent("assets"), fileManager)
+            if game.versions.isEmpty { game.versions = versions(dir.appendingPathComponent("assets"), fileManager) }
             return game
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

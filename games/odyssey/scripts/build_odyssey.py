@@ -89,10 +89,17 @@ def main():
     args.game, args.keys, args.work = args.game.resolve(), args.keys.resolve(), args.work.resolve()
     py = sys.executable
     preflight(args, py)
+    started = time.monotonic()
+    build(args, py)
+    print(f"\nBuilt {args.work / 'Odyssey.app'} in {(time.monotonic() - started) / 60:.0f} min. It contains game data from your "
+          "own dump: do not share it.")
+
+
+def build(args, py, step=step, done=done, run=run, note=print):
+    """Steps 1-8 for main, and for build.py (the Builder's events), which passes its own step, done, run and note."""
     work, ext = args.work, args.work / "extracted"
     work.mkdir(parents=True, exist_ok=True)
     keyargs = ["--keys", args.keys]
-    started = time.monotonic()
 
     t = step(1, "Check the input")
     run([py, "scripts/inspect_input.py", args.game, *keyargs])
@@ -100,12 +107,12 @@ def main():
 
     t = step(2, "Program modules and the merged RomFS")
     if (ext / "extraction-manifest.json").is_file():
-        print("   modules already extracted")
+        note("   modules already extracted")
     else:
         run([py, "scripts/extract_code.py", args.game, *keyargs, "--output", ext])
     link(ext / "local/exefs", "..")
     if (ext / "local/romfs/index.json").is_file():
-        print("   RomFS already merged")
+        note("   RomFS already merged")
     else:
         run([py, "scripts/merge_romfs.py", args.game, *keyargs, "--output", ext / "local/romfs"])
     done(t)
@@ -113,7 +120,7 @@ def main():
     t = step(3, "System fonts")
     fonts = ext / "firmware/shared-fonts"
     if len(list(fonts.glob("*.bfttf"))) >= 6:
-        print("   fonts already extracted")
+        note("   fonts already extracted")
     else:
         source = ["--firmware", args.firmware] if args.firmware else ["--xci", args.game]
         try:
@@ -133,7 +140,7 @@ def main():
     link(rewritten / "local", "../rewritten")
     for name in MODULES:
         if (rewritten / f"{name}.patched.bin").is_file():
-            print(f"   {name} already rewritten")
+            note(f"   {name} already rewritten")
             continue
         run([py, GAME_DIR / "third_party/d2r/patch_nso.py", ext / name, rewritten, name],
             env={"DM_RULESET": "native", "DM_PRIVATE_GATES": "0"})
@@ -159,9 +166,9 @@ def main():
     seed = work / "build/shader-seed"
     t = step(7, "Whole-game shader seed")
     if args.skip_seed:
-        print("   skipped (--skip-seed)")
+        note("   skipped (--skip-seed)")
     elif (seed / "seed-manifest.json").is_file():
-        print("   seed already prepared")
+        note("   seed already prepared")
     else:
         env = {"ODYSSEY_WORK": str(work)}
         try:
@@ -169,7 +176,7 @@ def main():
         except subprocess.CalledProcessError:
             # The shared tool can fail in its last step after translating everything (seen 22 October); publish the
             # translated partial seed and finish it, as prepare_odyssey_shader_seed.py --salvage does.
-            print("   the seed's last step failed; salvaging the translated shaders")
+            note("   the seed's last step failed; salvaging the translated shaders")
             run([py, "scripts/prepare_odyssey_shader_seed.py", "--output", seed, "--salvage"], env=env)
         run([py, "scripts/prepare_odyssey_shader_seed.py", "--output", seed, "--rules"], env=env)
     done(t)
@@ -180,8 +187,6 @@ def main():
         run([py, "scripts/extract_app_icon.py", args.game, *keyargs, "--output", icon])
     run([py, "scripts/package_native_app.py"], env={"ODYSSEY_WORK": str(work)})
     done(t)
-    print(f"\nBuilt {work / 'Odyssey.app'} in {(time.monotonic() - started) / 60:.0f} min. It contains game data from your "
-          "own dump: do not share it.")
 
 
 if __name__ == "__main__":
