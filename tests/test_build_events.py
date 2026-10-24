@@ -87,6 +87,37 @@ class IOSPrerequisites(unittest.TestCase):
         self.assertIn('brew install xcodegen ninja', str(e.exception))
 
 
+class SDKChoice(unittest.TestCase):
+    """An SDK newer than the linker (MacOSX27.0.sdk next to ld from command line tools 26.6, 2026-10-23)."""
+    def setUp(self):
+        self.addCleanup(setattr, build_app, 'EVENTS', False)
+        self.enterContext(mock.patch.dict(build_app.os.environ))
+        build_app.os.environ.pop('SDKROOT', None)
+        self.enterContext(mock.patch.object(build_app.subprocess, 'run', return_value=mock.Mock(stdout='/SDKs/MacOSX27.0.sdk\n')))
+        self.enterContext(mock.patch.object(build_app, 'say'))
+
+    def test_default_that_links_is_left_alone(self):
+        with mock.patch.object(build_app, 'links', return_value=(True, '')):
+            self.assertIsNone(build_app.choose_sdk())
+        self.assertNotIn('SDKROOT', build_app.os.environ)
+
+    def test_newest_sdk_that_links(self):
+        new, mid, old = Path('/SDKs/MacOSX27.0.sdk'), Path('/SDKs/MacOSX26.5.sdk'), Path('/SDKs/MacOSX26.0.sdk')
+        with mock.patch.object(build_app, 'links', side_effect=lambda sdk=None: (sdk in (mid, old), 'unknown architecture')), \
+                mock.patch.object(build_app, 'sdk_candidates', return_value=[new, mid, old]), \
+                mock.patch.object(build_app.Path, 'resolve', lambda self: self):
+            self.assertEqual(build_app.choose_sdk(), mid)
+        self.assertEqual(build_app.os.environ['SDKROOT'], str(mid))
+
+    def test_none_links(self):
+        with mock.patch.object(build_app, 'links', return_value=(False, 'tapi error: malformed file')), \
+                mock.patch.object(build_app, 'sdk_candidates', return_value=[Path('/SDKs/MacOSX26.5.sdk')]):
+            with self.assertRaises(build_app.BuildError) as e:
+                build_app.choose_sdk()
+        self.assertEqual(e.exception.code, 'toolchain')
+        self.assertIn('tapi error', str(e.exception))
+
+
 class Errors(unittest.TestCase):
     def test_codes(self):
         self.assertEqual(build_app.BuildError('x').code, 'build')

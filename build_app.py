@@ -139,7 +139,7 @@ def say(msg):
 
 def notice(code, msg):
     """A message the player should see after the build too: an input accepted by another rule than the exact reference
-    hash. code: npdm_signed, npdm_resigned, fonts_other_firmware."""
+    hash, or a tool chosen other than the default. code: npdm_signed, npdm_resigned, fonts_other_firmware, sdk_fallback."""
     if not EVENTS:
         return say(msg)
     msg = staged(msg)
@@ -314,6 +314,7 @@ def prerequisites(args):
                          'With Xcode: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer; with the command line '
                          'tools only: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install '
                          f'(xcode-select -p and xcrun --show-sdk-path show what is used). clang++ said: {cxx.stderr.strip()[:300]}', code='toolchain')
+    choose_sdk()
     brew = Path('/opt/homebrew')
     missing = [p for p in ('opus', 'libvpx') if not (brew / 'opt' / p / 'lib').is_dir()]
     if missing:
@@ -326,6 +327,53 @@ def prerequisites(args):
     if args.platform == 'ios':
         ios_prerequisites()
     return Path(py)
+
+
+def links(sdk=None):
+    """Whether clang++ links a C++ program against `sdk` (the default SDK when None)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, SDKROOT=str(sdk)) if sdk else None
+        r = subprocess.run(['xcrun', 'clang++', '-std=c++11', '-arch', 'arm64', '-x', 'c++', '-', '-o', Path(tmp) / 'probe'],
+                           input='#include <string>\nint main() { return std::string("x").size() - 1; }\n',
+                           capture_output=True, text=True, env=env)
+        return r.returncode == 0, r.stderr
+
+
+def sdk_candidates():
+    """The macOS 26+ SDKs of the selected developer folder, newest first (symbolic links to the same SDK once)."""
+    developer = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True).stdout.strip()
+    found = []
+    for folder in (Path(developer) / 'SDKs', Path(developer) / 'Platforms/MacOSX.platform/Developer/SDKs'):
+        for sdk in folder.glob('MacOSX*.sdk'):
+            version = sdk.name[len('MacOSX'):-len('.sdk')]
+            try:
+                key = tuple(int(x) for x in version.split('.'))
+            except ValueError:
+                continue
+            if key[0] >= 26 and sdk.resolve() not in (f for _, f in found):
+                found.append((key, sdk.resolve()))
+    return [sdk for _, sdk in sorted(found, reverse=True)]
+
+
+def choose_sdk():
+    """A command line tools update can leave an SDK newer than its linker (MacOSX27.0.sdk next to ld from 26.6: "tapi
+    error: malformed file ... unknown architecture arm64e.x1"), and xcrun picks the newest. Then the build uses the newest
+    SDK that links, for every tool it runs (SDKROOT); the default is left alone when it works."""
+    ok, error = links()
+    if ok:
+        return None
+    default = Path(subprocess.run(['xcrun', '--show-sdk-path'], capture_output=True, text=True).stdout.strip()).resolve()
+    for sdk in sdk_candidates():
+        if sdk != default and links(sdk)[0]:
+            os.environ['SDKROOT'] = str(sdk)
+            notice('sdk_fallback', f'the default macOS SDK ({default.name}) does not link with these developer tools; building '
+                   f'with {sdk.name} instead (removing {default} or updating the command line tools makes the default work again)')
+            return sdk
+    raise BuildError('clang++ cannot link a program with any macOS 26 SDK of the developer tools, so the tools or their SDKs '
+                     'do not match. Updating or reinstalling the command line tools fixes it: sudo rm -rf '
+                     f'/Library/Developer/CommandLineTools && xcode-select --install. The linker said: {error.strip()[-300:]}',
+                     code='toolchain')
 
 
 def ios_prerequisites():

@@ -71,7 +71,7 @@ still goes to stderr. Each object has `type` and `time` (Unix seconds):
 | `progress` | `stage` (`prepare`, `code`, `data`, `update`, `shaders`, `app`), `step` (0–4), `of` (4), `message` | each step message; a message without a `N/4 name:` prefix keeps the stage before it |
 | `heartbeat` | as `progress` | "still running" every minute of a long tool |
 | `inspect` | `game`, `app_name`, `version`, `display_version`, `kind`, `needs_fonts`, `platforms`, `dlc`, `work`, `default_out` | with `--inspect`: what the game file is; then it stops before the disk checks and the steps |
-| `notice` | as `progress`, plus `code` (`npdm_signed`, `npdm_resigned`, `fonts_other_firmware`) | an input accepted by another rule than the exact reference hash; the Builder lists them when the build ends |
+| `notice` | as `progress`, plus `code` (`npdm_signed`, `npdm_resigned`, `fonts_other_firmware`, `sdk_fallback`) | an input accepted by another rule than the exact reference hash; the Builder lists them when the build ends |
 | `done` | `out`, `game`, `version`, `platform` | the app or IPA is ready |
 | `error` | `code`, `message`, `log` (the failed tool's log, or null) | exit 1 |
 | `cancelled` | | exit 130 (Ctrl-C, or SIGTERM with `--json-progress`) |

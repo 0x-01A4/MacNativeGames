@@ -545,6 +545,7 @@ struct Notices: View {
         case "npdm_signed": String(localized: "Your dump differs from the reference one only in main.npdm, which carries Nintendo's signature: it was accepted as another genuine dump of this version. The game code itself matched exactly.")
         case "npdm_resigned": String(localized: "Your dump's main.npdm was signed again by a dump tool. The game doesn't use that file and the game code matched exactly, so it was accepted.")
         case "fonts_other_firmware": String(localized: "Some system fonts come from another firmware version than the reference. They were checked as valid fonts and bound by their own bytes.")
+        case "sdk_fallback": String(localized: "This Mac's newest macOS SDK doesn't work with its developer tools, so the build used an older one. Updating the command line tools (Software Update) fixes the default.")
         default: nil
         }
     }
