@@ -71,11 +71,33 @@ struct BuildSteps: Equatable {
 
     var count = 4
     var names: [Int: String] = [:]
+    var started: [Int: Double] = [:]   // when each step's first event came (Unix seconds; step 0: prepare)
+    var ended: Double?                 // the build's done, error or cancelled event
 
     mutating func see(_ event: BuildEvent) {
+        if ["done", "error", "cancelled"].contains(event.type) { ended = event.time ?? ended }
         guard event.type == "progress" || event.type == "heartbeat" || event.type == "notice" else { return }
         if let of = event.of, of > 0 { count = of }
         if let step = event.step, step > 0, let stage = event.stage { names[step] = stage }
+        if let step = event.step, let time = event.time, started[step] == nil { started[step] = time }
+    }
+
+    /// How long the step took, or has taken until `now`: to the next step's start, or the build's end.
+    func duration(_ step: Int, now: Double) -> Double? {
+        guard let start = started[step] else { return nil }
+        let end = started.filter { $0.key > step }.map(\.value).min() ?? ended ?? now
+        return max(0, end - start)
+    }
+
+    /// The whole build so far, from its first step event.
+    func elapsed(now: Double) -> Double? {
+        started.values.min().map { max(0, (ended ?? now) - $0) }
+    }
+
+    /// 0:42, 12:03 or 1:02:03.
+    static func clock(_ seconds: Double) -> String {
+        let s = Int(seconds)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 
     /// The step's stage name: the one its events gave, or build_app.py's while a build of four hasn't reached it.

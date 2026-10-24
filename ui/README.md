@@ -21,6 +21,15 @@ settings. Below the apps, each game's shader list contribution file shows how ma
 GitHub form and the file in Finder) and the game's own reminder switch: the Builder writes the same `.reminded` file the
 game's launcher reads, so the two always agree. Nothing is sent unless you send it.
 
+Under the apps, **Work folders** lists the work folder each build record names, with its size, and moves one to the
+Trash. That frees the space and makes the next build of that game start from the beginning. It never removes a folder
+the game's app reads from (`work_holds_game_data`) or one that holds an app.
+
+While a build runs, the Mac doesn't idle-sleep, the Dock icon shows the step, and each step shows how long it took.
+Quitting asks first and cancels the build. When the build ends with the Builder in the background, a notification
+says so. Game files open in the Builder from Finder (Open With, or a drop on its Dock icon) and with File > Open
+Game File (⌘O).
+
 ## Build and run
 
 Needs macOS 26 on Apple silicon and the Xcode command line tools (`swiftc`); no Xcode project or SwiftPM.
@@ -85,6 +94,7 @@ no change.
 | `versions` | optional | the versions it builds, when its `assets/expected-*.json` carry no `display_version` |
 | `shader_contribution` | optional | `step` and `form` of the game's shared shader list reminder |
 | `needs` | optional | what its Mac build needs besides `build_app.py`'s own tools: `xcode` (the full Xcode); the Output page names it and holds the build until it's there |
+| `work_holds_game_data` | optional | `true` when its app reads the game data from the work folder (Bayonetta 3), so the Library never deletes that folder |
 | `install_tool` | optional | the script that signs and installs its iPhone/iPad or Vision Pro IPA, relative to the checkout; the result page gives the command |
 
 The versions in the error text come from `versions`, or else the `display_version` of `games/<name>/assets/expected-*.json`.

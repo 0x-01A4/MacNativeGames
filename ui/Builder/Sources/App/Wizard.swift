@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 /// The Builder's state: the files the player picked, what --inspect found, and the running build. Every build step is
 /// build_app.py's; this only collects its arguments and reads its events.
@@ -248,7 +249,7 @@ final class Wizard: ObservableObject {
         switch step {
         case .keys: ready && keys != nil
         case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
-        case .target: out != nil && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
+        case .target: out.map(Disk.canWrite) == true && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
         case .build, .result: false
         }
     }
@@ -323,13 +324,17 @@ final class Wizard: ObservableObject {
         cancelling = false
         awake = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
                                                       reason: String(localized: "Building a game app"))
+        badge(nil)
+        // asked once, before the first build, so the build's end can say so when the Builder is in the background
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         start(inputs() + buildOptions(out)) { [weak self] event in
             guard let self else { return }
+            self.steps.see(event)
             switch event.type {
             case "progress", "heartbeat":
                 self.progress = event
                 self.reached = max(self.reached, event.step ?? 0)
-                self.steps.see(event)
+                self.badge("\(self.reached)/\(self.steps.count)")
             case "notice": self.notices.append(event)
             case "done":
                 let app = URL(fileURLWithPath: event.out ?? out.path)
@@ -350,8 +355,45 @@ final class Wizard: ObservableObject {
                 self.outcome = failure ?? (status == 130 ? .cancelled : status == 0 ? .done(out)
                     : .failed(code: nil, message: String(localized: "build_app.py ended with exit status \(status).")))
             }
+            if self.steps.ended == nil { self.steps.ended = Date().timeIntervalSince1970 }
             self.step = .result
+            self.announce()
         }
+    }
+
+    /// The Dock icon's badge: the step while building, then ✓ or ! until the Builder is in front again.
+    private func badge(_ text: String?) { NSApp.dockTile.badgeLabel = text }
+
+    /// The build's end, on the Dock icon and, when the Builder is in the background, as a notification.
+    private func announce() {
+        let content = UNMutableNotificationContent()
+        switch outcome {
+        case .done(let app):
+            badge("✓")
+            content.title = String(localized: "\(report?.appName ?? app.deletingPathExtension().lastPathComponent) is ready")
+            content.body = app.path
+        case .failed(let code, _, _):
+            badge("!")
+            content.title = String(localized: "The build stopped")
+            content.body = ErrorText(code: code, games: preflight.games).title
+        case .cancelled, nil:
+            return badge(nil)
+        }
+        if NSApp.isActive { return badge(nil) }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "build", content: content, trigger: nil))
+    }
+
+    /// The Builder is in front: a finished build's badge has been seen.
+    func activated() { if !running { badge(nil) } }
+
+    /// Game files opened from Finder or with File > Open: the Game page, as if they were dropped there.
+    func open(_ urls: [URL]) {
+        guard !running else { return }
+        mode = .build
+        if step != .keys { step = .game }
+        outcome = nil
+        _ = drop(urls)
+        if keys != nil && ready { step = .game }   // without the keys the Keys page asks first; the file is read after
     }
 
     func cancel() {
@@ -453,6 +495,23 @@ final class Wizard: ObservableObject {
     // MARK: result
 
     var fullLog: String { lines.joined(separator: "\n") + "\n" }
+
+    /// The build's own logs (<work>/logs), once there are any.
+    var logsFolder: URL? {
+        guard let work = report?.work else { return nil }
+        let logs = URL(fileURLWithPath: work).appendingPathComponent("logs")
+        return FileManager.default.fileExists(atPath: logs.path) ? logs : nil
+    }
+
+    /// The free space of the work folder's drive, when it's less than a first build needs (no work folder there yet:
+    /// one that is reuses what it holds).
+    var spaceShort: (free: Int64, needed: Int)? {
+        guard let needed = report?.spaceGb?[platform], let work = report?.work,
+              !FileManager.default.fileExists(atPath: work),
+              let free = Disk.freeBytes(URL(fileURLWithPath: work)) else { return nil }
+        let gb = free / 1_000_000_000
+        return gb < Int64(needed) ? (gb, needed) : nil
+    }
 
     func copyLog() {
         NSPasteboard.general.clearContents()

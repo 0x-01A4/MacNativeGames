@@ -30,10 +30,11 @@ struct Game: Decodable, Equatable, Identifiable {
     var versions: [String] = []    // the versions it builds: game.json "versions", or each assets/expected-*.json's display_version
     var needs: [String] = []       // what its Mac build needs besides build_app.py's own tools: "xcode" (the full Xcode)
     var installTool: String?       // the script that signs and installs its iPhone / iPad or Vision Pro IPA
+    var workHoldsGameData = false  // its app reads the game data from the work folder (Bayonetta 3), so that stays
 
     private enum CodingKeys: String, CodingKey {
         case schema, id, name, titleId, bundleId, dataFolder, dataBesideApp, build, sources, files, versions, shaderContribution
-        case needs, installTool
+        case needs, installTool, workHoldsGameData
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +53,7 @@ struct Game: Decodable, Equatable, Identifiable {
         versions = try c.decodeIfPresent([String].self, forKey: .versions) ?? []
         needs = try c.decodeIfPresent([String].self, forKey: .needs) ?? []
         installTool = try c.decodeIfPresent(String.self, forKey: .installTool)
+        workHoldsGameData = try c.decodeIfPresent(Bool.self, forKey: .workHoldsGameData) ?? false
     }
 
     /// The checkout has its build script (game.json "build").

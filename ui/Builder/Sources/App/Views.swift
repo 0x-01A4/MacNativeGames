@@ -11,9 +11,20 @@ struct BuilderApp: App {
         Window("MacNativeGames Builder", id: "builder") {
             Root().environmentObject(wizard)
                 .frame(minWidth: 760, minHeight: 540)
-                .onAppear { delegate.wizard = wizard }
+                .onAppear { delegate.attach(wizard) }
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open Game File…") {
+                    let games = wizard.preflight.games
+                    if let url = choose(types(games.gameExtensions + games.updateExtensions),
+                                        message: String(localized: "Choose a game file or its update")) { wizard.open([url]) }
+                }
+                .keyboardShortcut("o")
+                .disabled(wizard.running)
+            }
+        }
     }
 }
 
@@ -21,7 +32,21 @@ struct BuilderApp: App {
 /// go on without anyone reading them.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var wizard: Wizard?
+    private(set) var wizard: Wizard?
+    private var opened: [URL] = []   // files Finder opened the Builder with, before its window was there
+
+    func attach(_ wizard: Wizard) {
+        self.wizard = wizard
+        if !opened.isEmpty { wizard.open(opened) }
+        opened = []
+    }
+
+    /// A game file opened with the Builder in Finder, or dropped on its Dock icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let wizard { wizard.open(urls) } else { opened += urls }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) { wizard?.activated() }
 
     /// Closing the window quits, unless a build is running: then the app stays and the build goes on.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { wizard?.running != true }
@@ -221,6 +246,7 @@ struct FileRow: View {
 
 struct KeysPage: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var targeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -240,6 +266,13 @@ struct KeysPage: View {
                     .help("Only the path is kept, in this app's preferences; the keys themselves are never copied or read by the Builder.")
             }
             .formStyle(.grouped)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard urls.count == 1, let url = urls.first,
+                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true else { return false }
+                wizard.setKeys(url)
+                return true
+            } isTargeted: { targeted = $0 }
+            .overlay { if targeted { RoundedRectangle(cornerRadius: 10).stroke(.tint, lineWidth: 3) } }
         }
     }
 }
@@ -495,6 +528,17 @@ struct TargetPage: View {
             if !wizard.gameMissing.isEmpty {
                 Missing(items: wizard.gameMissing, title: "\(wizard.identifiedGame?.name ?? "This game") needs these on this Mac")
             }
+            if let out = wizard.out, !Disk.canWrite(out) {
+                Label("The Builder can't write in \(Disk.existing(out.deletingLastPathComponent()).path): choose another place.",
+                      systemImage: "xmark.octagon.fill").foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            } else if let out = wizard.out, FileManager.default.fileExists(atPath: out.path) {
+                Label("\(out.lastPathComponent) is already there: the build replaces it. Its saves and settings are kept.",
+                      systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let short = wizard.spaceShort {
+                Label("The drive has \(short.free) GB free, and a first build needs about \(short.needed) GB. Free up space, or the build stops when it checks.",
+                      systemImage: "externaldrive.badge.exclamationmark").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             Group {
                 if let space = wizard.report?.spaceGb?[wizard.platform] {
                     Text(wizard.isDevice
@@ -514,20 +558,22 @@ struct BuildPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "Building", detail: "You can keep using the Mac. Cancel stops at once; the next build continues from the finished steps.")
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(1...max(wizard.steps.count, 1), id: \.self) { step in
-                    let done = wizard.reached > step || (wizard.outcome.map { if case .done = $0 { true } else { false } } ?? false)
-                    let current = wizard.reached == step && !done
-                    HStack(spacing: 10) {
-                        Group {
-                            if current { ProgressView().controlSize(.small) }
-                            else { Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? .green : .secondary) }
-                        }
-                        .frame(width: 18)
-                        Text(wizard.steps.title(step)).foregroundStyle(current || done ? .primary : .secondary)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let now = wizard.running ? context.date.timeIntervalSince1970 : (wizard.steps.ended ?? context.date.timeIntervalSince1970)
+                VStack(alignment: .leading, spacing: 10) {
+                    // step 0 (fetching sources, a Python environment) has no number in the script's list, but can take minutes
+                    if wizard.steps.started[0] != nil {
+                        row(title: String(localized: "Prepare"), done: wizard.reached > 0 || isDone, current: wizard.reached == 0 && !isDone,
+                            time: wizard.steps.duration(0, now: now))
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(Text(done ? "done" : current ? "in progress" : "waiting"))
+                    ForEach(1...max(wizard.steps.count, 1), id: \.self) { step in
+                        let done = wizard.reached > step || isDone
+                        row(title: wizard.steps.title(step), done: done, current: wizard.reached == step && !done,
+                            time: wizard.steps.duration(step, now: now))
+                    }
+                    if let total = wizard.steps.elapsed(now: now) {
+                        Text("Elapsed \(BuildSteps.clock(total))").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
             }
             if let p = wizard.progress {
@@ -536,27 +582,61 @@ struct BuildPage: View {
             LogView()
         }
     }
+
+    private var isDone: Bool { if case .done = wizard.outcome { true } else { false } }
+
+    private func row(title: String, done: Bool, current: Bool, time: Double?) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if current { ProgressView().controlSize(.small) }
+                else { Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? .green : .secondary) }
+            }
+            .frame(width: 18)
+            Text(title).foregroundStyle(current || done ? .primary : .secondary)
+            if let time, done || current {
+                Text(BuildSteps.clock(time)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(Text(done ? "done" : current ? "in progress" : "waiting"))
+    }
 }
 
 struct LogView: View {
     @EnvironmentObject var wizard: Wizard
     @State private var shown = false
+    @State private var search = ""
+    @State private var atEnd = true   // follow new lines only while the end is in view
+
+    static let shownLines = 400
 
     var body: some View {
         DisclosureGroup("Log", isExpanded: $shown) {
+            let matching = search.isEmpty ? wizard.lines : wizard.lines.filter { $0.localizedCaseInsensitiveContains(search) }
+            TextField("Search the log", text: $search).textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(wizard.lines.suffix(400).joined(separator: "\n"))
+                    Text(matching.suffix(Self.shownLines).joined(separator: "\n"))
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Color.clear.frame(height: 1).id("end")
                 }
                 .frame(height: 200)
-                .onChange(of: wizard.lines.count) { proxy.scrollTo("end") }
+                .onScrollGeometryChange(for: Bool.self) { g in
+                    g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
+                } action: { _, end in atEnd = end }
+                .onChange(of: wizard.lines.count) { if atEnd { proxy.scrollTo("end") } }
             }
             HStack {
+                if matching.count > Self.shownLines {
+                    Text("The last \(Self.shownLines) of \(matching.count) lines; Copy Full Log has them all.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 Spacer()
+                if let logs = wizard.logsFolder {
+                    Button("Show Logs Folder") { NSWorkspace.shared.activateFileViewerSelecting([logs]) }
+                }
                 Button("Copy Full Log") { wizard.copyLog() }
             }
         }
@@ -655,6 +735,7 @@ struct ResultPage: View {
                 PageTitle(title: "The build stopped", detail: "Nothing was installed; an app built before is unchanged.")
                 Failure(code: code, message: message, log: log)
                 resultButtons
+                Notices()
             case .cancelled:
                 PageTitle(title: "Build cancelled", detail: "Building again reuses the steps that finished.")
                 resultButtons

@@ -8,8 +8,11 @@ struct LibraryView: View {
     @State private var apps: [BuiltApp] = []
     @State private var freshness: [String: Freshness] = [:]
     @State private var contributions: [Contribution] = []
+    @State private var works: [WorkFolder] = []
+    @State private var sizes: [String: Int64] = [:]   // by path, measured after the list shows
     @State private var loading = true
     @State private var trash: BuiltApp?
+    @State private var deleting: WorkFolder?
     @State private var problem: String?
 
     var body: some View {
@@ -31,6 +34,7 @@ struct LibraryView: View {
                 if let problem {
                     Text(problem).foregroundStyle(.red)
                 }
+                if !works.isEmpty { workFolders }
                 Contributions(items: $contributions)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -43,6 +47,41 @@ struct LibraryView: View {
         } message: { app in
             Text("\(app.url.path)\n\n\(savesText(app)) You can put the app back from the Trash.")
         }
+        .confirmationDialog(Text("Move the work folder to the Trash?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            presenting: deleting) { work in
+            Button("Move to Trash", role: .destructive) { moveToTrash(work) }
+        } message: { work in
+            Text("\(work.url.path)\n\nThe apps keep working. The next build of this game starts from the beginning, which takes much longer.")
+        }
+    }
+
+    /// The build scripts' work folders: big, reused by the next build, and safe to delete unless the app reads from one.
+    private var workFolders: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Work folders").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text("What each build extracted and compiled. The next build reuses it, so deleting one only makes that build start from the beginning.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ForEach(works) { work in
+                let busy = wizard.running && wizard.report?.work.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == work.url.path
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(work.url.path).lineLimit(1).truncationMode(.middle).help(work.url.path)
+                        Text(sizes[work.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? String(localized: "Measuring…"))
+                            .font(.callout).foregroundStyle(.secondary)
+                        if let keep = work.keep {
+                            Text("Kept: \(keep)").font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([work.url]) }
+                    Button("Move to Trash…", role: .destructive) { deleting = work }
+                        .disabled(work.keep != nil || busy)
+                        .help(busy ? String(localized: "A build is using it") : work.keep ?? "")
+                }
+                .padding(12)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
     }
 
     private func load() async {
@@ -50,21 +89,41 @@ struct LibraryView: View {
         let remembered = wizard.rememberedApps
         let repo = wizard.preflight.repo
         let games = wizard.preflight.games
-        let found = await Task.detached { () -> ([BuiltApp], [String: Freshness], [Contribution]) in
+        let current = wizard.report?.work.map { (work: $0, game: wizard.report?.game) }
+        let found = await Task.detached { () -> ([BuiltApp], [String: Freshness], [Contribution], [WorkFolder]) in
             let apps = BuiltApp.find(remembered: remembered, games: games)
             var fresh: [String: Freshness] = [:]
             for app in apps { fresh[app.id] = Freshness.of(app.info, repo: repo, games: games) }
-            return (apps, fresh, Contribution.all(games: games))
+            return (apps, fresh, Contribution.all(games: games), WorkFolder.all(apps: apps, current: current, games: games))
         }.value
-        (apps, freshness, contributions) = found
+        (apps, freshness, contributions, works) = found
         loading = false
+        for work in works where sizes[work.id] == nil {   // tens of GB in many files: after the list, one at a time
+            sizes[work.id] = await Task.detached { WorkFolder.size(work.url) }.value
+        }
     }
 
     private func savesText(_ app: BuiltApp) -> String {
         String(localized: "Your saves, settings and shader cache stay in \(wizard.preflight.games.dataLocation(app.game)).")
     }
 
+    private func moveToTrash(_ work: WorkFolder) {
+        NSWorkspace.shared.recycle([work.url]) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    problem = String(localized: "\(work.url.lastPathComponent) was not moved to the Trash: \(error.localizedDescription)")
+                } else {
+                    works.removeAll { $0 == work }
+                }
+            }
+        }
+    }
+
     private func moveToTrash(_ app: BuiltApp) {
+        if AppRow.isRunning(app) {
+            problem = String(localized: "\(app.name) is open: quit it first, then move it to the Trash.")
+            return
+        }
         NSWorkspace.shared.recycle([app.url]) { _, error in
             DispatchQueue.main.async {
                 if let error {
@@ -115,6 +174,10 @@ struct AppRow: View {
                 Button(freshness == .changed ? "Rebuild with This Checkout" : "Rebuild") { wizard.rebuild(app) }
                     .disabled(info == nil || !missing.isEmpty || wizard.running)
                     .help(wizard.running ? String(localized: "A build is running") : "")
+                if let data = dataFolder, FileManager.default.fileExists(atPath: data.path) {
+                    Button("Show Saves") { NSWorkspace.shared.activateFileViewerSelecting([data]) }
+                        .help(String(localized: "Saves, settings and the shader cache: \(data.path)"))
+                }
                 Spacer()
                 Button("Move to Trash…", role: .destructive, action: trash)
             }
@@ -122,6 +185,17 @@ struct AppRow: View {
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
+    }
+
+    /// Where this app keeps its saves (game.json data_folder, or data_beside_app next to the app).
+    private var dataFolder: URL? {
+        let game = wizard.preflight.games.named(app.game)
+        if let beside = game?.dataBesideApp { return app.url.deletingLastPathComponent().appendingPathComponent(beside) }
+        return game?.dataFolder.map(Contribution.data)
+    }
+
+    static func isRunning(_ app: BuiltApp) -> Bool {
+        NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.standardizedFileURL == app.url.standardizedFileURL }
     }
 
     @ViewBuilder private var status: some View {
@@ -142,6 +216,7 @@ struct AppRow: View {
 struct Contributions: View {
     @Binding var items: [Contribution]
     @State private var problem: String?
+    @State private var sending: Int?   // the form is open: did the player send the file?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -161,7 +236,7 @@ struct Contributions: View {
                         Button("Send…") {
                             NSWorkspace.shared.open(item.form)
                             NSWorkspace.shared.activateFileViewerSelecting([item.file])
-                            update(index) { try $0.markSent() }
+                            sending = index
                         }
                         .help(String(localized: "Opens the GitHub form and shows the file in Finder: drag it into the form."))
                         if item.never {
@@ -175,6 +250,12 @@ struct Contributions: View {
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
             }
             if let problem { Text(problem).foregroundStyle(.red) }
+        }
+        .confirmationDialog(Text("Did you send the file?"), isPresented: Binding(get: { sending != nil }, set: { if !$0 { sending = nil } })) {
+            Button("Sent") { if let sending { update(sending) { try $0.markSent() } } }
+            Button("Not Yet", role: .cancel) {}
+        } message: {
+            Text("Once it's sent, the game reminds you again only after new rows.")
         }
     }
 

@@ -29,6 +29,15 @@ var five = BuildSteps()
 five.see(BuildEvent(type: "progress", stage: "romfs_merge", step: 2, of: 5, message: "x"))
 expect(BuildSteps(count: 8, names: [6: "runtime"]).title(6) == "Compile the runtime", "Odyssey's step names have titles")
 expect(five.count == 5 && five.title(2) == "Romfs Merge" && five.title(5) == "Step 5" && five.name(1) == nil, "another script's steps")
+var timed = BuildSteps()
+for (step, time) in [(0, 100.0), (1, 130), (1, 160), (2, 400)] {
+    timed.see(BuildEvent(type: "progress", time: time, stage: step == 0 ? "prepare" : "code", step: step, of: 4, message: "x"))
+}
+expect(timed.duration(0, now: 999) == 30 && timed.duration(1, now: 999) == 270, "a step lasts until the next one starts")
+expect(timed.duration(2, now: 450) == 50 && timed.duration(3, now: 450) == nil, "the running step until now; one not reached")
+timed.see(BuildEvent(type: "done", time: 500))
+expect(timed.duration(2, now: 9999) == 100 && timed.elapsed(now: 9999) == 400, "the last step and the build end with done")
+expect(BuildSteps.clock(42) == "0:42" && BuildSteps.clock(723) == "12:03" && BuildSteps.clock(3723) == "1:02:03", "clock text")
 expect(events[3]?.type == "heartbeat", "heartbeat")
 expect(events[7]?.out == "/Games/Tears of the Kingdom.app" && events[7]?.version == "v143", "done names the app")
 expect(events[8] == nil, "a line that is not an event stays text")
@@ -201,6 +210,34 @@ expect(BuildInfo.read(scratch.appendingPathComponent("SMO.app"))?.work == "/Game
 expect(games.named("odyssey")?.needs == ["xcode"] && games.named("totk")?.needs == [], "game.json needs")
 expect(games.named("totk")?.installTool == "games/totk/ios/tools/install_device.py" && games.named("by3")?.installTool == nil,
        "game.json install_tool")
+expect(games.named("by3")?.workHoldsGameData == true && games.named("totk")?.workHoldsGameData == false, "game.json work_holds_game_data")
+
+// work folders: the ones the records name, once each, and why one stays
+func app(_ path: String, game: String, work: String?) -> BuiltApp {
+    var a = built!
+    a.url = scratch.appendingPathComponent(path)
+    a.game = game
+    a.info?.work = work.map { scratch.appendingPathComponent($0).path }
+    return a
+}
+for folder in ["TOTK_build", "BY3_build", "Odyssey_build/Odyssey.app"] {
+    try! FileManager.default.createDirectory(at: scratch.appendingPathComponent(folder), withIntermediateDirectories: true)
+}
+write(String(repeating: "x", count: 10_000), "TOTK_build/romfs.bin")
+let works = WorkFolder.all(apps: [app("TOTK.app", game: "totk", work: "TOTK_build"), app("Two.app", game: "totk", work: "TOTK_build"),
+                                  app("BY3.app", game: "by3", work: "BY3_build"),
+                                  app("Odyssey_build/Odyssey.app", game: "odyssey", work: "Odyssey_build"),
+                                  app("Gone.app", game: "totk", work: "Gone_build"), app("Old.app", game: "totk", work: nil)],
+                           current: nil, games: games)
+expect(works.map { $0.url.lastPathComponent } == ["TOTK_build", "BY3_build", "Odyssey_build"], "each folder once, only those there (got \(works.map(\.url.lastPathComponent)))")
+expect(works[0].keep == nil && works[1].keep != nil && works[2].keep?.contains("inside") == true, "Bayonetta 3's data and an app inside stay")
+expect(WorkFolder.all(apps: [], current: (scratch.appendingPathComponent("TOTK_build").path, "totk"), games: games).count == 1,
+       "the folder of the game being built, before it has an app")
+expect(WorkFolder.size(scratch.appendingPathComponent("TOTK_build")) >= 10_000, "a folder's size")
+expect(Disk.existing(scratch.appendingPathComponent("TOTK_build/not/yet")) == scratch.appendingPathComponent("TOTK_build").standardizedFileURL,
+       "the nearest folder that exists")
+expect(Disk.canWrite(scratch.appendingPathComponent("new/App.app")) && !Disk.canWrite(URL(fileURLWithPath: "/System/App.app")), "where the build can write")
+expect((Disk.freeBytes(scratch) ?? 0) > 0, "free space of a folder's drive")
 
 let repo = scratch.appendingPathComponent("repo")
 write("x\n", "repo/build_app.py")

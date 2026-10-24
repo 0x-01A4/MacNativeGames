@@ -80,6 +80,7 @@ class Manifests(unittest.TestCase):
             for ext in g.get('files', {}).get('game', []) + g.get('files', {}).get('update', []):
                 self.assertIn(ext, ('xci', 'nsp', 'nsz'))
             self.assertLessEqual(set(g.get('needs', [])), {'xcode'}, g['id'])   # what the Builder checks before a build
+            self.assertIn(g.get('work_holds_game_data', False), (True, False), g['id'])
             if 'install_tool' in g:
                 self.assertTrue((ROOT / g['install_tool']).is_file(), g['install_tool'])
             if 'shader_contribution' in g:
