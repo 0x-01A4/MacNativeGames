@@ -113,6 +113,7 @@ do {
     let (failed, error) = try fakeRun("fail", ["/Games/totk.xci", "-k", "/Keys/prod.keys", "--json-progress"])
     expect(failed == 1, "a failed build exits 1 (got \(failed))")
     expect(error.events.last?.type == "error" && error.events.last?.code == "hash_mismatch", "the error event carries its code")
+    expect(error.events.last?.log.map { FileManager.default.fileExists(atPath: $0) } == true, "the error event names the failed tool's log")
 
     let start = Date()
     let (stopped, cancelled) = try fakeRun("slow", ["/Games/totk.xci", "-k", "/Keys/prod.keys", "--json-progress"], cancelAfter: 0.15)

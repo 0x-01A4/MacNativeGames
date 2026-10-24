@@ -4,14 +4,47 @@ import UniformTypeIdentifiers
 
 @main
 struct BuilderApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var wizard = Wizard()
 
     var body: some Scene {
         Window("MacNativeGames Builder", id: "builder") {
             Root().environmentObject(wizard)
                 .frame(minWidth: 760, minHeight: 540)
+                .onAppear { delegate.wizard = wizard }
         }
         .windowResizability(.contentMinSize)
+    }
+}
+
+/// Quitting while a build runs cancels it first, so build_app.py and its tools (in a process group of their own) don't
+/// go on without anyone reading them.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var wizard: Wizard?
+
+    /// Closing the window quits, unless a build is running: then the app stays and the build goes on.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { wizard?.running != true }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let wizard, wizard.running else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "A build is running")
+        alert.informativeText = String(localized: "Quitting cancels it. The next build reuses the steps that finished.")
+        alert.addButton(withTitle: String(localized: "Cancel Build and Quit"))
+        alert.addButton(withTitle: String(localized: "Keep Building"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        wizard.onBuildEnded = reply
+        wizard.cancel()
+        // a build that doesn't end on SIGTERM doesn't keep the app open
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { MainActor.assumeIsolated { reply() } }
+        return .terminateLater
     }
 }
 
@@ -100,6 +133,7 @@ struct StepList: View {
 
 struct Navigation: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var confirmCancel = false
 
     var body: some View {
         HStack {
@@ -118,8 +152,15 @@ struct Navigation: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(!wizard.canContinue)
             case .build:
-                Button("Cancel", role: .cancel) { wizard.cancel() }
-                    .keyboardShortcut(.cancelAction)
+                // no Esc shortcut: one stray key press would stop a build that can take an hour
+                Button(wizard.cancelling ? "Cancelling…" : "Cancel") { confirmCancel = true }
+                    .disabled(wizard.cancelling)
+                    .confirmationDialog("Cancel the build?", isPresented: $confirmCancel) {
+                        Button("Cancel Build", role: .destructive) { wizard.cancel() }
+                        Button("Keep Building", role: .cancel) {}
+                    } message: {
+                        Text("The next build reuses the steps that finished.")
+                    }
             case .result:
                 EmptyView()
             }
@@ -382,8 +423,8 @@ struct Found: View {
                 Text("Identified from the game data (\((r.kind ?? "").uppercased())). Builds for: \((r.platforms ?? []).map(Wizard.platformName).joined(separator: ", ")).")
                     .foregroundStyle(.secondary)
             }
-        } else if case .failed(let code, let message) = wizard.inspectFailure {
-            Failure(code: code, message: message)
+        } else if case .failed(let code, let message, let log) = wizard.inspectFailure {
+            Failure(code: code, message: message, log: log)
         }
     }
 }
@@ -523,6 +564,7 @@ struct Failure: View {
     @EnvironmentObject var wizard: Wizard
     var code: String?
     var message: String
+    var log: String?   // the failed tool's own log (the error event's "log")
 
     var body: some View {
         let text = ErrorText(code: code, games: wizard.preflight.games)
@@ -532,6 +574,10 @@ struct Failure: View {
             Text(message)
                 .font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if let log, FileManager.default.fileExists(atPath: log) {
+                Button("Show Tool Log") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: log)]) }
+                    .help(log)
+            }
         }
     }
 }
@@ -582,7 +628,10 @@ struct ResultPage: View {
                     Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }.keyboardShortcut(.defaultAction)
+                HStack {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }.keyboardShortcut(.defaultAction)
+                    Button("Build Another…") { wizard.newBuild() }
+                }
                 Notices()
             case .done(let app):
                 PageTitle(title: "Your app is ready",
@@ -591,11 +640,12 @@ struct ResultPage: View {
                 HStack {
                     Button("Open") { NSWorkspace.shared.open(app) }.keyboardShortcut(.defaultAction)
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+                    Button("Build Another…") { wizard.newBuild() }
                 }
                 Notices()
-            case .failed(let code, let message):
+            case .failed(let code, let message, let log):
                 PageTitle(title: "The build stopped", detail: "Nothing was installed; an app built before is unchanged.")
-                Failure(code: code, message: message)
+                Failure(code: code, message: message, log: log)
                 resultButtons
             case .cancelled:
                 PageTitle(title: "Build cancelled", detail: "Building again reuses the steps that finished.")

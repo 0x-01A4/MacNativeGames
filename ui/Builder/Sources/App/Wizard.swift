@@ -21,7 +21,7 @@ final class Wizard: ObservableObject {
 
     enum Outcome: Equatable {
         case done(URL)
-        case failed(code: String?, message: String)
+        case failed(code: String?, message: String, log: String? = nil)   // log: the failed tool's own log file
         case cancelled
     }
 
@@ -53,6 +53,7 @@ final class Wizard: ObservableObject {
     @Published var shaderReminder = true
     @Published var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
     @Published var running = false
+    @Published var cancelling = false   // Cancel was pressed and the build hasn't ended yet
     @Published var progress: BuildEvent?
     @Published var reached = 0          // the highest of the build's steps (1-n) it has reached
     @Published var steps = BuildSteps()
@@ -63,6 +64,9 @@ final class Wizard: ObservableObject {
     private var generation = 0   // a newer --inspect or build makes the events of an older one stale
     private var schemaChecked = false
     private var rejected = false   // the script writes another event schema: what it sends after that is not read
+    private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
+    /// Called once when the running build has ended (the app delegate waits on it to quit).
+    var onBuildEnded: (() -> Void)?
 
     init() {
         let defaults = UserDefaults.standard
@@ -228,7 +232,7 @@ final class Wizard: ObservableObject {
                     let url = URL(fileURLWithPath: path)
                     self.out = self.isDevice ? url.deletingPathExtension().appendingPathExtension("ipa") : url
                 }
-            case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "")
+            case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "", log: event.log)
             default: break
             }
         } finished: { [weak self] status, failure in
@@ -250,6 +254,9 @@ final class Wizard: ObservableObject {
         lines = []
         notices = []
         running = true
+        cancelling = false
+        awake = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
+                                                      reason: String(localized: "Building a game app"))
         start(inputs() + buildOptions(out)) { [weak self] event in
             guard let self else { return }
             switch event.type {
@@ -262,13 +269,17 @@ final class Wizard: ObservableObject {
                 let app = URL(fileURLWithPath: event.out ?? out.path)
                 self.outcome = .done(app)
                 if (event.platform ?? "macos") == "macos" { self.remember(app) }
-            case "error": self.outcome = .failed(code: event.code, message: event.message ?? "")
+            case "error": self.outcome = .failed(code: event.code, message: event.message ?? "", log: event.log)
             case "cancelled": self.outcome = .cancelled
             default: break
             }
         } finished: { [weak self] status, failure in
             guard let self else { return }
             self.running = false
+            self.cancelling = false
+            if let awake = self.awake { ProcessInfo.processInfo.endActivity(awake) }
+            self.awake = nil
+            defer { self.onBuildEnded?(); self.onBuildEnded = nil }
             if self.outcome == nil {
                 self.outcome = failure ?? (status == 130 ? .cancelled : status == 0 ? .done(out)
                     : .failed(code: nil, message: String(localized: "build_app.py ended with exit status \(status).")))
@@ -277,7 +288,10 @@ final class Wizard: ObservableObject {
         }
     }
 
-    func cancel() { runner?.cancel() }
+    func cancel() {
+        if running { cancelling = true }
+        runner?.cancel()
+    }
 
     private func start(_ arguments: [String], event: @escaping (BuildEvent) -> Void,
                        finished: @escaping (Int32, Outcome?) -> Void) {
@@ -380,5 +394,25 @@ final class Wizard: ObservableObject {
     func startOver() {
         step = .game
         outcome = nil
+    }
+
+    /// After a finished build: the Game page with nothing chosen but the keys and the fonts folder, which another game
+    /// can use too.
+    func newBuild() {
+        guard !running else { return }
+        runner?.cancel()   // an inspect still running for the old game
+        generation += 1    // and its events are stale now
+        game = nil
+        update = nil
+        dlc = []
+        mod = nil
+        installModRomfs = false
+        report = nil
+        inspectFailure = nil
+        inspecting = false
+        out = nil
+        platform = "macos"
+        outcome = nil
+        step = .game
     }
 }
