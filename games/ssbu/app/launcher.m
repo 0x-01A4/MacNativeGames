@@ -172,10 +172,10 @@ static void smo_notes_reminder(NSString *path, NSString *root) {
     totk_contrib_reminded(path, rows);   // "later": TOTK_CONTRIB_STEP rows later; "don't remind me again": never
     [NSApplication sharedApplication]; [NSApp activateIgnoringOtherApps:YES];
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @(TOTK_UI("马力欧有新的着色器记录", "New shader notes for Mario"));
+    alert.messageText = @(TOTK_UI(GAME_NAME " 有新的着色器记录", "New shader notes for " GAME_NAME));   // the copy said Mario (Q80)
     alert.informativeText = [NSString stringWithFormat:@(TOTK_UI(
-        "马力欧记录了 %lu 个这个 App 还没内置的着色器和渲染管线。重新构建 App（build_app.py）会把它们内置进去，下次这些地方启动时不再卡顿。记录只留在这台 Mac 上，不会发送。",
-        "Mario noted %lu shaders and render pipelines this app does not have built in yet. Rebuilding the app (build_app.py) "
+        GAME_NAME " 记录了 %lu 个这个 App 还没内置的着色器和渲染管线。重新构建 App（build_app.py）会把它们内置进去，下次这些地方启动时不再卡顿。记录只留在这台 Mac 上，不会发送。",
+        GAME_NAME " noted %lu shaders and render pipelines this app does not have built in yet. Rebuilding the app (build_app.py) "
         "builds them in, so those places start without a stutter next time. The notes stay on this Mac: nothing is sent.")),
         (unsigned long)(rows > built ? rows - built : rows)];
     [alert addButtonWithTitle:@(TOTK_UI("显示文件", "Show the file"))];
@@ -279,6 +279,18 @@ int main(int argc, char **argv) {
           setenv("TOTK_GPU_BUDGET_MB", budget, 0); }
         setenv("TOTK_SLOT_OWNER", "user", 0);
         setenv("TOTK_SLOT_PURPOSE", "player", 0);
+        /* Q80: the 3D picture size from the game's Picture menu (runtime/frontend.m), which writes <data>/render-size.txt:
+           Smash makes its render images once at start, so the size is passed here as TOTK_RENDER_RES (an explicit one
+           from the environment still wins). The game restarts itself through this app (SSBU_APP_BUNDLE, runtime/relaunch.c),
+           so a language change starts it the way the player does. */
+        NSString *sizeFile = [data stringByAppendingPathComponent:@"render-size.txt"];
+        NSString *size = [[NSString stringWithContentsOfFile:sizeFile encoding:NSUTF8StringEncoding error:nil]
+                          stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        const char *sizeNote = NULL;
+        if ([size isEqualToString:@"2k"]) setenv("TOTK_RENDER_RES", "2560x1440", 0);
+        else if (size.length && ![size isEqualToString:@"1080p"]) sizeNote = "render-size.txt is neither 1080p nor 2k: 1080p";
+        setenv("SSBU_RENDER_SIZE_FILE", sizeFile.fileSystemRepresentation, 1);
+        setenv("SSBU_APP_BUNDLE", NSBundle.mainBundle.bundlePath.fileSystemRepresentation, 1);
         /* Q43 (2026-10-23): build_app.py builds Smash's app without prepared startup shaders (the shader package is Q44), and
            without them every shader is translated in play and looks new to the list (totk_shader_contrib.h): the first app
            start to the title wrote 48 rows, and at TOTK_CONTRIB_STEP rows the reminder below would ask for a rebuild that
@@ -304,6 +316,7 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
+        if (sizeNote) fprintf(stderr, "[launcher] %s\n", sizeNote);
         char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
         execv(arguments[0], arguments);
         fprintf(stderr, "[launcher] execv failed: %s\n", strerror(errno));

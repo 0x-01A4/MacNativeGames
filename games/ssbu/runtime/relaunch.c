@@ -47,6 +47,15 @@ _Noreturn void runtime_relaunch(const char *why) {
     char exe[PATH_MAX];
     uint32_t size = sizeof exe;
     if (_NSGetExecutablePath(exe, &size)) runtime_fail("restart: executable path");
+    /* In the app (Q80: the launcher names SSBU_APP_BUNDLE) the game starts again as the app, the way the player starts it:
+       a small shell waits until this process has ended (the launcher would otherwise find it still holding the game
+       slot and only bring it to the front) and then opens the app; the launcher sets everything up again, the Picture
+       menu's size included. A bare binary would run without the app's name and icon. */
+    const char *bundle = getenv("SSBU_APP_BUNDLE");
+    char pid_text[16];
+    snprintf(pid_text, sizeof pid_text, "%d", (int)getpid());
+    char *const via_app[] = {"/bin/sh", "-c", "while kill -0 \"$0\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
+                             pid_text, (char *)bundle, NULL};
     fflush(NULL);
     posix_spawnattr_t attr;
     posix_spawn_file_actions_t files;
@@ -55,6 +64,17 @@ _Noreturn void runtime_relaunch(const char *why) {
     for (int fd = 0; fd <= 2; fd++)
         if (posix_spawn_file_actions_addinherit_np(&files, fd)) runtime_fail("restart: keeping stdin/stdout/stderr");
     pid_t child;
+    if (bundle && *bundle) {
+        int e = posix_spawn(&child, "/bin/sh", &files, &attr, via_app, environ);
+        if (e) {
+            fprintf(stderr, "[totk] restart: starting the app again failed: %s\n", strerror(e));
+            runtime_fail("restart (posix_spawn /bin/sh)");
+        }
+        fprintf(stderr, "[totk] restart (%s): the app %s opens again once pid %d has ended (waiter pid %d)\n", why, bundle,
+                (int)getpid(), (int)child);
+        fflush(NULL);
+        _exit(0);
+    }
     int e = posix_spawn(&child, exe, &files, &attr, runtime_main_argv, environ);
     if (e) {
         fprintf(stderr, "[totk] restart: starting %s failed: %s\n", exe, strerror(e));

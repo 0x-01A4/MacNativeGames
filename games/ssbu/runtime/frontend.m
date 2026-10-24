@@ -341,13 +341,44 @@ static void note_occlusion(const char *when){int v=(window.occlusionState&NSWind
 static TOTKWindowDelegate *windowDelegate;
 int runtime_front_window_visible(void){return atomic_load(&windowVisible);}
 void runtime_front_request_close(void){dispatch_async(dispatch_get_main_queue(), ^{[window performClose:nil];});}
+/* Q80, the Picture menu of the app (only when the launcher names SSBU_RENDER_SIZE_FILE): the 3D picture size for the next
+   start, 1080p as shipped or 2K. Smash makes its render images once at start (game_patches.c, TOTK_RENDER_RES), so the
+   choice is written to the file and the launcher passes it on next time; nothing restarts, a fight goes on (the player's
+   rule, 2026-10-24: no key that can restart the game by accident). */
+@interface TOTKPictureMenu:NSObject
+@property(nonatomic,copy) NSString *path;
+@property(nonatomic,strong) NSArray<NSMenuItem *> *items;
+@end
+@implementation TOTKPictureMenu
+-(NSString *)saved{NSString *s=[[NSString stringWithContentsOfFile:self.path encoding:NSUTF8StringEncoding error:nil] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];return [s isEqualToString:@"2k"]?@"2k":@"1080p";}
+-(void)mark{NSString *s=[self saved];for(NSMenuItem *i in self.items)i.state=[i.representedObject isEqualToString:s]?NSControlStateValueOn:NSControlStateValueOff;}
+-(void)pick:(NSMenuItem *)sender{NSError *e=nil;NSString *v=sender.representedObject;
+ if(![[v stringByAppendingString:@"\n"] writeToFile:self.path atomically:YES encoding:NSUTF8StringEncoding error:&e])
+  fprintf(stderr,"[ssbu] picture size: cannot write %s: %s\n",self.path.fileSystemRepresentation,e.localizedDescription.UTF8String);
+ else fprintf(stderr,"[ssbu] picture size for the next start: %s\n",v.UTF8String);
+ [self mark];}
+@end
+static TOTKPictureMenu *pictureMenu;
+static void front_picture_menu_add(NSMenu *bar){
+ const char *file=getenv("SSBU_RENDER_SIZE_FILE");if(!file||!*file)return;   // the start script (ssbu-play.sh) chooses its own size
+ pictureMenu=[TOTKPictureMenu new];pictureMenu.path=@(file);
+ NSMenu *m=[[NSMenu alloc] initWithTitle:@(TOTK_UI("画面","Picture"))];m.autoenablesItems=NO;
+ const char *now=getenv("TOTK_RENDER_RES");
+ NSMenuItem *info=[[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@(TOTK_UI("现在 %s，改动下次启动生效","Now %s; a change applies at the next start")),now&&*now?now:"1920x1080"] action:nil keyEquivalent:@""];
+ info.enabled=NO;[m addItem:info];[m addItem:NSMenuItem.separatorItem];
+ NSMenuItem *a=[[NSMenuItem alloc] initWithTitle:@(TOTK_UI("1080p（1920x1080，原版）","1080p (1920x1080, as shipped)")) action:@selector(pick:) keyEquivalent:@""];
+ NSMenuItem *b=[[NSMenuItem alloc] initWithTitle:@(TOTK_UI("2K（2560x1440）","2K (2560x1440)")) action:@selector(pick:) keyEquivalent:@""];
+ a.representedObject=@"1080p";b.representedObject=@"2k";a.target=b.target=pictureMenu;[m addItem:a];[m addItem:b];
+ pictureMenu.items=@[a,b];[pictureMenu mark];
+ NSMenuItem *top=[[NSMenuItem alloc] initWithTitle:m.title action:nil keyEquivalent:@""];top.submenu=m;[bar addItem:top];
+}
 /* Use the window-close path, not terminate:, so Command-Q also waits for active saves. */
 static void front_install_menu(void){
  NSMenu *menu=[NSMenu new],*appMenu=[NSMenu new];
  NSMenuItem *appItem=[NSMenuItem new];appItem.submenu=appMenu;[menu addItem:appItem];
  NSMenuItem *quit=[[NSMenuItem alloc] initWithTitle:@(TOTK_UI("退出 " GAME_NAME,"Quit " GAME_NAME)) action:@selector(performClose:) keyEquivalent:@"q"];
  quit.keyEquivalentModifierMask=NSEventModifierFlagCommand;quit.target=window;
- [appMenu addItem:quit];front_menubar_fps_add(menu);NSApp.mainMenu=menu;
+ [appMenu addItem:quit];front_picture_menu_add(menu);front_menubar_fps_add(menu);NSApp.mainMenu=menu;
 }
 static void *guest_main(void *callback){@autoreleasepool{((void(*)(void))callback)();}return NULL;}
 void runtime_front_run(void(*callback)(void)){
