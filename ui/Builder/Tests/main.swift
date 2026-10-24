@@ -105,5 +105,71 @@ do {
     expect(false, "the runner started python: \(error)")
 }
 
+// library: a built app's record, the checkout comparison, the contribution file
+let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("builder-tests-\(getpid())")
+try? FileManager.default.removeItem(at: scratch)
+func write(_ text: String, _ path: String) {
+    let url = scratch.appendingPathComponent(path)
+    try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! text.write(to: url, atomically: true, encoding: .utf8)
+}
+func plist(_ id: String) -> String {
+    "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>\(id)</string>" +
+    "<key>CFBundleName</key><string>Tears of the Kingdom</string><key>CFBundleShortVersionString</key><string>1.4.3</string></dict></plist>"
+}
+write(plist("org.macnativegames.totk"), "TOTK.app/Contents/Info.plist")
+write("""
+{"schema": 1, "game": "totk", "app_name": "Tears of the Kingdom", "version": "v143", "display_version": "1.4.3",
+ "platform": "macos", "built": "2026-10-23T18:00:00Z", "commit": null, "dirty": null,
+ "inputs": {"game": "/Games/totk.nsp", "update": "/Games/1.4.3.nsz", "shared_fonts": "/Fonts", "install_mod_romfs": true}}
+""", "TOTK.app/Contents/Resources/build-info.json")
+write(plist("com.example.other"), "Other.app/Contents/Info.plist")
+write(plist("org.macnativegames.totk"), "Old.app/Contents/Info.plist")   // built before build-info.json
+let built = BuiltApp(scratch.appendingPathComponent("TOTK.app"))
+expect(built?.info?.displayVersion == "1.4.3" && built?.info?.inputs.sharedFonts == "/Fonts", "the build record is read")
+expect(built?.info?.inputs.installModRomfs == true && built?.info?.inputs.firmware == nil, "the record's inputs")
+expect(built?.info?.builtDate != nil, "the build date parses")
+expect(BuiltApp(scratch.appendingPathComponent("Other.app")) == nil, "another app is not a game app")
+expect(BuiltApp(scratch.appendingPathComponent("Old.app")).map { $0.info == nil } == true, "an app without a record is still listed")
+expect(Freshness.of(built?.info, repo: scratch) == .unknown, "no commit in the record: unknown")
+
+let repo = scratch.appendingPathComponent("repo")
+write("x\n", "repo/build_app.py")
+write("y\n", "repo/games/totk/a.txt")
+write("z\n", "repo/docs/b.md")
+func git(_ args: String...) -> String {
+    Shell.run("/usr/bin/git", ["-C", repo.path, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"] + args)
+        .output.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+_ = git("init", "-q"); _ = git("add", "-A"); _ = git("commit", "-qm", "one")
+let first = git("rev-parse", "HEAD")
+func record(_ commit: String) -> BuildInfo {
+    var info = built!.info!
+    info.commit = commit
+    return info
+}
+expect(Freshness.of(record(first), repo: repo) == .current, "built from HEAD: current")
+write("z2\n", "repo/docs/b.md"); _ = git("commit", "-qam", "docs")
+expect(Freshness.of(record(first), repo: repo) == .current, "a change outside the build's folders keeps it current")
+write("y2\n", "repo/games/totk/a.txt"); _ = git("commit", "-qam", "game")
+expect(Freshness.of(record(first), repo: repo) == .changed, "a change in games/totk: changed")
+expect(Freshness.of(record(String(repeating: "0", count: 40)), repo: repo) == .unknown, "a commit the checkout lacks: unknown")
+
+let contrib = scratch.appendingPathComponent("TOTK/shader-list-contribution.txt")
+write("# rows\nV\ta\t{}\nV\ta\t{}\nR\tk\nB\tk\tv\tf\nnoise\n", "TOTK/shader-list-contribution.txt")
+var c = Contribution.read(game: "totk", file: contrib)!
+expect(c.rows == 3 && c.remindedAt == nil && !c.never && c.unsent == 3, "distinct V, R and B rows count, as the game counts them")
+try? c.markSent()
+c = Contribution.read(game: "totk", file: contrib)!
+expect(c.remindedAt == 3 && c.unsent == 0, "sending moves the reminder on")
+try? c.stopReminders()
+expect(Contribution.read(game: "totk", file: contrib)!.never, "don't remind me again writes never, as the launcher does")
+expect((try? String(contentsOf: Contribution.remindedFile(contrib), encoding: .utf8)) == "never\n", "the launcher's own format")
+try? c.resumeReminders()
+expect(Contribution.read(game: "totk", file: contrib)!.never == false, "reminders back on")
+expect(Contribution.all(base: { scratch.appendingPathComponent($0) }).map(\.game) == ["totk"], "only the games with a file")
+expect(c.step == 100 && Contribution.read(game: "botw", file: contrib)!.step == 500, "each game's reminder step")
+try? FileManager.default.removeItem(at: scratch)
+
 print(failures == 0 ? "builder tests: all passed" : "builder tests: \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -8,10 +8,33 @@ struct BuilderApp: App {
 
     var body: some Scene {
         Window("MacNativeGames Builder", id: "builder") {
-            WizardView().environmentObject(wizard)
+            Root().environmentObject(wizard)
                 .frame(minWidth: 760, minHeight: 540)
         }
         .windowResizability(.contentMinSize)
+    }
+}
+
+struct Root: View {
+    @EnvironmentObject var wizard: Wizard
+
+    var body: some View {
+        Group {
+            switch wizard.mode {
+            case .build: WizardView()
+            case .library: LibraryView()
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: $wizard.mode) {
+                    Text("Build").tag(Wizard.Mode.build)
+                    Text("Library").tag(Wizard.Mode.library)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel(Text("Build a new app, or the apps already built"))
+            }
+        }
     }
 }
 
@@ -87,7 +110,7 @@ struct Navigation: View {
             Spacer()
             switch wizard.step {
             case .keys, .game:
-                Button("Continue") { wizard.step = Wizard.Step(rawValue: wizard.step.rawValue + 1)! }
+                Button("Continue") { wizard.next() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!wizard.canContinue)
             case .target:

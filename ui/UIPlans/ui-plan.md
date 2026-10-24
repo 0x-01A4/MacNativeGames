@@ -70,9 +70,15 @@ Each phase is done when its tests pass and the change notes say what was built a
   - The ACID notice is a build event rather than an `inspect` field: the base game's main.npdm is only extracted during step 1.
   - The sideload explanation stays generic: no tool is recommended. That needs an owner if a specific one is to be documented.
   - Done means: an IPA, a BotW 1.9.0 build with DLC, and a TOTK build with a mod, each made from the Builder.
-- **Phase 3**:
-  - Scope: the Launcher. A list of built apps from a provenance manifest that the build writes into the app (repo commit, game and version, an inputs hash, date). Rebuilding when the checkout changes. The shader contribution state shown in one place.
-  - Done means: apps built from the CLI appear too, once they carry the manifest.
+- **Phase 3 (done, awaiting a real build)**:
+  - Built:
+    - every Mac app records what it was built from, in `build-info.json`;
+    - the Builder's Library lists apps found by Spotlight and the ones it built itself, marks an app as "checkout changed" when `build_app.py` or `games/totk` / `games/botw` changed since its commit, and rebuilds an app with the same inputs over the same app, or moves it to the Trash;
+    - the shader contribution files with Send and the reminder switch.
+  - The contribution state stays in the game's own `.reminded` file, so the in-game launcher and the Builder never disagree. Its "Submit automatically" (with gh) stays only in the game.
+  - IPAs carry no record yet, so they're not listed.
+  - Apps built before this change are listed with "no build record": rebuilding once from the Build page gives them one.
+  - Done means: a Mac app built from the Builder appears in the Library, and after a commit to `games/totk` it shows "checkout changed" and rebuilds.
 - **Phase 4**:
   - Scope: game settings as launch options. Only the options each game and version supports, read from a manifest rather than hardcoded.
   - Done means: settings take effect when the app is started from Finder, not only from the Launcher.
@@ -84,7 +90,6 @@ Each phase is done when its tests pass and the change notes say what was built a
 - **Clean rebuild**: offer one that removes the work folder, or leave it to the CLI?
 - **Work folder on a read-only or external drive**: let the player pick `--work` in the Output step?
 - **Disk space**: should the Builder preflight free space before building? `build_app.py` checks it only after identifying the game.
-- **Shader contribution in the Launcher** (Phase 3): where its state lives, what leaves the machine, and the consent wording. It stays opt-in.
 - **How settings reach the game** (Phase 4): environment variables only work when the Launcher starts the game. The other route is a per-app settings file that the runtime reads, which also works from Finder.
 - **A CI job for the Builder**: `run_tests.sh` needs a Swift toolchain on the runner. The Python half is already in CI through `tests/`.
 - **Distribution** (Phase 5): a notarized DMG or Homebrew cask, and how the Builder learns that the checkout has a newer revision.

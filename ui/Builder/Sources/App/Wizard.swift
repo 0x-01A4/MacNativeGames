@@ -28,7 +28,11 @@ final class Wizard: ObservableObject {
     private enum Defaults {
         static let repo = "repoPath"
         static let keys = "keysPath"   // only the location, and only when the player asks; never the keys themselves
+        static let built = "builtApps"   // the Mac apps this Builder made, for the library (Spotlight finds the others)
     }
+
+    enum Mode: Hashable { case build, library }
+    @Published var mode = Mode.build
 
     @Published var step = Step.keys
     @Published var preflight: Preflight
@@ -143,6 +147,13 @@ final class Wizard: ObservableObject {
         inspect()
     }
 
+    func next() {
+        guard let following = Step(rawValue: step.rawValue + 1) else { return }
+        step = following
+        // a rebuild that had to ask for the keys first reads the game file now
+        if step == .game, game != nil, report == nil, !inspecting { inspect() }
+    }
+
     var fontsSatisfied: Bool { report?.needsFonts != true || fonts != nil }
 
     var canContinue: Bool {
@@ -223,7 +234,10 @@ final class Wizard: ObservableObject {
                 self.progress = event
                 self.reached = max(self.reached, event.step ?? 0)
             case "notice": self.notices.append(event)
-            case "done": self.outcome = .done(URL(fileURLWithPath: event.out ?? out.path))
+            case "done":
+                let app = URL(fileURLWithPath: event.out ?? out.path)
+                self.outcome = .done(app)
+                if event.platform != "ios" { self.remember(app) }
             case "error": self.outcome = .failed(code: event.code, message: event.message ?? "")
             case "cancelled": self.outcome = .cancelled
             default: break
@@ -289,6 +303,45 @@ final class Wizard: ObservableObject {
                 finished(status, status == 0 ? nil : failure)
             } }
         }
+    }
+
+    // MARK: library
+
+    var rememberedApps: [String] { UserDefaults.standard.stringArray(forKey: Defaults.built) ?? [] }
+
+    private func remember(_ app: URL) {
+        UserDefaults.standard.set([app.path] + rememberedApps.filter { $0 != app.path }, forKey: Defaults.built)
+    }
+
+    func forget(_ app: URL) {
+        UserDefaults.standard.set(rememberedApps.filter { $0 != app.path }, forKey: Defaults.built)
+    }
+
+    /// The wizard filled in with what `app` was built from (its build-info.json), writing over the same app. The keys
+    /// are never in it: the remembered location is used, or the Keys page asks.
+    func rebuild(_ app: BuiltApp) {
+        guard let info = app.info, let gamePath = info.inputs.game else { return }
+        let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
+        game = URL(fileURLWithPath: gamePath)
+        update = path(info.inputs.update)
+        dlc = (info.inputs.dlc ?? []).map { URL(fileURLWithPath: $0) }
+        mod = path(info.inputs.mod)
+        installModRomfs = info.inputs.installModRomfs ?? false
+        fonts = path(info.inputs.firmware ?? info.inputs.sharedFonts)
+        fontsAreFirmware = info.inputs.sharedFonts == nil
+        platform = "macos"
+        out = app.url
+        outcome = nil
+        mode = .build
+        step = keys == nil ? .keys : .game
+        inspect()
+    }
+
+    /// Files the build record names that are not there any more (a moved game file, an unplugged drive).
+    func missingInputs(_ info: BuildInfo) -> [String] {
+        let i = info.inputs
+        return ([i.game, i.update, i.mod, i.firmware, i.sharedFonts].compactMap { $0 } + (i.dlc ?? []))
+            .filter { !FileManager.default.fileExists(atPath: $0) }
     }
 
     // MARK: result
