@@ -4,7 +4,7 @@ import SwiftUI
 /// The game apps on this Mac: what each was built from, whether the checkout would build it differently now, and the
 /// shader list contributions their games noted.
 struct LibraryView: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var apps: [BuiltApp] = []
     @State private var freshness: [String: Freshness] = [:]
     @State private var contributions: [Contribution] = []
@@ -136,7 +136,7 @@ struct LibraryView: View {
 }
 
 struct AppRow: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     var app: BuiltApp
     var freshness: Freshness
     var trash: () -> Void

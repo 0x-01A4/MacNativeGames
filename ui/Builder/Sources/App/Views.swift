@@ -5,11 +5,11 @@ import UniformTypeIdentifiers
 @main
 struct BuilderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var wizard = Wizard()
+    @State private var wizard = Wizard()
 
     var body: some Scene {
         Window("MacNativeGames Builder", id: "builder") {
-            Root().environmentObject(wizard)
+            Root().environment(wizard)
                 .frame(minWidth: 760, minHeight: 540)
                 .onAppear { delegate.attach(wizard) }
         }
@@ -74,9 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct Root: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
+        @Bindable var wizard = wizard
         Group {
             switch wizard.mode {
             case .build: WizardView()
@@ -97,7 +98,7 @@ struct Root: View {
 }
 
 struct WizardView: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         HStack(spacing: 0) {
@@ -137,7 +138,7 @@ struct WizardView: View {
 }
 
 struct StepList: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -158,7 +159,7 @@ struct StepList: View {
 }
 
 struct Navigation: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var confirmCancel = false
 
     var body: some View {
@@ -270,10 +271,11 @@ struct FileRow: View {
 }
 
 struct KeysPage: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var targeted = false
 
     var body: some View {
+        @Bindable var wizard = wizard
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "Your keys",
                       detail: "The build decrypts your own game dump with the prod.keys from your own console. Nothing is downloaded, and the keys stay where they are.")
@@ -309,7 +311,7 @@ extension Missing where Extra == EmptyView {
 
 /// What build_app.py needs on this Mac; the commands to run when something is missing.
 struct SetupStatus: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var notRepo: String?
 
     var body: some View {
@@ -337,7 +339,7 @@ struct SetupStatus: View {
 
 /// Missing tools with the command that installs each, and a way to look again after running them.
 struct Commands: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     var items: [Preflight.Missing]
 
     var body: some View {
@@ -376,7 +378,7 @@ struct Missing<Extra: View>: View {
 }
 
 struct GamePage: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var targeted = false
 
     var body: some View {
@@ -461,7 +463,7 @@ struct GamePage: View {
 
 /// What --inspect found, or why it couldn't tell.
 struct Found: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         if wizard.inspecting {
@@ -490,9 +492,10 @@ struct Found: View {
 }
 
 struct TargetPage: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
+        @Bindable var wizard = wizard
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "What to build",
                       detail: wizard.isDevice
@@ -580,7 +583,7 @@ struct TargetPage: View {
 }
 
 struct BuildPage: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -630,7 +633,7 @@ struct BuildPage: View {
 }
 
 struct LogView: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     @State private var shown = false
     @State private var search = ""
     @State private var atEnd = true   // follow new lines only while the end is in view
@@ -671,7 +674,7 @@ struct LogView: View {
 }
 
 struct Failure: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
     var code: String?
     var message: String
     var log: String?   // the failed tool's own log (the error event's "log")
@@ -694,7 +697,7 @@ struct Failure: View {
 
 /// Inputs the build accepted by another rule than the exact reference hash: worth knowing, not a problem.
 struct Notices: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         if !wizard.notices.isEmpty {
@@ -720,7 +723,7 @@ struct Notices: View {
 }
 
 struct ResultPage: View {
-    @EnvironmentObject var wizard: Wizard
+    @Environment(Wizard.self) private var wizard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

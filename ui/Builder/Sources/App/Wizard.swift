@@ -1,11 +1,12 @@
 import AppKit
 import Foundation
+import Observation
 import UserNotifications
 
 /// The Builder's state: the files the player picked, what --inspect found, and the running build. Every build step is
 /// build_app.py's; this only collects its arguments and reads its events.
-@MainActor
-final class Wizard: ObservableObject {
+@MainActor @Observable
+final class Wizard {
     enum Step: Int, CaseIterable {
         case keys, game, target, build, result
 
@@ -33,45 +34,45 @@ final class Wizard: ObservableObject {
     }
 
     enum Mode: Hashable { case build, library }
-    @Published var mode = Mode.build
+    var mode = Mode.build
 
-    @Published var step = Step.keys
-    @Published var preflight: Preflight
-    @Published var keys: URL?
-    @Published var rememberKeys: Bool
-    @Published var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
-    @Published var game: URL?
-    @Published var update: URL?
-    @Published var fonts: URL?
-    @Published var fontsAreFirmware = true
-    @Published var report: BuildEvent?
+    var step = Step.keys
+    var preflight: Preflight
+    var keys: URL?
+    var rememberKeys: Bool
+    var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
+    var game: URL?
+    var update: URL?
+    var fonts: URL?
+    var fontsAreFirmware = true
+    var report: BuildEvent?
     // what the last --inspect of this game file said, kept while a re-inspect runs (report is nil then)
-    @Published var identified: String?   // the game's id
-    @Published var fontsNeeded: Bool?
-    @Published var inspectFailure: Outcome?
-    @Published var inspecting = false
-    @Published var out: URL?
-    @Published var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
-    @Published var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
-    @Published var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
-    @Published var installModRomfs = false
-    @Published var shaderReminder = true
-    @Published var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
-    @Published var running = false
-    @Published var cancelling = false   // Cancel was pressed and the build hasn't ended yet
-    @Published var progress: BuildEvent?
-    @Published var reached = 0          // the highest of the build's steps (1-n) it has reached
-    @Published var steps = BuildSteps()
-    @Published var outcome: Outcome?
-    @Published var lines: [String] = []
+    var identified: String?   // the game's id
+    var fontsNeeded: Bool?
+    var inspectFailure: Outcome?
+    var inspecting = false
+    var out: URL?
+    var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
+    var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
+    var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
+    var installModRomfs = false
+    var shaderReminder = true
+    var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
+    var running = false
+    var cancelling = false   // Cancel was pressed and the build hasn't ended yet
+    var progress: BuildEvent?
+    var reached = 0          // the highest of the build's steps (1-n) it has reached
+    var steps = BuildSteps()
+    var outcome: Outcome?
+    var lines: [String] = []
 
-    private var runner: BuildRunner?
-    private var generation = 0   // a newer --inspect or build makes the events of an older one stale
-    private var schemaChecked = false
-    private var rejected = false   // the script writes another event schema: what it sends after that is not read
-    private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
+    @ObservationIgnored private var runner: BuildRunner?
+    @ObservationIgnored private var generation = 0   // a newer --inspect or build makes the events of an older one stale
+    @ObservationIgnored private var schemaChecked = false
+    @ObservationIgnored private var rejected = false   // the script writes another event schema: what it sends after that is not read
+    @ObservationIgnored private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
     /// Called once when the running build has ended (the app delegate waits on it to quit).
-    var onBuildEnded: (() -> Void)?
+    @ObservationIgnored var onBuildEnded: (() -> Void)?
 
     init() {
         let defaults = UserDefaults.standard
