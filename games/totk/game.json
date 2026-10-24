@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "totk",
+  "name": "Tears of the Kingdom",
+  "title_id": "0100F2C0115B6000",
+  "bundle_id": "org.macnativegames.totk",
+  "data_folder": "TOTK",
+  "build": "build_app.py",
+  "sources": ["build_app.py", "games/totk"],
+  "shader_contribution": {
+    "step": 100,
+    "form": "https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list.yml"
+  }
+}

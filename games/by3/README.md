@@ -19,7 +19,15 @@ this repository; `BY3_build/` (the work folder) and `mods/` are ignored by git.
 
 ## Build and play
 
-From `games/by3`, with a Python environment made from `requirements.txt` in this folder (`PY=<that python>`):
+In one command, from the top of the repository (or with the Builder, `ui/README.md`):
+
+```sh
+python3.14 build_app.py "<base>.nsp" --update "<update>.nsp" -k prod.keys [--firmware <firmware folder>]
+```
+
+`build_app.py` hands a Bayonetta 3 NSP to `games/by3/build.py`, which runs the steps below in `BY3_build/` next to the
+base NSP (reused by the next run), checks each against `assets/expected-v1.2.0.json`, and writes `Bayonetta 3.app` next
+to it. By hand, from `games/by3`, with a Python environment made from `requirements.txt` in this folder (`PY=<that python>`):
 
 ```sh
 python scripts/extract_code.py "<update>.nsp" --keys prod.keys --output BY3_build/extracted/v120/exefs

@@ -48,7 +48,15 @@ ignores. Never commit or share anything from it: it contains game data.
 
 ## Build your own copy
 
-From `games/odyssey/`:
+With the Builder (`ui/README.md`), or in one command from the top of the repository:
+
+```bash
+python3.14 build_app.py YOUR_GAME.xci -k prod.keys [--firmware YOUR_FIRMWARE_FOLDER] [-o OUT.app]
+```
+
+`build_app.py` hands a Super Mario Odyssey file to `games/odyssey/build.py`, which makes `Odyssey_build/venv` from
+`requirements.txt` and runs the eight steps below with the same checks (`-o` moves the finished app, and its
+`Odyssey Data` when there is none yet, to that place). By hand, from `games/odyssey/`:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install capstone cryptography lz4

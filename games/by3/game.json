@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "by3",
+  "name": "Bayonetta 3",
+  "title_id": "01004A4010FEA000",
+  "bundle_id": "org.macnativegames.by3",
+  "data_folder": "BY3",
+  "build": "games/by3/build.py",
+  "sources": ["games/by3"],
+  "files": {"game": ["nsp"], "update": ["nsp"]}
+}

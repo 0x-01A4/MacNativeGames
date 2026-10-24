@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "odyssey",
+  "name": "Super Mario Odyssey",
+  "title_id": "0100000000010000",
+  "bundle_id": "local.projectidea.odyssey",
+  "data_beside_app": "Odyssey Data",
+  "build": "games/odyssey/build.py",
+  "sources": ["games/odyssey"],
+  "files": {"game": ["xci", "nsp"], "update": []},
+  "versions": ["1.3.0"]
+}
