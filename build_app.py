@@ -1503,19 +1503,19 @@ def step_app(tree, out, logs, *, version="v0", game='totk', info=None):
     # after the checks above: signing it is slow
     place_data_bundle(data_bundle(tree, version, logs, bundle_id=bundle_id), tmp, res, version)
     clone(tree / 'build/app-launcher', tmp / f'Contents/MacOS/{executable}')
-    info = dict(CFBundleDevelopmentRegion='en', CFBundleExecutable=executable, CFBundleIdentifier=bundle_id, CFBundleName=app_name,
-                CFBundleDisplayName=app_name, CFBundlePackageType='APPL', CFBundleShortVersionString=expected['display_version'],
-                CFBundleVersion=str(expected['version'] + 1), LSMinimumSystemVersion='26.0', NSHighResolutionCapable=True,
-                LSApplicationCategoryType='public.app-category.action-games', LSSupportsGameMode=True,
-                GCSupportsControllerUserInteraction=True,
-                CFBundleLocalizations=list(GAME_LANGUAGES) + (['pt-BR'] if version in ('v143', 'botw190') else []))
+    plist = dict(CFBundleDevelopmentRegion='en', CFBundleExecutable=executable, CFBundleIdentifier=bundle_id, CFBundleName=app_name,
+                 CFBundleDisplayName=app_name, CFBundlePackageType='APPL', CFBundleShortVersionString=expected['display_version'],
+                 CFBundleVersion=str(expected['version'] + 1), LSMinimumSystemVersion='26.0', NSHighResolutionCapable=True,
+                 LSApplicationCategoryType='public.app-category.action-games', LSSupportsGameMode=True,
+                 GCSupportsControllerUserInteraction=True,
+                 CFBundleLocalizations=list(GAME_LANGUAGES) + (['pt-BR'] if version in ('v143', 'botw190') else []))
     icon = tree / 'build/AppIcon.icns'
     if icon.exists():
         clone(icon, tmp / 'Contents/Resources/AppIcon.icns')
-        info['CFBundleIconFile'] = 'AppIcon'
-    info['MNGContributionFolder'] = str(contrib_folder())   # app/launcher.m contrib_file: where players find it
+        plist['CFBundleIconFile'] = 'AppIcon'
+    plist['MNGContributionFolder'] = str(contrib_folder())   # app/launcher.m contrib_file: where players find it
     import plistlib
-    (tmp / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
+    (tmp / 'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
     (tmp / 'Contents/PkgInfo').write_bytes(b'APPL????')
     if info:   # sealed with the rest of the app
         (tmp / BUILD_INFO).write_text(json.dumps(info, indent=2) + '\n')

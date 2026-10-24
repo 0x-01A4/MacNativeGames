@@ -61,9 +61,10 @@ Each phase is done when its tests pass and the change notes say what was built a
   - Built: `--json-progress`, `--inspect`, error codes, cancel on SIGTERM.
   - Tests: `tests/test_build_events.py`.
   - Done means: the text output stays unchanged, and the unit tests pass with no game data.
-- **Phase 1 (done, awaiting a real-dump check)**:
+- **Phase 1 (done)**:
   - Built: the minimal Mac Builder for TOTK and BotW, and `ui/Builder/run_tests.sh` against a stand-in build.
   - Done means: a full TOTK build from the Builder with a real dump; the app starts and plays.
+  - Checked 2026-10-23: TOTK 1.0.0 built from the Builder with a real dump (checkout `7cc49d5`), started and played on the Mac.
 - **Phase 2 (done, awaiting real-dump checks)**:
   - Built:
     - the iPhone/iPad target, with an early check in `build_app.py` that Xcode with the iOS SDK, xcodegen, cmake and ninja are installed, and sideloading steps on the result page;
@@ -82,6 +83,8 @@ Each phase is done when its tests pass and the change notes say what was built a
   - The contribution state stays in the game's own `.reminded` file, so the in-game launcher and the Builder never disagree. Its "Submit automatically" (with gh) stays only in the game.
   - IPAs carry no record yet, so they're not listed.
   - Apps built before this change are listed with "no build record": rebuilding once from the Build page gives them one.
+    So are TOTK and BotW apps built before 2026-10-24, whose `build-info.json` held their Info.plist (`step_app` reused
+    the record's name for it).
   - Done means: a Mac app built from the Builder appears in the Library, and after a commit to `games/totk` it shows "checkout changed" and rebuilds.
 - **Phase 4**:
   - Scope: game settings as launch options. Only the options each game and version supports, read from a manifest rather than hardcoded.

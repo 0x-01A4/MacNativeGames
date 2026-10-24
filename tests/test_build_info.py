@@ -1,6 +1,7 @@
 """build_app.build_info: the record an app keeps of what it was built from (Contents/Resources/build-info.json), which the
 Builder's library reads. No game data and no keys.
 """
+import ast
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,14 @@ class BuildInfo(unittest.TestCase):
         source = (ROOT / 'build_app.py').read_text()
         for call in source.split('build_info(')[2:]:   # the two calls in main, after the definition
             self.assertNotIn('keys', call.split(')))')[0])
+
+    def test_step_app_writes_the_record_it_is_given(self):
+        # step_app once reused `info` for the Info.plist dict, so every app's build-info.json held its plist instead
+        tree = ast.parse((ROOT / 'build_app.py').read_text())
+        step_app = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'step_app')
+        rebound = [n.lineno for n in ast.walk(step_app) if isinstance(n, ast.Name) and n.id == 'info'
+                   and isinstance(n.ctx, (ast.Store, ast.Del))]
+        self.assertEqual(rebound, [], 'step_app must not rebind its info parameter')
 
     def test_checkout_commit(self):
         commit, dirty = build_app.checkout_commit()
