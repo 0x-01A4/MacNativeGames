@@ -44,7 +44,7 @@ For iPhone/iPad: Xcode 26+ with iOS/Metal toolchains, plus xcodegen, CMake and N
 Optional: Xcode's Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the startup shaders into the
 app, so moving or rebuilding it does not repeat that work at launch.
 """
-import argparse, concurrent.futures, glob, hashlib, json, os, platform, shutil, struct, subprocess, sys, threading, time
+import argparse, concurrent.futures, glob, hashlib, json, os, platform, re, shutil, signal, struct, subprocess, sys, threading, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -99,11 +99,51 @@ NINTENDO_ACID_MODULUS = bytes.fromhex(
 
 
 class BuildError(Exception):
-    pass
+    """code: the class of the failure, which a front end (ui/Builder) turns into plain language; log: the step's full output.
+    The message is the same text either way."""
+    def __init__(self, message, code='build', log=None):
+        super().__init__(message)
+        self.code, self.log = code, log
+
+
+# --json-progress: say() writes one JSON object per line for a front end instead of the timestamped text (ui/README.md
+# lists the events). The stage comes from the "N/4 name:" prefix the messages already carry; a line without one
+# belongs to the stage before it.
+EVENTS = False
+EVENT_SCHEMA = 1
+STAGE = re.compile(r'(\d+)/(\d+) (\w+): ')
+stage = {'stage': 'prepare', 'step': 0, 'of': 4}
+
+
+def event(kind, /, **fields):
+    print(json.dumps({'type': kind, 'time': round(time.time(), 3), **fields}), flush=True)
+
+
+def staged(msg):
+    """The message without its "N/4 name:" prefix, after moving the current stage to it."""
+    if m := STAGE.match(msg):
+        stage.update(stage=m[3], step=int(m[1]), of=int(m[2]))
+        msg = msg[m.end():]
+    return msg.strip()
 
 
 def say(msg):
-    print(f'[{time.strftime("%H:%M:%S")}] {msg}', flush=True)
+    if not EVENTS:
+        print(f'[{time.strftime("%H:%M:%S")}] {msg}', flush=True)
+        return
+    if msg.lstrip().startswith('... still running'):
+        return event('heartbeat', **stage, message=msg.strip())
+    msg = staged(msg)   # first: it moves the stage
+    event('progress', **stage, message=msg)
+
+
+def notice(code, msg):
+    """A message the player should see after the build too: an input accepted by another rule than the exact reference
+    hash. code: npdm_signed, npdm_resigned, fonts_other_firmware."""
+    if not EVENTS:
+        return say(msg)
+    msg = staged(msg)
+    event('notice', **stage, code=code, message=msg)
 
 
 def run(cmd, log, cwd=None, env=None, quiet=True):
@@ -126,7 +166,7 @@ def run(cmd, log, cwd=None, env=None, quiet=True):
     if p.returncode:
         tail = log.read_text(errors='replace').splitlines()[-25:]
         raise BuildError(f'{Path(cmd[1] if Path(cmd[0]).name.startswith("python") else cmd[0]).name} failed (exit {p.returncode}); '
-                         f'full output: {log}\n' + '\n'.join(tail))
+                         f'full output: {log}\n' + '\n'.join(tail), log=log)
 
 
 def sha256(path):
@@ -165,7 +205,7 @@ def seed_sha256(seed, name, known):
 def check(what, got, want):
     if got != want:
         raise BuildError(f'{what}: SHA-256 {got[:16]}... is not the expected {want[:16]}... '
-                         f'(is this the supported game version, and the dump complete?)')
+                         f'(is this the supported game version, and the dump complete?)', code='hash_mismatch')
 
 
 
@@ -260,12 +300,12 @@ def _bfttf_valid(path):
 # ---- prerequisites ----
 def prerequisites(args):
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
-        raise BuildError('needs a Mac with Apple silicon')
+        raise BuildError('needs a Mac with Apple silicon', code='toolchain')
     major = int(platform.mac_ver()[0].split('.')[0] or 0)
     if major < 26:
-        raise BuildError(f'needs macOS 26 or later (Metal 4); this is macOS {platform.mac_ver()[0]}')
+        raise BuildError(f'needs macOS 26 or later (Metal 4); this is macOS {platform.mac_ver()[0]}', code='toolchain')
     if subprocess.run(['xcrun', '--find', 'clang'], capture_output=True).returncode:
-        raise BuildError('the Xcode command line tools are missing: xcode-select --install')
+        raise BuildError('the Xcode command line tools are missing: xcode-select --install', code='toolchain')
     # SPIRV-Cross is C++: without the SDK's libc++ headers the build stops much later at "'string' file not found" (#41)
     cxx = subprocess.run(['xcrun', 'clang++', '-std=c++11', '-x', 'c++', '-fsyntax-only', '-'], input='#include <string>\n',
                          capture_output=True, text=True)
@@ -273,17 +313,34 @@ def prerequisites(args):
         raise BuildError('clang++ finds no C++ standard library headers, so the developer tools or their SDK are incomplete. '
                          'With Xcode: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer; with the command line '
                          'tools only: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install '
-                         f'(xcode-select -p and xcrun --show-sdk-path show what is used). clang++ said: {cxx.stderr.strip()[:300]}')
+                         f'(xcode-select -p and xcrun --show-sdk-path show what is used). clang++ said: {cxx.stderr.strip()[:300]}', code='toolchain')
     brew = Path('/opt/homebrew')
     missing = [p for p in ('opus', 'libvpx') if not (brew / 'opt' / p / 'lib').is_dir()]
     if missing:
-        raise BuildError(f'Homebrew packages missing: brew install {" ".join(missing)}')
+        raise BuildError(f'Homebrew packages missing: brew install {" ".join(missing)}', code='toolchain')
     if not shutil.which('git', path=os.pathsep.join(TOOL_PATHS + ['/usr/bin'])):
-        raise BuildError('git not found: xcode-select --install')
+        raise BuildError('git not found: xcode-select --install', code='toolchain')
     py = next((p for p in (shutil.which(n, path=os.pathsep.join(TOOL_PATHS)) for n in ('python3.14', 'python3.15')) if p), None)
     if not py:
-        raise BuildError('Python 3.14 not found (the build reads zstd with the standard library): brew install python@3.14')
+        raise BuildError('Python 3.14 not found (the build reads zstd with the standard library): brew install python@3.14', code='toolchain')
+    if args.platform == 'ios':
+        ios_prerequisites()
     return Path(py)
+
+
+def ios_prerequisites():
+    """What ios/tools/build_ipa.py and build_deps.py need, checked before the long steps instead of at the last one."""
+    if str(GAME / 'ios/tools') not in sys.path:
+        sys.path.insert(0, str(GAME / 'ios/tools'))
+    from xcode_dir import developer_dir   # the Xcode build_ipa.py itself will use
+    try:
+        developer_dir()
+    except RuntimeError as e:
+        raise BuildError(f'an iPhone / iPad build needs Xcode 26 or later with the iOS SDK (the command line tools are not '
+                         f'enough): {e}', code='toolchain') from None
+    missing = [t for t in ('xcodegen', 'cmake', 'ninja') if not shutil.which(t, path=os.pathsep.join(TOOL_PATHS))]
+    if missing:
+        raise BuildError(f'an iPhone / iPad build needs {", ".join(missing)}: brew install {" ".join(missing)}', code='toolchain')
 
 
 # ---- work folder ----
@@ -349,7 +406,7 @@ def input_kind(game):
         f.seek(0x100)
         if f.read(4) == b'HEAD':
             return 'xci'
-    raise BuildError('expected an XCI or NSP (PFS0) game file, or a supported NSZ update')
+    raise BuildError('expected an XCI or NSP (PFS0) game file, or a supported NSZ update', code='input')
 
 
 def source_matches(manifest, game):
@@ -405,7 +462,7 @@ def identify_update(tree, game, keys, logs):
     version = next((version for version in UPDATES
                     if exefs_matches(staging / 'exefs', VERSIONS[version]['exefs_sha256'], VERSIONS[version]['title_id'])), None)
     if version is None:
-        raise BuildError('unsupported update module hashes; expected 1.1.2, 1.2.1 or 1.4.3 (the file name is not used to choose a version)')
+        raise BuildError('unsupported update module hashes; expected 1.1.2, 1.2.1 or 1.4.3 (the file name is not used to choose a version)', code='unsupported_version')
     target = tree / f'extracted/{version}'
     target.mkdir(parents=True, exist_ok=True)
     if (target / 'exefs').exists(): shutil.rmtree(target / 'exefs')
@@ -431,7 +488,7 @@ def identify_botw_update(tree, update, keys, logs):
                     if exefs_matches(staging / 'exefs', VERSIONS[version]['exefs_sha256'], VERSIONS[version]['title_id'])), None)
     if version is None:
         shutil.rmtree(staging)
-        raise BuildError('unsupported Breath of the Wild update module hashes; expected 1.6.0 or 1.9.0 (the file name is not used to choose a version)')
+        raise BuildError('unsupported Breath of the Wild update module hashes; expected 1.6.0 or 1.9.0 (the file name is not used to choose a version)', code='unsupported_version')
     target = tree / f'extracted/{version}'   # the verified ExeFS is kept, as identify_update does: step_code_botw reuses it
     target.mkdir(parents=True, exist_ok=True)
     if (target / 'exefs').exists(): shutil.rmtree(target / 'exefs')
@@ -450,13 +507,13 @@ def font_report(folder):
     for kind, (name, expected) in enumerate(EXPECTED['shared_fonts_sha256'].items()):
         path = folder / f'{kind}-{name}.bfttf'
         if not path.is_file():
-            raise BuildError(f'missing shared font: {path}')
+            raise BuildError(f'missing shared font: {path}', code='fonts')
         digest = sha256(path)
         if digest != expected:
             if not _bfttf_valid(path):
                 raise BuildError(f'shared font {name}: not the expected bytes and not a valid BFTTF font '
-                                 f'(SHA-256 {digest[:16]}...)')
-            say(f'2/4 data: shared font {name} comes from another firmware version; its bytes are bound instead')
+                                 f'(SHA-256 {digest[:16]}...)', code='fonts')
+            notice('fonts_other_firmware', f'2/4 data: shared font {name} comes from another firmware version; its bytes are bound instead')
         size = path.stat().st_size
         rows.append(dict(type=kind, name=name, bfttf_bytes=size, font_bytes=size - 8, sha256=digest))
     return dict(status='pass', integrity='Each shared font is a valid BFTTF; the reference dump matches its pinned SHA-256',
@@ -473,7 +530,7 @@ def validate_fonts(folder):
                 for row, expected in zip(rows, report['fonts'])):
             raise ValueError('font manifest differs from its files')
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
-        raise BuildError(f'invalid shared-font manifest in {folder}: {e}') from None
+        raise BuildError(f'invalid shared-font manifest in {folder}: {e}', code='fonts') from None
 
 
 def fonts_valid(folder):
@@ -499,9 +556,13 @@ def merge_mod_exefs(tree, mod, version, logs):
             previous = json.loads(report_path.read_text())
         except ValueError:
             previous = {}
-    run([py, 'scripts/mod_exefs.py', 'apply', '--exefs', tree / f'extracted/{version}/exefs', '--mod', mod,
-         '--version', version, '--output', main, '--report', report_path],
-        logs / f'mod-exefs-{version}.log', cwd=tree)
+    try:
+        run([py, 'scripts/mod_exefs.py', 'apply', '--exefs', tree / f'extracted/{version}/exefs', '--mod', mod,
+             '--version', version, '--output', main, '--report', report_path],
+            logs / f'mod-exefs-{version}.log', cwd=tree)
+    except BuildError as e:   # a patch for another version, or one whose bytes do not match this main
+        e.code = 'mod'
+        raise
     merged = json.loads(report_path.read_text())
     if merged.get('status') == 'skipped':           # an exefs/ with nothing to merge into main (a code module the app
         for note in merged.get('notes', []):        # does not load, a main.npdm): the romfs/ half still goes in
@@ -542,16 +603,16 @@ def step_code(tree, game, keys, env, logs, *, version="v0", mod=None):
         run([py, 'scripts/extract_exefs.py', source, '--keys', keys, '--output', exefs, *update_args], logs / f'extract_exefs-{version}.log', cwd=tree)
     for n, h in want.items():
         if not (exefs / n).is_file():
-            raise BuildError(f'ExeFS {n} is missing; not the supported version')
+            raise BuildError(f'ExeFS {n} is missing; not the supported version', code='unsupported_version')
         got = sha256(exefs / n)
         if got == h:
             continue
         kind = npdm_kind(exefs / n, expected['title_id']) if n == 'main.npdm' else None
         if kind == 'signed':
-            say(f"1/4 code: main.npdm is a Nintendo-signed {expected['display_version']} file from another dump; using it")
+            notice('npdm_signed', f"1/4 code: main.npdm is a Nintendo-signed {expected['display_version']} file from another dump; using it")
             continue
         if kind == 'resigned':   # the code modules are checked in this same loop: any mismatch there still stops the build
-            say(f"1/4 code: main.npdm of this dump was signed again by a dump tool (not Nintendo's signature, e.g. a changed "
+            notice('npdm_resigned', f"1/4 code: main.npdm of this dump was signed again by a dump tool (not Nintendo's signature, e.g. a changed "
                 f"key generation); the game does not use it and the code must match {expected['display_version']}; using it")
             continue
         check(f'ExeFS {n}', got, h)
@@ -691,7 +752,7 @@ def install_mod_romfs(mod, tree, version, out, py, logs):
             say(f'   {line}')
         raise BuildError(f'the app itself is built, but {mod_folder.mods_folder(version)} was not replaced: {e} '
                          f'(it holds what it held before; fix {mod.name}/romfs, then write the manifest again with '
-                         f'scripts/make_mod_manifest.py)') from None
+                         f'scripts/make_mod_manifest.py)', code='mod') from None
     if installed is None:
         return None
     log.write_text('\n'.join(installed.manifest) + '\n')
@@ -744,7 +805,7 @@ def step_data(tree, game, keys, logs, *, firmware=None, shared_fonts=None, mod=N
             (fonts / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
         else:
             if not firmware and input_kind(game) == 'nsp':
-                raise BuildError('NSP needs --firmware or --shared-fonts because no valid shared fonts are cached')
+                raise BuildError('NSP needs --firmware or --shared-fonts because no valid shared fonts are cached', code='fonts')
             say('2/4 data: extracting the system shared fonts')
             if fonts.exists():
                 shutil.rmtree(fonts)
@@ -1425,10 +1486,14 @@ def step_warm_metal(tree, out, logs):
 def identify_game(tree, game, keys, logs):
     """'totk' or 'botw' from the title IDs of the NCAs in the game file (scripts/identify_game.py); the name is not used."""
     log = logs / 'identify-game.log'
-    run([tree / '.venv/bin/python', 'scripts/identify_game.py', game, '--keys', keys], log, cwd=tree, quiet=False)
+    try:
+        run([tree / '.venv/bin/python', 'scripts/identify_game.py', game, '--keys', keys], log, cwd=tree, quiet=False)
+    except BuildError as e:   # keys that do not open the NCAs, or a damaged dump
+        e.code = 'keys_or_dump'
+        raise
     report = last_json(log)
     if not report:
-        raise BuildError(f'could not read the game file (see {log})')
+        raise BuildError(f'could not read the game file (see {log})', code='keys_or_dump')
     found = sorted({TITLES[t] for t in report['titles'] if t in TITLES})
     if not found:
         for title_id in ticket_title_ids(game):
@@ -1436,10 +1501,10 @@ def identify_game(tree, game, keys, logs):
             if kind == 'dlc' and application in TITLES:
                 raise BuildError(f'{game.name} is {APPS[TITLES[application]][0]} add-on content (DLC), not the game' +
                                  (': pass the base NSP as the game file with --update <update.nsp>, and this file with --dlc'
-                                  if TITLES[application] == 'botw' else ', which this build does not support'))
+                                  if TITLES[application] == 'botw' else ', which this build does not support'), code='wrong_game')
     if len(found) != 1:
         raise BuildError(f'the game file holds {report["titles"]}: expected Tears of the Kingdom (0100F2C0115B6000) or '
-                         f'Breath of the Wild (01007EF00011E000)')
+                         f'Breath of the Wild (01007EF00011E000)', code='wrong_game')
     return found[0]
 
 
@@ -1504,9 +1569,9 @@ def check_package(path, game, role):
         if owner is None:
             continue
         if owner != game:
-            raise BuildError(f'{path.name} is {APPS[owner][0]} ({kind}), but this build is for {APPS[game][0]}: use the files of one game')
+            raise BuildError(f'{path.name} is {APPS[owner][0]} ({kind}), but this build is for {APPS[game][0]}: use the files of one game', code='wrong_game')
         if kind != role:
-            raise BuildError(f'{path.name} is {APPS[game][0]} {kind} content, not the {role}: pass it as {flags[kind]}')
+            raise BuildError(f'{path.name} is {APPS[game][0]} {kind} content, not the {role}: pass it as {flags[kind]}', code='wrong_game')
 
 
 def check_dlc(paths, expected):
@@ -1517,9 +1582,9 @@ def check_dlc(paths, expected):
         check_package(path, 'botw', 'dlc')
         for title_id in ticket_title_ids(path):
             if title_id not in pins:
-                raise BuildError(f'{path.name} is add-on content {title_id}, but the packs of this version are {", ".join(pins)}')
+                raise BuildError(f'{path.name} is add-on content {title_id}, but the packs of this version are {", ".join(pins)}', code='input')
             if owner.setdefault(title_id, path) != path:
-                raise BuildError(f'{owner[title_id].name} and {path.name} are the same DLC pack ({title_id}): pass one of them')
+                raise BuildError(f'{owner[title_id].name} and {path.name} are the same DLC pack ({title_id}): pass one of them', code='input')
 
 
 def dlc_pack_valid(folder, pin):
@@ -1552,7 +1617,7 @@ def step_dlc_botw(tree, botw, dlc, keys, logs, pins, aoc):
             index = str(report['index'])
             check(f'add-on content {index}', report['romfs_sha256'], pins[index]['sha256'])
             if report['romfs_size'] != pins[index]['size']:
-                raise BuildError(f'add-on content {index}: size {report["romfs_size"]} is not the expected {pins[index]["size"]}')
+                raise BuildError(f'add-on content {index}: size {report["romfs_size"]} is not the expected {pins[index]["size"]}', code='hash_mismatch')
             shutil.rmtree(aoc / index, ignore_errors=True)
             aoc.mkdir(parents=True, exist_ok=True)
             pack.rename(aoc / index)
@@ -1584,7 +1649,7 @@ def step_code_botw(tree, botw, game, keys, env, logs, *, version='botw160'):
         run([py, botw / 'scripts/extract_exefs.py', game, '--keys', keys, '--output', exefs], logs / f'extract_exefs-{version}.log', cwd=tree)
     for n, h in want.items():
         if not (exefs / n).is_file():
-            raise BuildError(f'ExeFS {n} is missing; not Breath of the Wild {expected["display_version"]}')
+            raise BuildError(f'ExeFS {n} is missing; not Breath of the Wild {expected["display_version"]}', code='unsupported_version')
         check(f'ExeFS {n}', sha256(exefs / n), h)
     if not (tree / f'extracted/{version}/elf/main-inventory.json').exists():
         run([py, 'scripts/prepare_modules.py', exefs, '--output', tree / f'extracted/{version}/elf'], logs / f'prepare_modules-{version}.log', cwd=tree)
@@ -1684,7 +1749,7 @@ def step_data_botw(tree, botw, game, keys, logs, *, version='botw160', update=No
         else:
             raise BuildError('Breath of the Wild needs --firmware <unpacked firmware NCA directory> or --shared-fonts <folder with '
                              'the six verified .bfttf files> (a Tears of the Kingdom build extracts them into its work folder, '
-                             'extracted/firmware/shared-fonts); this card has no system update partition to take them from')
+                             'extracted/firmware/shared-fonts); this card has no system update partition to take them from', code='fonts')
         validate_fonts(fonts)
 
 
@@ -1731,55 +1796,79 @@ def parse_args(argv):
     fonts = ap.add_mutually_exclusive_group()
     fonts.add_argument('--firmware', type=Path, help='unpacked firmware NCA directory providing the six expected shared fonts (needed for NSP unless --shared-fonts or valid cached fonts are available; Breath of the Wild 1.9.0 too)')
     fonts.add_argument('--shared-fonts', type=Path, help='previously extracted shared-font directory containing the six verified .bfttf files')
+    ap.add_argument('--json-progress', action='store_true', help='for a front end: one JSON event per line on stdout instead of the text (ui/README.md)')
+    ap.add_argument('--inspect', action='store_true', help='identify the game, version and what the build still needs, then stop before the build steps (with --json-progress: one "inspect" event)')
     return ap.parse_args(argv)
 
 
+def cancelled(signum, frame):
+    raise KeyboardInterrupt   # SIGTERM from a front end ends the build as Ctrl-C does; the work folder is reused next time
+
+
+def inspected(which, version, kind, needs_fonts, work, out):
+    """--inspect: what the game file is and what the build still needs, without building."""
+    expected = VERSIONS[version]
+    platforms = ['macos'] if which == 'botw' else ['macos', 'ios']
+    if EVENTS:
+        event('inspect', game=which, app_name=APPS[which][0], version=version, display_version=expected['display_version'],
+              kind=kind, needs_fonts=needs_fonts, platforms=platforms, dlc=version == 'botw190', work=str(work), default_out=str(out))
+    else:
+        say(f'{APPS[which][0]} {expected["display_version"]} ({kind}); platforms: {", ".join(platforms)}; '
+            f'{"needs --firmware or --shared-fonts" if needs_fonts else "fonts available"}; work folder {work}; output {out}')
+
+
 def main(argv):
+    global EVENTS
     args = parse_args(argv)
+    if args.json_progress:
+        EVENTS = True
+        signal.signal(signal.SIGTERM, cancelled)
+        event('hello', schema=EVENT_SCHEMA)
     game, keys = args.game.expanduser().resolve(), args.keys.expanduser().resolve()
     if not game.is_file():
-        raise BuildError(f'no such file: {game}')
+        raise BuildError(f'no such file: {game}', code='input')
     if not keys.is_file():
-        raise BuildError(f'no such file: {keys}')
+        raise BuildError(f'no such file: {keys}', code='input')
     out = (args.out.expanduser().resolve() if args.out else game.parent / (f'{APP_NAME}.ipa' if args.platform=='ios' else f'{APP_NAME}.app'))
     work = (args.work.expanduser().resolve() if args.work else game.parent / 'TOTK_build')
     if out.suffix.lower() != ('.ipa' if args.platform=='ios' else '.app'):
-        raise BuildError(f'the {args.platform} output must end in {".ipa" if args.platform=="ios" else ".app"}: {out}')
+        raise BuildError(f'the {args.platform} output must end in {".ipa" if args.platform=="ios" else ".app"}: {out}', code='input')
     kind = input_kind(game)
     if kind not in ('xci', 'nsp'):
-        raise BuildError('the base game must be an uncompressed XCI or NSP; NSZ is supported for update packages')
+        raise BuildError('the base game must be an uncompressed XCI or NSP; NSZ is supported for update packages', code='input')
     update = args.update.expanduser().resolve() if args.update else None
     if update and (not update.is_file() or input_kind(update) not in ('nsp', 'nsz')):
-        raise BuildError('--update must be a separate cumulative NSP or NSZ')
+        raise BuildError('--update must be a separate cumulative NSP or NSZ', code='input')
     mod = args.mod.expanduser().resolve() if args.mod else None
     if mod and not ((mod / 'exefs').is_dir() or (mod / 'romfs').is_dir()):
         raise BuildError(f'--mod expects a mod folder prepared before the build (its files under exefs/ and/or romfs/): '
-                         f'{mod} has neither. See docs/mods.md.')
+                         f'{mod} has neither. See docs/mods.md.', code='input')
     if args.install_mod_romfs and not mod:
         raise BuildError('--install-mod-romfs fills the player\'s mod folder from a mod\'s romfs/, so it needs --mod '
-                         '<mod folder>; nothing was written')
+                         '<mod folder>; nothing was written', code='input')
     if args.install_mod_romfs and not (mod / 'romfs').is_dir():
         raise BuildError(f'--install-mod-romfs installs {mod.name}/romfs into the player\'s mod folder, and this mod has '
-                         f'none; leave the flag out to merge its code patches only')
+                         f'none; leave the flag out to merge its code patches only', code='input')
     if args.install_mod_romfs and args.platform == 'ios':
         raise BuildError('an iPhone / iPad build loads no player mod folder, so --install-mod-romfs has nothing to fill: '
-                         'build the Mac app (leave out --platform ios) to install a mod\'s RomFS')
+                         'build the Mac app (leave out --platform ios) to install a mod\'s RomFS', code='platform')
     code_mod = mod if mod and (mod / 'exefs').is_dir() else None   # a data-only mod has no code to merge
     dlcs = list(dict.fromkeys(d.expanduser().resolve() for d in args.dlc or []))
     for dlc in dlcs:
         if not dlc.is_file() or input_kind(dlc) != 'nsp':
-            raise BuildError(f'--dlc must be an add-on content NSP: {dlc}')
+            raise BuildError(f'--dlc must be an add-on content NSP: {dlc}', code='input')
     version = 'v0'
     firmware = args.firmware.expanduser().resolve() if args.firmware else None
     shared_fonts = args.shared_fonts.expanduser().resolve() if args.shared_fonts else None
     if firmware and not firmware.is_dir():
-        raise BuildError(f'no firmware directory: {firmware}')
+        raise BuildError(f'no firmware directory: {firmware}', code='input')
     if shared_fonts:
         font_report(shared_fonts)
     no_fonts = BuildError('NSP files do not include system shared fonts. Supply --firmware <unpacked firmware NCA directory> '
-                          'or --shared-fonts <previously extracted font directory>; valid fonts in --work are also reused.')
+                          'or --shared-fonts <previously extracted font directory>; valid fonts in --work are also reused.', code='fonts')
     fonts_given = firmware or shared_fonts or fonts_valid(work / 'totk/extracted/firmware/shared-fonts')
-    if kind == 'nsp' and not (fonts_given or (not args.work and fonts_valid(game.parent / 'BotW_build/totk/extracted/firmware/shared-fonts'))):   # Breath of the Wild's default work folder
+    if kind == 'nsp' and not (fonts_given or (not args.work and fonts_valid(game.parent / 'BotW_build/totk/extracted/firmware/shared-fonts'))) \
+            and not args.inspect:   # Breath of the Wild's default work folder; --inspect reports the need instead
         raise no_fonts
     py = prerequisites(args)
     def existing_volume_path(path):
@@ -1793,18 +1882,18 @@ def main(argv):
     # The game decides the platforms, the work folder and the disk space needed, so it is identified before those checks.
     tree = prepare_work(work, py, logs)
     which = identify_game(tree, game, keys, logs)
-    if kind == 'nsp' and which != 'botw' and not fonts_given:   # only Breath of the Wild's fonts passed the check above
+    if kind == 'nsp' and which != 'botw' and not fonts_given and not args.inspect:   # only Breath of the Wild's fonts passed the check above
         raise no_fonts
     if dlcs and which != 'botw':
-        raise BuildError(f'{APPS[which][0]} has no DLC support: leave out --dlc')
+        raise BuildError(f'{APPS[which][0]} has no DLC support: leave out --dlc', code='input')
     if which == 'botw':
         if fresh_work and not args.work:   # BotW_build next to the game file, not TOTK_build
             shutil.rmtree(work)
         if args.platform == 'ios':
-            raise BuildError('Breath of the Wild has no iPhone / iPad build yet: build the Mac app (leave out --platform ios)')
+            raise BuildError('Breath of the Wild has no iPhone / iPad build yet: build the Mac app (leave out --platform ios)', code='platform')
         if mod:
             raise BuildError('--mod: merging a mod\'s main-module patches is only wired for Tears of the Kingdom so far '
-                             '(the patch sites of Breath of the Wild 1.6.0 are not listed in scripts/patch_sites.py)')
+                             '(the patch sites of Breath of the Wild 1.6.0 are not listed in scripts/patch_sites.py)', code='input')
         if not args.work:
             work = game.parent / 'BotW_build'
             logs = work / 'logs'
@@ -1816,7 +1905,7 @@ def main(argv):
             check_package(update, 'botw', 'update')
         elif kind != 'xci':
             raise BuildError('Breath of the Wild from a base NSP needs the 1.9.0 update (or the 1.6.0 update): pass it with '
-                             '--update <update.nsp> (a card image already holds its 1.6.0 update)')
+                             '--update <update.nsp> (a card image already holds its 1.6.0 update)', code='input')
         check_dlc(dlcs, BOTW190)   # the files first; the packs are the same for both versions
         if update:   # the base game (NSP or XCI) with the separate 1.6.0 or 1.9.0 update
             update = prepare_update_container(tree, update, keys, logs)
@@ -1824,11 +1913,13 @@ def main(argv):
         else:   # a combined card image: base, 1.6.0 update and add-on content
             version = 'botw160'
         if dlcs and version != 'botw190':
-            raise BuildError('--dlc takes the add-on content of Breath of the Wild 1.9.0; a 1.6.0 build takes it from a card image only, so leave out --dlc')
+            raise BuildError('--dlc takes the add-on content of Breath of the Wild 1.9.0; a 1.6.0 build takes it from a card image only, so leave out --dlc', code='input')
+        if args.inspect:   # a card image has no shared fonts either (step_data_botw)
+            return inspected('botw', version, kind, not (firmware or shared_fonts or fonts_valid(tree / 'extracted/firmware/shared-fonts')), work, out)
         expected = VERSIONS[version]
         if shutil.disk_usage(existing_volume_path(work.parent if work.parent.exists() else game.parent)).free / 2**30 < 22 and \
                 not (work / f'totk/extracted/{version}/romfs/romfs.bin').exists():
-            raise BuildError('needs about 22 GB free for the work folder (the app itself is an APFS clone of it when on the same volume)')
+            raise BuildError('needs about 22 GB free for the work folder (the app itself is an APFS clone of it when on the same volume)', code='disk_space')
         if args.shader_cache:
             say('--shader-cache is no longer needed: the startup shaders come from the game data and the shared shader list (games/botw/assets/shader_list.tsv)')
         botw = work / 'botw'
@@ -1849,9 +1940,14 @@ def main(argv):
         say(f'   checked in {time.time() - t1:.0f} s')
         step_warm_metal(tree, out, logs)
         say(f'done in {(time.time() - t0) / 60:.0f} min: {out}')
+        if EVENTS: event('done', out=str(out), game='botw', version=version, platform='macos')
         say('Open it from Finder. The first start verifies the game data and any installed add-on content and keeps a record; '
             'saves, the shader cache and the log go to ~/Library/Application Support/MacNativeGames/BotW and ~/Library/Logs/MacNativeGames/botw.log.')
         return
+    if args.inspect:
+        if update:
+            version, _ = identify_update(tree, update, keys, logs)
+        return inspected('totk', version, kind, kind == 'nsp' and not fonts_given, work, out)
     work_volume=existing_volume_path(work.parent if work.parent.exists() else game.parent)
     output_volume=existing_volume_path(out.parent if out.parent.exists() else game.parent)
     free=shutil.disk_usage(work_volume).free/2**30
@@ -1865,14 +1961,14 @@ def main(argv):
         else:
             required=(40 if update else 25) if not base_cached else (25 if update else 18)
         if free<required:
-            raise BuildError(f'iOS build needs about {required} GB free on the work/output volume for the IPA archive')
+            raise BuildError(f'iOS build needs about {required} GB free on the work/output volume for the IPA archive', code='disk_space')
         if not same_volume and output_free<18:
-            raise BuildError('the output volume needs about 18 GB free for the iOS IPA')
+            raise BuildError('the output volume needs about 18 GB free for the iOS IPA', code='disk_space')
     else:
         if update and free<40 and not base_cached:
-            raise BuildError('needs about 40 GB free for a fresh base + update build (19 GB extra with base data cached)')
+            raise BuildError('needs about 40 GB free for a fresh base + update build (19 GB extra with base data cached)', code='disk_space')
         if free<25 and not base_cached:
-            raise BuildError('needs about 25 GB free for the work folder (the app itself is an APFS clone of it when on the same volume)')
+            raise BuildError('needs about 25 GB free for the work folder (the app itself is an APFS clone of it when on the same volume)', code='disk_space')
     if mod and args.install_mod_romfs:      # said before the long steps, so a mistake can still be stopped with Ctrl-C
         say(f'--install-mod-romfs: the player\'s mod folder for the version this build makes will be REPLACED by '
             f'{mod.name}/romfs (and its manifest.tsv) when the build ends; what it holds now is moved next to it as '
@@ -1925,6 +2021,7 @@ def main(argv):
     elif mod:
         say('4/4 app: an iPhone / iPad build loads no player mod folder, so --mod merged its code patches only')
     say(f'done in {(time.time() - t0) / 60:.0f} min: {out}')
+    if EVENTS: event('done', out=str(out), game='totk', version=version, platform=args.platform)
     if args.platform=='macos':
         say('Open it from Finder. Moving it afterwards (also to /Applications) keeps the macOS check when it stays on the same '
             'volume, but Metal then compiles the startup shaders again in the background on the next start (a few minutes): '
@@ -1937,7 +2034,11 @@ if __name__ == '__main__':
     try:
         main(sys.argv[1:])
     except BuildError as e:
+        if EVENTS:
+            event('error', code=e.code, message=str(e), log=str(e.log) if e.log else None)
         print(f'\nERROR: {e}', file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
+        if EVENTS:
+            event('cancelled')
         sys.exit(130)
