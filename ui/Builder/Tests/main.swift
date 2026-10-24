@@ -39,6 +39,8 @@ expect(inspect?.needsFonts == true && inspect?.platforms == ["macos"] && inspect
 expect(inspect?.defaultOut == "/Games/Breath of the Wild.app" && inspect?.work == "/Games/BotW_build", "inspect paths")
 expect(events[2]?.logText == "1/4 code: rewriting main for Apple silicon (the big one: about a minute)", "log text keeps the step")
 expect(BuildEvent.parse("{not json") == nil, "broken JSON stays text")
+expect(BuildEvent.parse(#"{"type": "inspect", "dlc": true, "dlc_max": 2}"#)?.dlcMax == 2, "inspect says how many packs")
+expect(inspect?.dlcMax == nil, "an inspect event from before dlc_max still reads")
 expect(events[11]?.type == "notice" && events[11]?.code == "npdm_signed" && events[11]?.step == 1, "a notice keeps its code and step")
 expect(events[11]?.logText.hasPrefix("NOTE (npdm_signed): ") == true, "a notice reads as a note in the log")
 
@@ -189,6 +191,16 @@ expect(BuiltApp(scratch.appendingPathComponent("Other.app"), games: games) == ni
 expect(BuiltApp(scratch.appendingPathComponent("TOTK.app"), games: []) == nil, "a checkout without games knows no apps")
 expect(BuiltApp(scratch.appendingPathComponent("Old.app"), games: games).map { $0.info == nil } == true, "an app without a record is still listed")
 expect(Freshness.of(built?.info, repo: scratch, games: games) == .unknown, "no commit in the record: unknown")
+expect(built?.info?.work == nil, "a record from before the work folder was recorded still reads")
+write("""
+{"schema": 1, "game": "odyssey", "app_name": "Super Mario Odyssey", "version": "v130", "display_version": "1.3.0",
+ "platform": "macos", "built": "2026-10-23T18:00:00Z", "commit": null, "dirty": null, "work": "/Games/Odyssey_build",
+ "inputs": {"game": "/Games/smo.xci"}}
+""", "SMO.app/Contents/Resources/build-info.json")
+expect(BuildInfo.read(scratch.appendingPathComponent("SMO.app"))?.work == "/Games/Odyssey_build", "the record names the work folder")
+expect(games.named("odyssey")?.needs == ["xcode"] && games.named("totk")?.needs == [], "game.json needs")
+expect(games.named("totk")?.installTool == "games/totk/ios/tools/install_device.py" && games.named("by3")?.installTool == nil,
+       "game.json install_tool")
 
 let repo = scratch.appendingPathComponent("repo")
 write("x\n", "repo/build_app.py")

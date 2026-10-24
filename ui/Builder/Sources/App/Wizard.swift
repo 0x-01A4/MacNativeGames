@@ -175,9 +175,20 @@ final class Wizard: ObservableObject {
     }
 
     func addDLC(_ url: URL) {
-        guard !dlc.contains(url), dlc.count < 2 else { return }
+        guard !dlc.contains(url), dlc.count < dlcMax else { return }
         dlc.append(url)
         inspect()   // the packs are checked against the version before the build (build_app.py check_dlc)
+    }
+
+    /// How many add-on packs the version takes (inspect's dlc_max; 2 from a script before that field).
+    var dlcMax: Int { report?.dlcMax ?? 2 }
+
+    /// The identified game's own game.json.
+    var identifiedGame: Game? { preflight.games.named(identified) }
+
+    /// What the identified game's Mac build needs that this Mac lacks (game.json "needs").
+    var gameMissing: [Preflight.Missing] {
+        !isDevice && identifiedGame?.needs.contains("xcode") == true ? preflight.xcodeMissing : []
     }
 
     func removeDLC(_ url: URL) {
@@ -237,7 +248,7 @@ final class Wizard: ObservableObject {
         switch step {
         case .keys: ready && keys != nil
         case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
-        case .target: out != nil && (!isDevice || preflight.iosMissing.isEmpty)
+        case .target: out != nil && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
         case .build, .result: false
         }
     }

@@ -6,6 +6,7 @@
   "bundle_id": "org.macnativegames.botw",
   "data_folder": "BotW",
   "build": "build_app.py",
+  "install_tool": "games/totk/ios/tools/install_device.py",
   "sources": ["build_app.py", "games/totk", "games/botw"],
   "shader_contribution": {
     "step": 500,

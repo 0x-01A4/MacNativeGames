@@ -23,6 +23,7 @@ struct BuildInfo: Decodable, Equatable {
     var built: String
     var commit: String?
     var dirty: Bool?
+    var work: String?   // the work folder (nil in a record from before this field)
     var inputs: Inputs
 
     static func read(_ app: URL) -> BuildInfo? {

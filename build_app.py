@@ -1443,13 +1443,15 @@ def checkout_commit():
         return None, None
 
 
-def build_info(game, version, platform, *, inputs):
+def build_info(game, version, platform, *, inputs, work=None):
     """What an app was built from, kept in it (BUILD_INFO) for a front end's library (ui/README.md): the game and version,
-    the checkout, and the files given to the build so it can be built again. The keys file is never named in it."""
+    the checkout, the work folder, and the files given to the build so it can be built again. The keys file is never
+    named in it."""
     commit, dirty = checkout_commit()
     return dict(schema=BUILD_INFO_SCHEMA, game=game, app_name=APPS[game][0], version=version,
                 display_version=VERSIONS[version]['display_version'], platform=platform,
                 built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty,
+                **({'work': str(work)} if work else {}),
                 inputs={k: ([str(x) for x in v] if isinstance(v, list) else str(v) if isinstance(v, Path) else v)
                         for k, v in inputs.items() if v not in (None, [], False)})
 
@@ -1957,7 +1959,8 @@ def cancelled(signum, frame):
 
 def inspected(which, version, kind, needs_fonts, work, out, *, update=False):
     """--inspect: what the game file is and what the build still needs, without building. space_gb: what the first build
-    needs free per platform (the checks in main); mod: whether --mod is wired for the game."""
+    needs free per platform (the checks in main); mod: whether --mod is wired for the game; dlc_max: how many --dlc
+    packs the version takes."""
     expected = VERSIONS[version]
     platforms = ['macos', 'ios'] if which == 'botw' else ['macos', 'ios', 'visionos']
     device = 60 if update else 45   # the IPA archive on the same volume (main's device_app check)
@@ -1965,7 +1968,7 @@ def inspected(which, version, kind, needs_fonts, work, out, *, update=False):
     if EVENTS:
         event('inspect', game=which, app_name=APPS[which][0], version=version, display_version=expected['display_version'],
               kind=kind, needs_fonts=needs_fonts, needs_update=False, platforms=platforms, dlc=version == 'botw190',
-              mod=which == 'totk', space_gb=space, work=str(work), default_out=str(out))
+              dlc_max=len(expected.get('aoc', {})) if version == 'botw190' else 0, mod=which == 'totk', space_gb=space, work=str(work), default_out=str(out))
     else:
         say(f'{APPS[which][0]} {expected["display_version"]} ({kind}); platforms: {", ".join(platforms)}; '
             f'{"needs --firmware or --shared-fonts" if needs_fonts else "fonts available"}; work folder {work}; output {out}')
@@ -2126,7 +2129,7 @@ def main(argv):
                 if args.ios_game_data == 'documents' else '') + '; saves and the shader cache stay in the app\'s Documents.')
             if EVENTS: event('done', out=str(out), game='botw', version=version, platform=args.platform)
             return
-        step_app(tree, out, logs, version=version, game='botw', info=build_info('botw', version, 'macos', inputs=dict(
+        step_app(tree, out, logs, version=version, game='botw', info=build_info('botw', version, 'macos', work=work, inputs=dict(
             game=game, update=update_given, dlc=dlcs, firmware=firmware, shared_fonts=shared_fonts)))
         run([LSREGISTER, '-f', out], logs / 'register-app.log')
         say('4/4 app: macOS checks the app once (seconds when this app folder was checked before, a few minutes for a new one)')
@@ -2201,7 +2204,7 @@ def main(argv):
             except BuildError as e:
                 say(f'   the Mac reminder for iPhone / iPad shader contributions was not installed: {e}')
     else:
-        step_app(tree, out, logs, version=version, info=build_info('totk', version, 'macos', inputs=dict(
+        step_app(tree, out, logs, version=version, info=build_info('totk', version, 'macos', work=work, inputs=dict(
             game=game, update=update_given, firmware=firmware, shared_fonts=shared_fonts, mod=mod,
             install_mod_romfs=args.install_mod_romfs)))
     # Refresh an existing app's version, executable and signing identity before

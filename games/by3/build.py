@@ -231,12 +231,12 @@ def checkout_commit():
         return None, None
 
 
-def build_info(inputs):
+def build_info(inputs, work):
     """build_app.build_info's record (schema 1): what the app was built from, for the Builder's library. Never the keys."""
     commit, dirty = checkout_commit()
     return dict(schema=BUILD_INFO_SCHEMA, game=GAME['id'], app_name=APP_NAME, version=VERSION,
                 display_version=EXPECTED['display_version'], platform='macos',
-                built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty,
+                built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty, work=str(work),
                 inputs={k: str(v) for k, v in inputs.items() if v})
 
 
@@ -343,7 +343,7 @@ def step_app(py, work, update, keys, out, logs, inputs):
     run(['make', 'prepare', 'patches', 'mods', 'app', f'WORK={work}', f'PY={py}', f'APP={partial}', f'GAME={update}',
          f'KEYS={keys}'], logs / 'app.log')
     (partial / BUILD_INFO).parent.mkdir(parents=True, exist_ok=True)
-    (partial / BUILD_INFO).write_text(json.dumps(build_info(inputs), indent=2) + '\n')
+    (partial / BUILD_INFO).write_text(json.dumps(build_info(inputs, work), indent=2) + '\n')
     run(['codesign', '--force', '--sign', '-', partial], logs / 'codesign.log')
     if out.exists():
         old = out.with_name(f'{out.name}.replaced-{os.getpid()}')

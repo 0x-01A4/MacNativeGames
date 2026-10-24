@@ -32,6 +32,10 @@ class BuildInfo(unittest.TestCase):
             info = build_app.build_info('botw', 'botw190', 'macos', inputs=dict(game=Path('/b.nsp'), dlc=[Path('/d1.nsp'), Path('/d2.nsp')]))
         self.assertEqual(info['inputs']['dlc'], ['/d1.nsp', '/d2.nsp'])
         self.assertIsNone(info['commit'])
+        self.assertNotIn('work', info)   # given only when the build knows it
+        with mock.patch.object(build_app, 'checkout_commit', return_value=(None, None)):
+            info = build_app.build_info('botw', 'botw190', 'macos', work=Path('/g/BotW_build'), inputs=dict(game=Path('/b.nsp')))
+        self.assertEqual(info['work'], '/g/BotW_build')
 
     def test_never_names_the_keys(self):
         # main() passes only these inputs; a keys argument would be a mistake in a later change

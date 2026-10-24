@@ -60,7 +60,8 @@ While `BUILDER_SCRIPT` is set, a yellow "Test mode" strip says so and no app is 
 
 Each Mac app `build_app.py` builds carries `Contents/Resources/build-info.json` (sealed with the app; `build_info` in
 `build_app.py`, schema 1): `game`, `app_name`, `version`, `display_version`, `platform`, `built` (UTC), the checkout's
-`commit` and whether it had local changes (`dirty`; both null outside a git checkout), and `inputs`, the files given to
+`commit` and whether it had local changes (`dirty`; both null outside a git checkout), the `work` folder (left out by
+builds from before it was recorded), and `inputs`, the files given to
 the build (`game`, `update`, `dlc`, `mod`, `install_mod_romfs`, `firmware`, `shared_fonts`; what was not given is left
 out). The keys file is never named in it. An app counts as built from an older checkout when
 `git diff <commit> HEAD -- <its game's sources>` is not empty. IPAs carry no record yet.
@@ -83,6 +84,8 @@ no change.
 | `files` | default: `{"game": ["xci", "nsp"], "update": ["nsp", "nsz"]}` | the file extensions it is built from (`"update": []`: one file holds the update); a file whose extension only one build takes goes to that script directly, others to `build_app.py` |
 | `versions` | optional | the versions it builds, when its `assets/expected-*.json` carry no `display_version` |
 | `shader_contribution` | optional | `step` and `form` of the game's shared shader list reminder |
+| `needs` | optional | what its Mac build needs besides `build_app.py`'s own tools: `xcode` (the full Xcode); the Output page names it and holds the build until it's there |
+| `install_tool` | optional | the script that signs and installs its iPhone/iPad or Vision Pro IPA, relative to the checkout; the result page gives the command |
 
 The versions in the error text come from `versions`, or else the `display_version` of `games/<name>/assets/expected-*.json`.
 
@@ -97,7 +100,7 @@ still goes to stderr. Each object has `type` and `time` (Unix seconds):
 | `hello` | `schema` (2) | first line; the Builder refuses a different schema |
 | `progress` | `stage` (`prepare`, `code`, `data`, `update`, `shaders`, `app`, or a game script's own), `step` (0–`of`), `of` (4 for `build_app.py`), `message` | each step message; a message without a `N/M name:` prefix keeps the stage before it. The Builder's step list follows `of` and the stage names |
 | `heartbeat` | as `progress` | "still running" every minute of a long tool |
-| `inspect` | `game`, `app_name`, `version`, `display_version` (both null until the update is given, when it is needed), `kind`, `needs_fonts`, `needs_update`, `platforms`, `dlc`, `mod`, `space_gb` (per platform), `work`, `default_out` | with `--inspect`: what the game file is and what the build takes; then it stops before the disk checks and the steps |
+| `inspect` | `game`, `app_name`, `version`, `display_version` (both null until the update is given, when it is needed), `kind`, `needs_fonts`, `needs_update`, `platforms`, `dlc`, `dlc_max` (how many `--dlc` packs; optional, 2 when missing), `mod`, `space_gb` (per platform), `work`, `default_out` | with `--inspect`: what the game file is and what the build takes; then it stops before the disk checks and the steps |
 | `notice` | as `progress`, plus `code` (`npdm_signed`, `npdm_resigned`, `fonts_other_firmware`, `sdk_fallback`) | an input accepted by another rule than the exact reference hash; the Builder lists them when the build ends |
 | `done` | `out`, `game`, `version`, `platform` | the app or IPA is ready |
 | `error` | `code`, `message`, `log` (the failed tool's log, or null) | exit 1 |

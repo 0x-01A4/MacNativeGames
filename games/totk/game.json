@@ -6,6 +6,7 @@
   "bundle_id": "org.macnativegames.totk",
   "data_folder": "TOTK",
   "build": "build_app.py",
+  "install_tool": "games/totk/ios/tools/install_device.py",
   "sources": ["build_app.py", "games/totk"],
   "shader_contribution": {
     "step": 100,

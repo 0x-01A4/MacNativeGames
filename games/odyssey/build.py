@@ -221,12 +221,12 @@ def checkout_commit():
         return None, None
 
 
-def build_info(inputs):
+def build_info(inputs, work):
     """build_app.build_info's record (schema 1), for the Builder's library. Never the keys."""
     commit, dirty = checkout_commit()
     return dict(schema=BUILD_INFO_SCHEMA, game=GAME['id'], app_name=APP_NAME, version=VERSION,
                 display_version=DISPLAY_VERSION, platform='macos',
-                built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty,
+                built=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), commit=commit, dirty=dirty, work=str(work),
                 inputs={k: str(v) for k, v in inputs.items() if v})
 
 
@@ -351,7 +351,7 @@ def main(argv):
         message = str(e.code)
         raise BuildError(message, code='fonts' if 'font' in message else 'build') from None
     app = work / 'Odyssey.app'
-    (app / BUILD_INFO).write_text(json.dumps(build_info(dict(game=game, firmware=firmware, shared_fonts=shared)), indent=2) + '\n')
+    (app / BUILD_INFO).write_text(json.dumps(build_info(dict(game=game, firmware=firmware, shared_fonts=shared), work), indent=2) + '\n')
     run(['codesign', '--force', '--sign', '-', app])
     place(app, out)
     say(f'done in {(time.time() - t0) / 60:.0f} min: {out}. It holds game data from your own dump: do not share it.')

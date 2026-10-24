@@ -30,6 +30,7 @@ struct BuildEvent: Decodable, Equatable {
     var needsUpdate: Bool?             // the base game alone isn't enough: the build needs its update too
     var platforms: [String]?
     var dlc: Bool?
+    var dlcMax: Int?                   // how many add-on packs the version takes (nil from a script before this field)
     var mod: Bool?                     // the game takes --mod
     var spaceGb: [String: Int]?        // what a first build needs free, per platform
     var work: String?

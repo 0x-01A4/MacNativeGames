@@ -368,7 +368,7 @@ struct GamePage: View {
                                     .accessibilityLabel(Text("Remove \(pack.lastPathComponent)"))
                             }
                         }
-                        if wizard.dlc.count < 2 {
+                        if wizard.dlc.count < wizard.dlcMax {
                             Button("Add Pack…") {
                                 if let url = choose(types(["nsp"]), message: String(localized: "Choose an add-on content NSP")) { wizard.addDLC(url) }
                             }
@@ -491,6 +491,9 @@ struct TargetPage: View {
             .formStyle(.grouped)
             if wizard.isDevice && !wizard.preflight.iosMissing.isEmpty {
                 Missing(items: wizard.preflight.iosMissing, title: "An iPhone / iPad or Vision Pro build needs these on this Mac")
+            }
+            if !wizard.gameMissing.isEmpty {
+                Missing(items: wizard.gameMissing, title: "\(wizard.identifiedGame?.name ?? "This game") needs these on this Mac")
             }
             Group {
                 if let space = wizard.report?.spaceGb?[wizard.platform] {
@@ -617,16 +620,22 @@ struct ResultPage: View {
         VStack(alignment: .leading, spacing: 16) {
             switch wizard.outcome {
             case .done(let app) where wizard.isDevice:
-                PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
-                          detail: "It is unsigned: install_device.py signs it with your own Xcode team and installs it. A free Apple ID signs for 7 days; run it again to renew, and the saves stay.")
-                Text(app.path).textSelection(.enabled)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
-                    Text("2. Run this in Terminal:")
-                    Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(app))])
-                    Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
+                if let tool = wizard.identifiedGame?.installTool {
+                    PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
+                              detail: "It is unsigned: \((tool as NSString).lastPathComponent) signs it with your own Xcode team and installs it. A free Apple ID signs for 7 days; run it again to renew, and the saves stay.")
+                    Text(app.path).textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
+                        Text("2. Run this in Terminal:")
+                        Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(tool, app))])
+                        Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
+                              detail: "It is unsigned: sign it with your own Apple ID and install it on the device.")
+                    Text(app.path).textSelection(.enabled)
                 }
-                .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }.keyboardShortcut(.defaultAction)
                     Button("Build Another…") { wizard.newBuild() }
@@ -657,10 +666,9 @@ struct ResultPage: View {
     }
 
     /// The sign-and-install command, with absolute paths so it runs from any folder.
-    private func installCommand(_ app: URL) -> String {
-        let tool = wizard.preflight.repo?.appendingPathComponent("games/totk/ios/tools/install_device.py").path
-            ?? "games/totk/ios/tools/install_device.py"
-        return [wizard.preflight.python ?? "python3.14", tool, app.path].map(Shell.quote).joined(separator: " ")
+    private func installCommand(_ tool: String, _ app: URL) -> String {
+        let script = wizard.preflight.repo?.appendingPathComponent(tool).path ?? tool
+        return [wizard.preflight.python ?? "python3.14", script, app.path].map(Shell.quote).joined(separator: " ")
     }
 
     private var resultButtons: some View {

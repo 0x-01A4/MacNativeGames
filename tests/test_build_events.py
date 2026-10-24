@@ -201,6 +201,7 @@ class Inspect(unittest.TestCase):
         self.assertEqual((report['game'], report['version'], report['display_version'], report['kind']), ('totk', 'v0', '1.0.0', 'xci'))
         self.assertEqual((report['needs_fonts'], report['platforms'], report['dlc']), (False, ['macos', 'ios', 'visionos'], False))
         self.assertEqual((report['needs_update'], report['mod'], report['space_gb']), (False, True, {'macos': 25, 'ios': 45, 'visionos': 45}))
+        self.assertEqual(report['dlc_max'], 0)
         self.assertEqual(report['work'], str(self.folder.resolve() / 'TOTK_build'))
         self.assertEqual(report['default_out'], str(self.folder.resolve() / 'Tears of the Kingdom.app'))
 
@@ -213,6 +214,7 @@ class Inspect(unittest.TestCase):
         got = self.main(self.nsp('botw.nsp'), '--update', str(self.nsp('update.nsp')), game='botw')
         self.assertEqual((got[-1]['game'], got[-1]['version'], got[-1]['platforms'], got[-1]['dlc']),
                          ('botw', 'botw190', ['macos', 'ios'], True))
+        self.assertEqual(got[-1]['dlc_max'], 2)   # the two add-on packs 1.9.0 pins
         self.assertEqual((got[-1]['mod'], got[-1]['space_gb']), (False, {'macos': 22, 'ios': 22}))
         self.assertEqual(got[-1]['default_out'], str(self.folder.resolve() / 'Breath of the Wild.app'))
 

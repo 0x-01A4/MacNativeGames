@@ -28,9 +28,12 @@ struct Game: Decodable, Equatable, Identifiable {
     var files: Files               // the file extensions it is built from (lowercase, no dot)
     var shaderContribution: ShaderContribution?
     var versions: [String] = []    // the versions it builds: game.json "versions", or each assets/expected-*.json's display_version
+    var needs: [String] = []       // what its Mac build needs besides build_app.py's own tools: "xcode" (the full Xcode)
+    var installTool: String?       // the script that signs and installs its iPhone / iPad or Vision Pro IPA
 
     private enum CodingKeys: String, CodingKey {
         case schema, id, name, titleId, bundleId, dataFolder, dataBesideApp, build, sources, files, versions, shaderContribution
+        case needs, installTool
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +50,8 @@ struct Game: Decodable, Equatable, Identifiable {
         files = try c.decodeIfPresent(Files.self, forKey: .files) ?? Files(game: ["xci", "nsp"], update: ["nsp", "nsz"])
         shaderContribution = try c.decodeIfPresent(ShaderContribution.self, forKey: .shaderContribution)
         versions = try c.decodeIfPresent([String].self, forKey: .versions) ?? []
+        needs = try c.decodeIfPresent([String].self, forKey: .needs) ?? []
+        installTool = try c.decodeIfPresent(String.self, forKey: .installTool)
     }
 
     /// The checkout has its build script (game.json "build").
