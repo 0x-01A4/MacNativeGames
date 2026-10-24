@@ -28,9 +28,13 @@ struct Game: Decodable, Equatable, Identifiable {
     var files: Files               // the file extensions it is built from (lowercase, no dot)
     var shaderContribution: ShaderContribution?
     var versions: [String] = []    // the versions it builds: game.json "versions", or each assets/expected-*.json's display_version
+    var needs: [String] = []       // what its Mac build needs besides build_app.py's own tools: "xcode" (the full Xcode)
+    var installTool: String?       // the script that signs and installs its iPhone / iPad or Vision Pro IPA
+    var workHoldsGameData = false  // its app reads the game data from the work folder (Bayonetta 3), so that stays
 
     private enum CodingKeys: String, CodingKey {
         case schema, id, name, titleId, bundleId, dataFolder, dataBesideApp, build, sources, files, versions, shaderContribution
+        case needs, installTool, workHoldsGameData
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +51,9 @@ struct Game: Decodable, Equatable, Identifiable {
         files = try c.decodeIfPresent(Files.self, forKey: .files) ?? Files(game: ["xci", "nsp"], update: ["nsp", "nsz"])
         shaderContribution = try c.decodeIfPresent(ShaderContribution.self, forKey: .shaderContribution)
         versions = try c.decodeIfPresent([String].self, forKey: .versions) ?? []
+        needs = try c.decodeIfPresent([String].self, forKey: .needs) ?? []
+        installTool = try c.decodeIfPresent(String.self, forKey: .installTool)
+        workHoldsGameData = try c.decodeIfPresent(Bool.self, forKey: .workHoldsGameData) ?? false
     }
 
     /// The checkout has its build script (game.json "build").
@@ -98,4 +105,47 @@ extension Array where Element == Game {
 
     var gameExtensions: [String] { [String](Set(filter(\.builds).flatMap(\.files.game))).sorted() }
     var updateExtensions: [String] { [String](Set(filter(\.builds).flatMap { $0.files.update ?? [] })).sorted() }
+
+    /// Where the app of the game `id` keeps its saves, settings and shader cache, as the player reads it.
+    func dataLocation(_ id: String?) -> String {
+        let game = named(id)
+        if let beside = game?.dataBesideApp { return String(localized: "“\(beside)” next to the app") }
+        return "~/Library/Application Support/MacNativeGames" + (game?.dataFolder.map { "/" + $0 } ?? "")
+    }
+
+    /// Where files dropped on the Game page go. `game` is the game file chosen so far and `identified` the game
+    /// --inspect named in it (nil while it hasn't); `isMod` tells a mod folder (exefs/ or romfs/ in it) from a fonts one.
+    func route(_ urls: [URL], game: URL?, identified: String?, takesMod: Bool,
+               isFolder: (URL) -> Bool, isMod: (URL) -> Bool, size: (URL) -> Int64) -> Dropped {
+        var dropped = Dropped()
+        let known = Set(gameExtensions + updateExtensions)
+        let files = urls.filter { !isFolder($0) && known.contains($0.pathExtension.lowercased()) }
+        for folder in urls.filter(isFolder) {
+            if isMod(folder) {
+                if takesMod, dropped.mod == nil { dropped.mod = folder }
+            } else if dropped.fonts == nil, game != nil || !files.isEmpty {
+                dropped.fonts = folder   // a folder is never a game file: it's the firmware or the extracted fonts
+            }
+        }
+        if files.count > 1 {
+            // a base game and its update together: an extension only a game file has decides, or else the larger file
+            let gameOnly = Set(gameExtensions).subtracting(updateExtensions)
+            let ordered = files.sorted { size($0) > size($1) }
+            let base = ordered.first { gameOnly.contains($0.pathExtension.lowercased()) } ?? ordered[0]
+            dropped.game = base
+            dropped.update = ordered.first { $0 != base }
+        } else if let file = files.first {
+            let updates = named(identified)?.files.update ?? []
+            if game != nil, updates.contains(file.pathExtension.lowercased()) { dropped.update = file } else { dropped.game = file }
+        }
+        return dropped
+    }
+}
+
+/// What a drop on the Game page sets (Array<Game>.route); nil leaves that choice as it is.
+struct Dropped: Equatable {
+    var game: URL?
+    var update: URL?
+    var fonts: URL?
+    var mod: URL?
 }

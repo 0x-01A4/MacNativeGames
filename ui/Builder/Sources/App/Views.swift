@@ -4,14 +4,72 @@ import UniformTypeIdentifiers
 
 @main
 struct BuilderApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var wizard = Wizard()
 
     var body: some Scene {
         Window("MacNativeGames Builder", id: "builder") {
             Root().environmentObject(wizard)
                 .frame(minWidth: 760, minHeight: 540)
+                .onAppear { delegate.attach(wizard) }
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open Game File…") {
+                    let games = wizard.preflight.games
+                    if let url = choose(types(games.gameExtensions + games.updateExtensions),
+                                        message: String(localized: "Choose a game file or its update")) { wizard.open([url]) }
+                }
+                .keyboardShortcut("o")
+                .disabled(wizard.running)
+            }
+        }
+    }
+}
+
+/// Quitting while a build runs cancels it first, so build_app.py and its tools (in a process group of their own) don't
+/// go on without anyone reading them.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private(set) var wizard: Wizard?
+    private var opened: [URL] = []   // files Finder opened the Builder with, before its window was there
+
+    func attach(_ wizard: Wizard) {
+        self.wizard = wizard
+        if !opened.isEmpty { wizard.open(opened) }
+        opened = []
+    }
+
+    /// A game file opened with the Builder in Finder, or dropped on its Dock icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let wizard { wizard.open(urls) } else { opened += urls }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) { wizard?.activated() }
+
+    /// Closing the window quits, unless a build is running: then the app stays and the build goes on.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { wizard?.running != true }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let wizard, wizard.running else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "A build is running")
+        alert.informativeText = String(localized: "Quitting cancels it. The next build reuses the steps that finished.")
+        alert.addButton(withTitle: String(localized: "Cancel Build and Quit"))
+        alert.addButton(withTitle: String(localized: "Keep Building"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        wizard.onBuildEnded = reply
+        wizard.cancel()
+        // a build that doesn't end on SIGTERM doesn't keep the app open
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { MainActor.assumeIsolated { reply() } }
+        return .terminateLater
     }
 }
 
@@ -88,7 +146,8 @@ struct StepList: View {
                     : step == wizard.step ? "circle.inset.filled" : "circle"
                 Label(step.title, systemImage: state)
                     .foregroundStyle(step == wizard.step ? .primary : .secondary)
-                    .accessibilityLabel(step == wizard.step ? Text("\(step.title), current step") : Text(step.title))
+                    .accessibilityLabel(step == wizard.step ? Text("\(step.title), current step")
+                                        : step.rawValue < wizard.step.rawValue ? Text("\(step.title), done") : Text(step.title))
             }
             Spacer()
         }
@@ -100,6 +159,7 @@ struct StepList: View {
 
 struct Navigation: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var confirmCancel = false
 
     var body: some View {
         HStack {
@@ -118,8 +178,15 @@ struct Navigation: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(!wizard.canContinue)
             case .build:
-                Button("Cancel", role: .cancel) { wizard.cancel() }
-                    .keyboardShortcut(.cancelAction)
+                // no Esc shortcut: one stray key press would stop a build that can take an hour
+                Button(wizard.cancelling ? "Cancelling…" : "Cancel") { confirmCancel = true }
+                    .disabled(wizard.cancelling)
+                    .confirmationDialog("Cancel the build?", isPresented: $confirmCancel) {
+                        Button("Cancel Build", role: .destructive) { wizard.cancel() }
+                        Button("Keep Building", role: .cancel) {}
+                    } message: {
+                        Text("The next build reuses the steps that finished.")
+                    }
             case .result:
                 EmptyView()
             }
@@ -179,6 +246,7 @@ struct FileRow: View {
 
 struct KeysPage: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var targeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -189,11 +257,22 @@ struct KeysPage: View {
                 FileRow(label: "prod.keys", url: wizard.keys, placeholder: "not chosen") {
                     if let url = choose([.data], message: String(localized: "Choose your prod.keys")) { wizard.setKeys(url) }
                 }
+                if let moved = wizard.keysMoved {
+                    Text("The remembered prod.keys is no longer at \(moved). Choose it where it is now.")
+                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
                 Toggle("Remember this location", isOn: $wizard.rememberKeys)
                     .onChange(of: wizard.rememberKeys) { wizard.saveKeysChoice() }
                     .help("Only the path is kept, in this app's preferences; the keys themselves are never copied or read by the Builder.")
             }
             .formStyle(.grouped)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard urls.count == 1, let url = urls.first,
+                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true else { return false }
+                wizard.setKeys(url)
+                return true
+            } isTargeted: { targeted = $0 }
+            .overlay { if targeted { RoundedRectangle(cornerRadius: 10).stroke(.tint, lineWidth: 3) } }
         }
     }
 }
@@ -201,6 +280,7 @@ struct KeysPage: View {
 /// What build_app.py needs on this Mac; the commands to run when something is missing.
 struct SetupStatus: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var notRepo: String?
 
     var body: some View {
         let p = wizard.preflight
@@ -212,8 +292,14 @@ struct SetupStatus: View {
                     HStack {
                         Text("The MacNativeGames folder (the one with build_app.py) was not found.")
                         Button("Choose Folder…") {
-                            if let url = choose([], folder: true, message: String(localized: "Choose the MacNativeGames folder")) { wizard.chooseRepo(url) }
+                            if let url = choose([], folder: true, message: String(localized: "Choose the MacNativeGames folder")) {
+                                notRepo = wizard.chooseRepo(url) ? nil : url.path
+                            }
                         }
+                    }
+                    if let notRepo {
+                        Text("\(notRepo) isn't a MacNativeGames checkout: it needs build_app.py and games/*/game.json.")
+                            .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Commands(items: p.missing)
@@ -243,7 +329,7 @@ struct Commands: View {
                 }
             }
         }
-        Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary)
+        if !items.isEmpty { Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary) }
         Button("Check Again") { wizard.recheck() }
     }
 }
@@ -287,8 +373,8 @@ struct GamePage: View {
                 }
                 // Shown as soon as there is a game file, not only once --inspect asks for fonts: the folder can be
                 // chosen while the game file is still being read, and an XCI simply doesn't need it.
-                if wizard.game != nil {
-                    Picker("System fonts from", selection: $wizard.fontsAreFirmware) {
+                if wizard.game != nil && (wizard.fontsNeeded != false || wizard.fonts != nil) {
+                    Picker("System fonts from", selection: Binding(get: { wizard.fontsAreFirmware }, set: { wizard.setFontsAreFirmware($0) })) {
                         Text("Unpacked firmware folder").tag(true)
                         Text("Extracted shared fonts").tag(false)
                     }
@@ -297,10 +383,10 @@ struct GamePage: View {
                                 placeholder: wizard.report?.needsFonts == true ? "needed for this game file" : "only for NSP files") {
                             if let url = choose([], folder: true, message: wizard.fontsAreFirmware
                                 ? String(localized: "Choose the folder with the firmware's .nca files")
-                                : String(localized: "Choose the folder with the six .bfttf shared fonts")) { wizard.fonts = url }
+                                : String(localized: "Choose the folder with the six .bfttf shared fonts")) { wizard.setFonts(url) }
                         }
                         if wizard.fonts != nil {
-                            Button("Remove") { wizard.fonts = nil }
+                            Button("Remove") { wizard.setFonts(nil) }
                         }
                     }
                 }
@@ -315,7 +401,7 @@ struct GamePage: View {
                                     .accessibilityLabel(Text("Remove \(pack.lastPathComponent)"))
                             }
                         }
-                        if wizard.dlc.count < 2 {
+                        if wizard.dlc.count < wizard.dlcMax {
                             Button("Add Pack…") {
                                 if let url = choose(types(["nsp"]), message: String(localized: "Choose an add-on content NSP")) { wizard.addDLC(url) }
                             }
@@ -339,19 +425,7 @@ struct GamePage: View {
                 }
             }
             .formStyle(.grouped)
-            .dropDestination(for: URL.self) { urls, _ in
-                guard let url = urls.first else { return false }
-                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                    // a folder is never a game file: it's the firmware or the extracted fonts
-                    guard wizard.game != nil else { return false }
-                    wizard.fonts = url
-                } else if wizard.game != nil, url.pathExtension.lowercased() == "nsz" || wizard.report?.needsUpdate == true {
-                    wizard.setUpdate(url)
-                } else {
-                    wizard.setGame(url)
-                }
-                return true
-            } isTargeted: { targeted = $0 }
+            .dropDestination(for: URL.self) { urls, _ in wizard.drop(urls) } isTargeted: { targeted = $0 }
             .overlay { if targeted { RoundedRectangle(cornerRadius: 10).stroke(.tint, lineWidth: 3) } }
             Found()
         }
@@ -382,8 +456,8 @@ struct Found: View {
                 Text("Identified from the game data (\((r.kind ?? "").uppercased())). Builds for: \((r.platforms ?? []).map(Wizard.platformName).joined(separator: ", ")).")
                     .foregroundStyle(.secondary)
             }
-        } else if case .failed(let code, let message) = wizard.inspectFailure {
-            Failure(code: code, message: message)
+        } else if case .failed(let code, let message, let log) = wizard.inspectFailure {
+            Failure(code: code, message: message, log: log)
         }
     }
 }
@@ -451,6 +525,20 @@ struct TargetPage: View {
             if wizard.isDevice && !wizard.preflight.iosMissing.isEmpty {
                 Missing(items: wizard.preflight.iosMissing, title: "An iPhone / iPad or Vision Pro build needs these on this Mac")
             }
+            if !wizard.gameMissing.isEmpty {
+                Missing(items: wizard.gameMissing, title: "\(wizard.identifiedGame?.name ?? "This game") needs these on this Mac")
+            }
+            if let out = wizard.out, !Disk.canWrite(out) {
+                Label("The Builder can't write in \(Disk.existing(out.deletingLastPathComponent()).path): choose another place.",
+                      systemImage: "xmark.octagon.fill").foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            } else if let out = wizard.out, FileManager.default.fileExists(atPath: out.path) {
+                Label("\(out.lastPathComponent) is already there: the build replaces it. Its saves and settings are kept.",
+                      systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let short = wizard.spaceShort {
+                Label("The drive has \(short.free) GB free, and a first build needs about \(short.needed) GB. Free up space, or the build stops when it checks.",
+                      systemImage: "externaldrive.badge.exclamationmark").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             Group {
                 if let space = wizard.report?.spaceGb?[wizard.platform] {
                     Text(wizard.isDevice
@@ -470,20 +558,22 @@ struct BuildPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "Building", detail: "You can keep using the Mac. Cancel stops at once; the next build continues from the finished steps.")
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(1...max(wizard.steps.count, 1), id: \.self) { step in
-                    let done = wizard.reached > step || (wizard.outcome.map { if case .done = $0 { true } else { false } } ?? false)
-                    let current = wizard.reached == step && !done
-                    HStack(spacing: 10) {
-                        Group {
-                            if current { ProgressView().controlSize(.small) }
-                            else { Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? .green : .secondary) }
-                        }
-                        .frame(width: 18)
-                        Text(wizard.steps.title(step)).foregroundStyle(current || done ? .primary : .secondary)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let now = wizard.running ? context.date.timeIntervalSince1970 : (wizard.steps.ended ?? context.date.timeIntervalSince1970)
+                VStack(alignment: .leading, spacing: 10) {
+                    // step 0 (fetching sources, a Python environment) has no number in the script's list, but can take minutes
+                    if wizard.steps.started[0] != nil {
+                        row(title: String(localized: "Prepare"), done: wizard.reached > 0 || isDone, current: wizard.reached == 0 && !isDone,
+                            time: wizard.steps.duration(0, now: now))
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(Text(done ? "done" : current ? "in progress" : "waiting"))
+                    ForEach(1...max(wizard.steps.count, 1), id: \.self) { step in
+                        let done = wizard.reached > step || isDone
+                        row(title: wizard.steps.title(step), done: done, current: wizard.reached == step && !done,
+                            time: wizard.steps.duration(step, now: now))
+                    }
+                    if let total = wizard.steps.elapsed(now: now) {
+                        Text("Elapsed \(BuildSteps.clock(total))").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
             }
             if let p = wizard.progress {
@@ -492,27 +582,61 @@ struct BuildPage: View {
             LogView()
         }
     }
+
+    private var isDone: Bool { if case .done = wizard.outcome { true } else { false } }
+
+    private func row(title: String, done: Bool, current: Bool, time: Double?) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if current { ProgressView().controlSize(.small) }
+                else { Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? .green : .secondary) }
+            }
+            .frame(width: 18)
+            Text(title).foregroundStyle(current || done ? .primary : .secondary)
+            if let time, done || current {
+                Text(BuildSteps.clock(time)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(Text(done ? "done" : current ? "in progress" : "waiting"))
+    }
 }
 
 struct LogView: View {
     @EnvironmentObject var wizard: Wizard
     @State private var shown = false
+    @State private var search = ""
+    @State private var atEnd = true   // follow new lines only while the end is in view
+
+    static let shownLines = 400
 
     var body: some View {
         DisclosureGroup("Log", isExpanded: $shown) {
+            let matching = search.isEmpty ? wizard.lines : wizard.lines.filter { $0.localizedCaseInsensitiveContains(search) }
+            TextField("Search the log", text: $search).textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(wizard.lines.suffix(400).joined(separator: "\n"))
+                    Text(matching.suffix(Self.shownLines).joined(separator: "\n"))
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Color.clear.frame(height: 1).id("end")
                 }
                 .frame(height: 200)
-                .onChange(of: wizard.lines.count) { proxy.scrollTo("end") }
+                .onScrollGeometryChange(for: Bool.self) { g in
+                    g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
+                } action: { _, end in atEnd = end }
+                .onChange(of: wizard.lines.count) { if atEnd { proxy.scrollTo("end") } }
             }
             HStack {
+                if matching.count > Self.shownLines {
+                    Text("The last \(Self.shownLines) of \(matching.count) lines; Copy Full Log has them all.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 Spacer()
+                if let logs = wizard.logsFolder {
+                    Button("Show Logs Folder") { NSWorkspace.shared.activateFileViewerSelecting([logs]) }
+                }
                 Button("Copy Full Log") { wizard.copyLog() }
             }
         }
@@ -523,6 +647,7 @@ struct Failure: View {
     @EnvironmentObject var wizard: Wizard
     var code: String?
     var message: String
+    var log: String?   // the failed tool's own log (the error event's "log")
 
     var body: some View {
         let text = ErrorText(code: code, games: wizard.preflight.games)
@@ -532,6 +657,10 @@ struct Failure: View {
             Text(message)
                 .font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if let log, FileManager.default.fileExists(atPath: log) {
+                Button("Show Tool Log") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: log)]) }
+                    .help(log)
+            }
         }
     }
 }
@@ -571,32 +700,42 @@ struct ResultPage: View {
         VStack(alignment: .leading, spacing: 16) {
             switch wizard.outcome {
             case .done(let app) where wizard.isDevice:
-                PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
-                          detail: "It is unsigned: install_device.py signs it with your own Xcode team and installs it. A free Apple ID signs for 7 days; run it again to renew, and the saves stay.")
-                Text(app.path).textSelection(.enabled)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
-                    Text("2. Run this in Terminal from the MacNativeGames folder:")
-                    Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"),
-                                                       command: "python3.14 games/totk/ios/tools/install_device.py '\(app.path)'")])
-                    Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
+                if let tool = wizard.identifiedGame?.installTool {
+                    PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
+                              detail: "It is unsigned: \((tool as NSString).lastPathComponent) signs it with your own Xcode team and installs it. A free Apple ID signs for 7 days; run it again to renew, and the saves stay.")
+                    Text(app.path).textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
+                        Text("2. Run this in Terminal:")
+                        Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(tool, app))])
+                        Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
+                              detail: "It is unsigned: sign it with your own Apple ID and install it on the device.")
+                    Text(app.path).textSelection(.enabled)
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }.keyboardShortcut(.defaultAction)
+                HStack {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }.keyboardShortcut(.defaultAction)
+                    Button("Build Another…") { wizard.newBuild() }
+                }
                 Notices()
             case .done(let app):
                 PageTitle(title: "Your app is ready",
-                          detail: "The first start verifies the game data once. Saves, the shader cache and the log are kept in ~/Library/Application Support/MacNativeGames.")
+                          detail: "The first start verifies the game data once. Saves, the shader cache and the log are kept in \(wizard.preflight.games.dataLocation(wizard.identified)).")
                 Text(app.path).textSelection(.enabled)
                 HStack {
                     Button("Open") { NSWorkspace.shared.open(app) }.keyboardShortcut(.defaultAction)
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+                    Button("Build Another…") { wizard.newBuild() }
                 }
                 Notices()
-            case .failed(let code, let message):
+            case .failed(let code, let message, let log):
                 PageTitle(title: "The build stopped", detail: "Nothing was installed; an app built before is unchanged.")
-                Failure(code: code, message: message)
+                Failure(code: code, message: message, log: log)
                 resultButtons
+                Notices()
             case .cancelled:
                 PageTitle(title: "Build cancelled", detail: "Building again reuses the steps that finished.")
                 resultButtons
@@ -605,6 +744,12 @@ struct ResultPage: View {
             }
             LogView()
         }
+    }
+
+    /// The sign-and-install command, with absolute paths so it runs from any folder.
+    private func installCommand(_ tool: String, _ app: URL) -> String {
+        let script = wizard.preflight.repo?.appendingPathComponent(tool).path ?? tool
+        return [wizard.preflight.python ?? "python3.14", script, app.path].map(Shell.quote).joined(separator: " ")
     }
 
     private var resultButtons: some View {

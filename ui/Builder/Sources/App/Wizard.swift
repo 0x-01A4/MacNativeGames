@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 /// The Builder's state: the files the player picked, what --inspect found, and the running build. Every build step is
 /// build_app.py's; this only collects its arguments and reads its events.
@@ -21,7 +22,7 @@ final class Wizard: ObservableObject {
 
     enum Outcome: Equatable {
         case done(URL)
-        case failed(code: String?, message: String)
+        case failed(code: String?, message: String, log: String? = nil)   // log: the failed tool's own log file
         case cancelled
     }
 
@@ -38,11 +39,15 @@ final class Wizard: ObservableObject {
     @Published var preflight: Preflight
     @Published var keys: URL?
     @Published var rememberKeys: Bool
+    @Published var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
     @Published var game: URL?
     @Published var update: URL?
     @Published var fonts: URL?
     @Published var fontsAreFirmware = true
     @Published var report: BuildEvent?
+    // what the last --inspect of this game file said, kept while a re-inspect runs (report is nil then)
+    @Published var identified: String?   // the game's id
+    @Published var fontsNeeded: Bool?
     @Published var inspectFailure: Outcome?
     @Published var inspecting = false
     @Published var out: URL?
@@ -53,6 +58,7 @@ final class Wizard: ObservableObject {
     @Published var shaderReminder = true
     @Published var notices: [BuildEvent] = []   // inputs accepted by another rule than the exact reference hash
     @Published var running = false
+    @Published var cancelling = false   // Cancel was pressed and the build hasn't ended yet
     @Published var progress: BuildEvent?
     @Published var reached = 0          // the highest of the build's steps (1-n) it has reached
     @Published var steps = BuildSteps()
@@ -63,13 +69,18 @@ final class Wizard: ObservableObject {
     private var generation = 0   // a newer --inspect or build makes the events of an older one stale
     private var schemaChecked = false
     private var rejected = false   // the script writes another event schema: what it sends after that is not read
+    private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
+    /// Called once when the running build has ended (the app delegate waits on it to quit).
+    var onBuildEnded: (() -> Void)?
 
     init() {
         let defaults = UserDefaults.standard
         preflight = Preflight.check(repo: Preflight.findRepo(chosen: defaults.string(forKey: Defaults.repo)))
         let saved = defaults.string(forKey: Defaults.keys)
         rememberKeys = saved != nil
-        if let saved, FileManager.default.fileExists(atPath: saved) { keys = URL(fileURLWithPath: saved) }
+        if let saved {
+            if FileManager.default.fileExists(atPath: saved) { keys = URL(fileURLWithPath: saved) } else { keysMoved = saved }
+        }
     }
 
     // MARK: setup
@@ -78,14 +89,17 @@ final class Wizard: ObservableObject {
         preflight = Preflight.check(repo: preflight.repo ?? Preflight.findRepo(chosen: nil))
     }
 
-    func chooseRepo(_ url: URL) {
-        guard Preflight.isRepo(url) else { return }
+    /// false when the folder isn't a checkout (no build_app.py, or no games/*/game.json).
+    @discardableResult func chooseRepo(_ url: URL) -> Bool {
+        guard Preflight.isRepo(url) else { return false }
         UserDefaults.standard.set(url.path, forKey: Defaults.repo)
         preflight = Preflight.check(repo: url)
+        return true
     }
 
     func setKeys(_ url: URL) {
         keys = url
+        keysMoved = nil
         saveKeysChoice()
     }
 
@@ -99,28 +113,83 @@ final class Wizard: ObservableObject {
 
     var ready: Bool { preflight.python != nil && preflight.repo != nil }
 
-    /// A game its extension can be takes an update file.
+    /// The game --inspect named takes an update file; until it has, a game its extension can be does.
     var takesUpdate: Bool {
         guard let game else { return false }
+        if let found = preflight.games.named(identified) { return !(found.files.update ?? []).isEmpty }
         let candidates = preflight.games.accepting(game)
         return candidates.isEmpty || candidates.contains { !($0.files.update ?? []).isEmpty }
     }
 
     func setGame(_ url: URL) {
+        choose(game: url)
+        inspect()
+    }
+
+    /// A new game file: what was chosen for the one before goes, except the fonts folder.
+    private func choose(game url: URL) {
         game = url
+        identified = nil
+        fontsNeeded = nil
         update = nil
         dlc = []
         mod = nil
         installModRomfs = false
         out = nil
         platform = "macos"
+    }
+
+    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect.
+    func drop(_ urls: [URL]) -> Bool {
+        guard !inspecting else { return false }
+        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report?.mod == true,
+                                      isFolder: { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true },
+                                      isMod: Self.isMod,
+                                      size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
+        guard d != Dropped() else { return false }
+        if let g = d.game { choose(game: g) }
+        if let u = d.update { update = u }
+        if let f = d.fonts { fonts = f }
+        if let m = d.mod { mod = m }
         inspect()
+        return true
+    }
+
+    /// A folder with exefs/ or romfs/ in it is a mod (docs/mods.md).
+    static func isMod(_ url: URL) -> Bool {
+        ["exefs", "romfs"].contains { name in
+            var folder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.appendingPathComponent(name).path, isDirectory: &folder) && folder.boolValue
+        }
+    }
+
+    func setFonts(_ url: URL?) {
+        fonts = url
+        inspect()   // build_app.py checks the folder before the build
+    }
+
+    /// Firmware or extracted shared fonts: a folder chosen as the other kind is not this one.
+    func setFontsAreFirmware(_ firmware: Bool) {
+        guard firmware != fontsAreFirmware else { return }
+        fontsAreFirmware = firmware
+        if fonts != nil { setFonts(nil) }
     }
 
     func addDLC(_ url: URL) {
-        guard !dlc.contains(url), dlc.count < 2 else { return }
+        guard !dlc.contains(url), dlc.count < dlcMax else { return }
         dlc.append(url)
         inspect()   // the packs are checked against the version before the build (build_app.py check_dlc)
+    }
+
+    /// How many add-on packs the version takes (inspect's dlc_max; 2 from a script before that field).
+    var dlcMax: Int { report?.dlcMax ?? 2 }
+
+    /// The identified game's own game.json.
+    var identifiedGame: Game? { preflight.games.named(identified) }
+
+    /// What the identified game's Mac build needs that this Mac lacks (game.json "needs").
+    var gameMissing: [Preflight.Missing] {
+        !isDevice && identifiedGame?.needs.contains("xcode") == true ? preflight.xcodeMissing : []
     }
 
     func removeDLC(_ url: URL) {
@@ -180,7 +249,7 @@ final class Wizard: ObservableObject {
         switch step {
         case .keys: ready && keys != nil
         case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
-        case .target: out != nil && (!isDevice || preflight.iosMissing.isEmpty)
+        case .target: out.map(Disk.canWrite) == true && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
         case .build, .result: false
         }
     }
@@ -223,12 +292,14 @@ final class Wizard: ObservableObject {
             switch event.type {
             case "inspect":
                 self.report = event
+                self.identified = event.game
+                self.fontsNeeded = event.needsFonts
                 if !(event.platforms ?? ["macos"]).contains(self.platform) { self.platform = "macos" }
                 if self.out == nil, let path = event.defaultOut {
                     let url = URL(fileURLWithPath: path)
                     self.out = self.isDevice ? url.deletingPathExtension().appendingPathExtension("ipa") : url
                 }
-            case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "")
+            case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "", log: event.log)
             default: break
             }
         } finished: { [weak self] status, failure in
@@ -250,34 +321,85 @@ final class Wizard: ObservableObject {
         lines = []
         notices = []
         running = true
+        cancelling = false
+        awake = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
+                                                      reason: String(localized: "Building a game app"))
+        badge(nil)
+        // asked once, before the first build, so the build's end can say so when the Builder is in the background
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         start(inputs() + buildOptions(out)) { [weak self] event in
             guard let self else { return }
+            self.steps.see(event)
             switch event.type {
             case "progress", "heartbeat":
                 self.progress = event
                 self.reached = max(self.reached, event.step ?? 0)
-                self.steps.see(event)
+                self.badge("\(self.reached)/\(self.steps.count)")
             case "notice": self.notices.append(event)
             case "done":
                 let app = URL(fileURLWithPath: event.out ?? out.path)
                 self.outcome = .done(app)
                 if (event.platform ?? "macos") == "macos" { self.remember(app) }
-            case "error": self.outcome = .failed(code: event.code, message: event.message ?? "")
+            case "error": self.outcome = .failed(code: event.code, message: event.message ?? "", log: event.log)
             case "cancelled": self.outcome = .cancelled
             default: break
             }
         } finished: { [weak self] status, failure in
             guard let self else { return }
             self.running = false
+            self.cancelling = false
+            if let awake = self.awake { ProcessInfo.processInfo.endActivity(awake) }
+            self.awake = nil
+            defer { self.onBuildEnded?(); self.onBuildEnded = nil }
             if self.outcome == nil {
                 self.outcome = failure ?? (status == 130 ? .cancelled : status == 0 ? .done(out)
                     : .failed(code: nil, message: String(localized: "build_app.py ended with exit status \(status).")))
             }
+            if self.steps.ended == nil { self.steps.ended = Date().timeIntervalSince1970 }
             self.step = .result
+            self.announce()
         }
     }
 
-    func cancel() { runner?.cancel() }
+    /// The Dock icon's badge: the step while building, then ✓ or ! until the Builder is in front again.
+    private func badge(_ text: String?) { NSApp.dockTile.badgeLabel = text }
+
+    /// The build's end, on the Dock icon and, when the Builder is in the background, as a notification.
+    private func announce() {
+        let content = UNMutableNotificationContent()
+        switch outcome {
+        case .done(let app):
+            badge("✓")
+            content.title = String(localized: "\(report?.appName ?? app.deletingPathExtension().lastPathComponent) is ready")
+            content.body = app.path
+        case .failed(let code, _, _):
+            badge("!")
+            content.title = String(localized: "The build stopped")
+            content.body = ErrorText(code: code, games: preflight.games).title
+        case .cancelled, nil:
+            return badge(nil)
+        }
+        if NSApp.isActive { return badge(nil) }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "build", content: content, trigger: nil))
+    }
+
+    /// The Builder is in front: a finished build's badge has been seen.
+    func activated() { if !running { badge(nil) } }
+
+    /// Game files opened from Finder or with File > Open: the Game page, as if they were dropped there.
+    func open(_ urls: [URL]) {
+        guard !running else { return }
+        mode = .build
+        if step != .keys { step = .game }
+        outcome = nil
+        _ = drop(urls)
+        if keys != nil && ready { step = .game }   // without the keys the Keys page asks first; the file is read after
+    }
+
+    func cancel() {
+        if running { cancelling = true }
+        runner?.cancel()
+    }
 
     private func start(_ arguments: [String], event: @escaping (BuildEvent) -> Void,
                        finished: @escaping (Int32, Outcome?) -> Void) {
@@ -347,6 +469,8 @@ final class Wizard: ObservableObject {
         guard let info = app.info, let gamePath = info.inputs.game else { return }
         let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
         game = URL(fileURLWithPath: gamePath)
+        identified = nil
+        fontsNeeded = nil
         update = path(info.inputs.update)
         dlc = (info.inputs.dlc ?? []).map { URL(fileURLWithPath: $0) }
         mod = path(info.inputs.mod)
@@ -372,6 +496,23 @@ final class Wizard: ObservableObject {
 
     var fullLog: String { lines.joined(separator: "\n") + "\n" }
 
+    /// The build's own logs (<work>/logs), once there are any.
+    var logsFolder: URL? {
+        guard let work = report?.work else { return nil }
+        let logs = URL(fileURLWithPath: work).appendingPathComponent("logs")
+        return FileManager.default.fileExists(atPath: logs.path) ? logs : nil
+    }
+
+    /// The free space of the work folder's drive, when it's less than a first build needs (no work folder there yet:
+    /// one that is reuses what it holds).
+    var spaceShort: (free: Int64, needed: Int)? {
+        guard let needed = report?.spaceGb?[platform], let work = report?.work,
+              !FileManager.default.fileExists(atPath: work),
+              let free = Disk.freeBytes(URL(fileURLWithPath: work)) else { return nil }
+        let gb = free / 1_000_000_000
+        return gb < Int64(needed) ? (gb, needed) : nil
+    }
+
     func copyLog() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(fullLog, forType: .string)
@@ -380,5 +521,27 @@ final class Wizard: ObservableObject {
     func startOver() {
         step = .game
         outcome = nil
+    }
+
+    /// After a finished build: the Game page with nothing chosen but the keys and the fonts folder, which another game
+    /// can use too.
+    func newBuild() {
+        guard !running else { return }
+        runner?.cancel()   // an inspect still running for the old game
+        generation += 1    // and its events are stale now
+        game = nil
+        update = nil
+        dlc = []
+        mod = nil
+        installModRomfs = false
+        report = nil
+        identified = nil
+        fontsNeeded = nil
+        inspectFailure = nil
+        inspecting = false
+        out = nil
+        platform = "macos"
+        outcome = nil
+        step = .game
     }
 }

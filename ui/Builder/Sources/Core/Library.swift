@@ -23,6 +23,7 @@ struct BuildInfo: Decodable, Equatable {
     var built: String
     var commit: String?
     var dirty: Bool?
+    var work: String?   // the work folder (nil in a record from before this field)
     var inputs: Inputs
 
     static func read(_ app: URL) -> BuildInfo? {
@@ -71,16 +72,80 @@ struct BuiltApp: Identifiable, Equatable {
     }
 }
 
+/// A build's work folder (build-info.json "work", or the one --inspect named): what it holds on the disk, and why it
+/// has to stay, when it does. Deleting it only makes the next build start from the beginning.
+struct WorkFolder: Identifiable, Equatable {
+    var url: URL
+    var game: String
+    var keep: String?   // why it can't be deleted
+    var id: String { url.path }
+
+    static func all(apps: [BuiltApp], current: (work: String, game: String?)?, games: [Game],
+                    fileManager: FileManager = .default) -> [WorkFolder] {
+        var seen = Set<String>()
+        let found: [(String, String?)] = apps.compactMap { app in app.info?.work.map { ($0, app.game) } }
+            + [current].compactMap { $0.map { ($0.work, $0.game) } }
+        return found.compactMap { path, game -> WorkFolder? in
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            var folder: ObjCBool = false
+            guard seen.insert(url.path).inserted, fileManager.fileExists(atPath: url.path, isDirectory: &folder), folder.boolValue
+            else { return nil }
+            let known = games.named(game)
+            var keep: String?
+            if known?.workHoldsGameData == true {
+                keep = String(localized: "\(known?.name ?? "The game")'s app reads its game data from it.")
+            } else if let inside = apps.first(where: { $0.url.standardizedFileURL.path.hasPrefix(url.path + "/") }) {
+                keep = String(localized: "\(inside.name) is inside it.")
+            }
+            return WorkFolder(url: url, game: game ?? "", keep: keep)
+        }
+    }
+
+    /// The bytes its files take on the disk (a clone shares them with the app, so this is at most what deleting frees).
+    static func size(_ url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        guard let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            guard let v = try? file.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            total += Int64(v.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+}
+
+/// Room on the disk before a build: build_app.py checks it too, once it has identified the game; this only warns early.
+enum Disk {
+    /// The folder itself, or the nearest one above it that exists (an output or work folder the build will make).
+    static func existing(_ url: URL) -> URL {
+        var dir = url.standardizedFileURL
+        while !FileManager.default.fileExists(atPath: dir.path) && dir.path != "/" { dir.deleteLastPathComponent() }
+        return dir
+    }
+
+    static func freeBytes(_ url: URL) -> Int64? {
+        (try? existing(url).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// The build can make `url`: the nearest folder that exists is writable.
+    static func canWrite(_ url: URL) -> Bool {
+        FileManager.default.isWritableFile(atPath: existing(url.deletingLastPathComponent()).path)
+    }
+}
+
 /// Whether the checkout has changed what an app was built from: its game's sources (game.json), e.g. build_app.py and
 /// the game folders it builds from.
 enum Freshness: Equatable {
     case current        // built from this commit, or nothing that goes into the app changed since
-    case changed        // a newer checkout builds a different app
-    case unknown        // no build record, no commit in it, a game this checkout doesn't have, or a commit it lacks
+    case changed        // the checkout as it is now (local changes too) builds a different app
+    case unknown        // no build record, no commit in it, built with local changes, a game this checkout doesn't
+                        // have, or a commit it lacks
 
     static func of(_ info: BuildInfo?, repo: URL?, games: [Game]) -> Freshness {
-        guard let commit = info?.commit, let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
-        let r = Shell.run("/usr/bin/git", ["-C", repo.path, "diff", "--quiet", commit, "HEAD", "--"] + paths)
+        guard let commit = info?.commit, info?.dirty != true,   // what the local changes were is not recorded
+              let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
+        // against the working tree, not HEAD: an edit not committed yet changes the next build too
+        let r = Shell.run("/usr/bin/git", ["-C", repo.path, "diff", "--quiet", commit, "--"] + paths)
         switch r.status {
         case 0: return .current
         case 1: return .changed
@@ -148,4 +213,7 @@ enum Shell {
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
+
+    /// `text` as one word for zsh or sh, for a command the player pastes into Terminal.
+    static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 }

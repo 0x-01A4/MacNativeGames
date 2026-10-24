@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""A stand-in for build_app.py --json-progress: the same events, no game files, nothing written. For the Builder's tests
-and for trying the app: BUILDER_SCRIPT=<this file> "MacNativeGames Builder.app/Contents/MacOS/MacNativeGamesBuilder".
+"""A stand-in for build_app.py --json-progress: the same events, no game files, and nothing written but the failed tool's
+log in the temporary folder (FAKE_BUILD=fail). For the Builder's tests and for trying the app:
+BUILDER_SCRIPT=<this file> "MacNativeGames Builder.app/Contents/MacOS/MacNativeGamesBuilder".
 FAKE_BUILD=ok (default) | fail | slow | noheader | schema1 (an older script); FAKE_GAME=totk (default) | botw (1.9.0, with
 DLC) | by3 (needs its update, Mac only) | odyssey (one file with its update, eight steps);
 FAKE_DELAY: seconds between events (default 0.4)."""
-import json, os, signal, sys, time
+import json, os, signal, sys, tempfile, time
 
 mode, delay = os.environ.get('FAKE_BUILD', 'ok'), float(os.environ.get('FAKE_DELAY', '0.4'))
 GAME = os.environ.get('FAKE_GAME', 'totk')
@@ -49,7 +50,8 @@ if '--inspect' in argv:
           display_version={'botw190': '1.9.0', 'botw160': '1.6.0', 'v143': '1.4.3', 'v0': '1.0.0'}[version],
           kind='nsp' if game.endswith('.nsp') else 'xci',
           needs_fonts=(botw or game.endswith('.nsp')) and '--firmware' not in argv and '--shared-fonts' not in argv,
-          needs_update=False, platforms=['macos', 'ios'] if botw else ['macos', 'ios', 'visionos'], dlc=version == 'botw190', mod=not botw,
+          needs_update=False, platforms=['macos', 'ios'] if botw else ['macos', 'ios', 'visionos'], dlc=version == 'botw190',
+          dlc_max=2 if version == 'botw190' else 0, mod=not botw,
           space_gb={'macos': 22, 'ios': 22} if botw else {'macos': 40 if update else 25, 'ios': 60 if update else 45, 'visionos': 60 if update else 45},
           work=os.path.join(folder, 'BotW_build' if botw else 'TOTK_build'), default_out=os.path.join(folder, APP + '.app'))
     sys.exit(0)
@@ -70,8 +72,11 @@ for i, (step, stage, message) in enumerate(steps):
     if step == 2:
         event('heartbeat', stage=stage, step=step, of=4, message='... still running (1 min)')
     if mode == 'fail' and step == 2:
+        tool_log = os.path.join(tempfile.gettempdir(), 'fake_build-hactool-romfs.log')   # the failed tool's log
+        with open(tool_log, 'w') as f:
+            f.write('hactool: a stand-in log for the Builder\'s "Show Tool Log"\n')
         event('error', code='hash_mismatch', message='RomFS: SHA-256 0123456789abcdef... is not the expected fedcba9876543210... '
-              '(is this the supported game version, and the dump complete?)', log=None)
+              '(is this the supported game version, and the dump complete?)', log=tool_log)
         print('\nERROR: RomFS: SHA-256 mismatch', file=sys.stderr)
         sys.exit(1)
 platform = argv[argv.index('--platform') + 1] if '--platform' in argv else 'macos'

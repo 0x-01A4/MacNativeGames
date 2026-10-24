@@ -27,6 +27,8 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 | Cover art | None. It would be game content |
 | Localization and accessibility | `String(localized:)` and accessibility labels from Phase 1. Chinese follows in Phase 5 without a retrofit |
 | Bayonetta 3 | Built by the Builder through `games/by3/build.py`, the README's steps behind the same event contract (Mac only, base NSP plus the 1.2.0 update) |
+| Clean rebuild | The Library lists the work folders with their size and moves one to the Trash, unless the game's app reads from it (game.json `work_holds_game_data`) or an app sits inside it |
+| Disk space | The Output page compares the work folder's drive with the inspect event's `space_gb` and warns; `build_app.py` stays the check that stops a build |
 | Super Mario Odyssey | Built by the Builder through `games/odyssey/build.py`, which runs `scripts/build_odyssey.py`'s eight steps (its own command line unchanged) behind the same event contract (Mac only, needs Xcode) |
 
 ## 2. Non-goals
@@ -49,7 +51,7 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 2. **Game**: pick or drop the XCI/NSP. `--inspect` names the game and version from its data. An optional update (NSP/NSZ) re-inspects. If the file needs system fonts, it asks for a firmware or shared-fonts folder.
 3. **Output**: the Mac app, defaulting to `build_app.py`'s location. It warns that moving the app later recompiles the startup shaders.
 4. **Build**: the four steps with the current message, an expandable log, and Cancel.
-5. **Done**: Open and Show in Finder. On a failure: what went wrong, the next step, Copy Full Log, Build Again, and Change Files.
+5. **Done**: Open, Show in Finder and Build Another; a notification and the Dock badge when the Builder is in the background. On a failure: what went wrong, the next step, Copy Full Log, Build Again, and Change Files.
 
 ## 5. Delivery phases and definition of done
 
@@ -89,9 +91,7 @@ Each phase is done when its tests pass and the change notes say what was built a
 
 ## 6. Open
 
-- **Clean rebuild**: offer one that removes the work folder, or leave it to the CLI?
 - **Work folder on a read-only or external drive**: let the player pick `--work` in the Output step?
-- **Disk space**: should the Builder preflight free space before building? `build_app.py` checks it only after identifying the game.
 - **How settings reach the game** (Phase 4): environment variables only work when the Launcher starts the game. The other route is a per-app settings file that the runtime reads, which also works from Finder.
 - **A CI job for the Builder**: `run_tests.sh` needs a Swift toolchain on the runner. The Python half is already in CI through `tests/`.
 - **Distribution** (Phase 5): a notarized DMG or Homebrew cask, and how the Builder learns that the checkout has a newer revision.

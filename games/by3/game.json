@@ -6,6 +6,7 @@
   "bundle_id": "org.macnativegames.by3",
   "data_folder": "BY3",
   "build": "games/by3/build.py",
+  "work_holds_game_data": true,
   "sources": ["games/by3"],
   "files": {"game": ["nsp"], "update": ["nsp"]}
 }

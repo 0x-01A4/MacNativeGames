@@ -79,6 +79,10 @@ class Manifests(unittest.TestCase):
             self.assertRegex(g['title_id'], r'^[0-9A-F]{13}000$')
             for ext in g.get('files', {}).get('game', []) + g.get('files', {}).get('update', []):
                 self.assertIn(ext, ('xci', 'nsp', 'nsz'))
+            self.assertLessEqual(set(g.get('needs', [])), {'xcode'}, g['id'])   # what the Builder checks before a build
+            self.assertIn(g.get('work_holds_game_data', False), (True, False), g['id'])
+            if 'install_tool' in g:
+                self.assertTrue((ROOT / g['install_tool']).is_file(), g['install_tool'])
             if 'shader_contribution' in g:
                 self.assertGreater(g['shader_contribution']['step'], 0)
                 self.assertTrue(g['shader_contribution']['form'].startswith('https://github.com/'))
@@ -181,9 +185,10 @@ class By3Inspect(unittest.TestCase):
 
     def test_build_info_never_names_the_keys(self):
         with mock.patch.object(by3, 'checkout_commit', return_value=(None, None)):
-            info = by3.build_info(dict(game=self.base, update=self.update, firmware=None, shared_fonts=None))
+            info = by3.build_info(dict(game=self.base, update=self.update, firmware=None, shared_fonts=None), self.tmp / 'BY3_build')
         self.assertEqual((info['game'], info['version'], info['platform']), ('by3', 'v120', 'macos'))
         self.assertEqual(info['inputs'], {'game': str(self.base), 'update': str(self.update)})
+        self.assertEqual(info['work'], str(self.tmp / 'BY3_build'))
         self.assertNotIn('keys', json.dumps(info))
 
 
