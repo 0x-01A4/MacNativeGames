@@ -1,0 +1,12 @@
+{"type": "hello", "time": 1761235200.0, "schema": 1}
+{"type": "progress", "time": 1761235201.0, "stage": "prepare", "step": 0, "of": 4, "message": "fetching the pinned SPIRV-Cross sources"}
+{"type": "progress", "time": 1761235230.0, "stage": "code", "step": 1, "of": 4, "message": "rewriting main for Apple silicon (the big one: about a minute)"}
+{"type": "heartbeat", "time": 1761235290.0, "stage": "code", "step": 1, "of": 4, "message": "... still running (1 min)"}
+{"type": "progress", "time": 1761235300.0, "stage": "update", "step": 2, "of": 4, "message": "merging base + 1.4.3 and verifying all IVFC levels"}
+{"type": "progress", "time": 1761235600.0, "stage": "shaders", "step": 3, "of": 4, "message": "discovering and translating startup shaders from your game data"}
+{"type": "progress", "time": 1761235900.0, "stage": "app", "step": 4, "of": 4, "message": "assembling /Games/Tears of the Kingdom.app"}
+{"type": "done", "time": 1761236000.0, "out": "/Games/Tears of the Kingdom.app", "game": "totk", "version": "v143", "platform": "macos"}
+not an event: a line from a tool
+{"type": "error", "time": 1761236001.0, "code": "fonts", "message": "NSP files do not include system shared fonts.", "log": null}
+{"type": "inspect", "time": 1761236002.0, "game": "botw", "app_name": "Breath of the Wild", "version": "botw190", "display_version": "1.9.0", "kind": "nsp", "needs_fonts": true, "platforms": ["macos"], "dlc": true, "work": "/Games/BotW_build", "default_out": "/Games/Breath of the Wild.app"}
+{"type": "notice", "time": 1761235231.0, "stage": "code", "step": 1, "of": 4, "code": "npdm_signed", "message": "main.npdm is a Nintendo-signed 1.0.0 file from another dump; using it"}

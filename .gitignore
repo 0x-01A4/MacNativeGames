@@ -24,3 +24,7 @@ games/totk/tools/totk_xlate/obj/
 games/totk/tools/totk_xlate/bin/
 games/totk/scripts/shader_inventory/obj/
 games/totk/scripts/shader_inventory/bin/
+ui/Builder/build/
+# the player's own console files, kept in the checkout
+keys/
+games/firmware/
