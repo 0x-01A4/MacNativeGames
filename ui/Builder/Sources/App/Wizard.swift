@@ -128,7 +128,15 @@ final class Wizard: ObservableObject {
 
     /// A new game file: what was chosen for the one before goes, except the fonts folder.
     private func choose(game url: URL) {
+        clearChoices()
         game = url
+    }
+
+    /// What belongs to one game file: the file, what --inspect named in it, and the choices made for it. The keys and
+    /// the fonts folder stay, since another game can use them too.
+    private func clearChoices() {
+        platform = "macos"   // first: its didSet would make an output from the old report's default
+        game = nil
         identified = nil
         fontsNeeded = nil
         update = nil
@@ -136,14 +144,13 @@ final class Wizard: ObservableObject {
         mod = nil
         installModRomfs = false
         out = nil
-        platform = "macos"
     }
 
     /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect.
     func drop(_ urls: [URL]) -> Bool {
         guard !inspecting else { return false }
         let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report?.mod == true,
-                                      isFolder: { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true },
+                                      isFolder: \.isFolder,
                                       isMod: Self.isMod,
                                       size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
         guard d != Dropped() else { return false }
@@ -157,10 +164,7 @@ final class Wizard: ObservableObject {
 
     /// A folder with exefs/ or romfs/ in it is a mod (docs/mods.md).
     static func isMod(_ url: URL) -> Bool {
-        ["exefs", "romfs"].contains { name in
-            var folder: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.appendingPathComponent(name).path, isDirectory: &folder) && folder.boolValue
-        }
+        ["exefs", "romfs"].contains { url.appendingPathComponent($0).isFolder }
     }
 
     func setFonts(_ url: URL?) {
@@ -203,11 +207,7 @@ final class Wizard: ObservableObject {
         inspect()   // build_app.py checks the folder's layout and the game before the build
     }
 
-    var modHasRomfs: Bool {
-        guard let mod else { return false }
-        var folder: ObjCBool = false
-        return FileManager.default.fileExists(atPath: mod.appendingPathComponent("romfs").path, isDirectory: &folder) && folder.boolValue
-    }
+    var modHasRomfs: Bool { mod?.appendingPathComponent("romfs").isFolder == true }
 
     /// The platforms the found game builds for (inspect); iPhone/iPad and Vision Pro also need an Xcode on this Mac.
     var platforms: [String] { report?.platforms ?? ["macos"] }
@@ -468,16 +468,13 @@ final class Wizard: ObservableObject {
     func rebuild(_ app: BuiltApp) {
         guard let info = app.info, let gamePath = info.inputs.game else { return }
         let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
-        game = URL(fileURLWithPath: gamePath)
-        identified = nil
-        fontsNeeded = nil
+        choose(game: URL(fileURLWithPath: gamePath))
         update = path(info.inputs.update)
         dlc = (info.inputs.dlc ?? []).map { URL(fileURLWithPath: $0) }
         mod = path(info.inputs.mod)
         installModRomfs = info.inputs.installModRomfs ?? false
         fonts = path(info.inputs.firmware ?? info.inputs.sharedFonts)
         fontsAreFirmware = info.inputs.sharedFonts == nil
-        platform = "macos"
         out = app.url
         outcome = nil
         mode = .build
@@ -529,18 +526,10 @@ final class Wizard: ObservableObject {
         guard !running else { return }
         runner?.cancel()   // an inspect still running for the old game
         generation += 1    // and its events are stale now
-        game = nil
-        update = nil
-        dlc = []
-        mod = nil
-        installModRomfs = false
+        clearChoices()
         report = nil
-        identified = nil
-        fontsNeeded = nil
         inspectFailure = nil
         inspecting = false
-        out = nil
-        platform = "macos"
         outcome = nil
         step = .game
     }

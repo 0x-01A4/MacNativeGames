@@ -220,6 +220,13 @@ func choose(_ types: [UTType], folder: Bool = false, message: String) -> URL? {
     return panel.runModal() == .OK ? panel.url : nil
 }
 
+extension Binding where Value == Bool {
+    /// Shown while `item` holds something; dismissing clears it (for a confirmation dialog about that item).
+    init<Item>(presenting item: Binding<Item?>) {
+        self.init(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
+}
+
 /// The file types the checkout's games are built from (game.json "files").
 func types(_ extensions: [String]) -> [UTType] { extensions.compactMap { UTType(filenameExtension: $0) } }
 
@@ -267,8 +274,7 @@ struct KeysPage: View {
             }
             .formStyle(.grouped)
             .dropDestination(for: URL.self) { urls, _ in
-                guard urls.count == 1, let url = urls.first,
-                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true else { return false }
+                guard urls.count == 1, let url = urls.first, !url.isFolder else { return false }
                 wizard.setKeys(url)
                 return true
             } isTargeted: { targeted = $0 }

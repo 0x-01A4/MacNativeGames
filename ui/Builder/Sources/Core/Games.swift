@@ -62,13 +62,11 @@ struct Game: Decodable, Equatable, Identifiable {
     /// The games of a checkout, by name; a game.json of another schema, or one that doesn't parse, is left out.
     static func load(repo: URL?, fileManager: FileManager = .default) -> [Game] {
         guard let repo else { return [] }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         let folders = (try? fileManager.contentsOfDirectory(atPath: repo.appendingPathComponent("games").path)) ?? []
         return folders.sorted().compactMap { folder -> Game? in
             let dir = repo.appendingPathComponent("games/\(folder)")
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("game.json")),
-                  var game = try? decoder.decode(Game.self, from: data), game.schema == schema else { return nil }
+                  var game = try? JSONDecoder.snakeCase.decode(Game.self, from: data), game.schema == schema else { return nil }
             if game.versions.isEmpty { game.versions = versions(dir.appendingPathComponent("assets"), fileManager) }
             return game
         }

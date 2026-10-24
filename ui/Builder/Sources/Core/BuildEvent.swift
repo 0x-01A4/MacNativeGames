@@ -36,16 +36,10 @@ struct BuildEvent: Decodable, Equatable {
     var work: String?
     var defaultOut: String?
 
-    private static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        return d
-    }()
-
     /// The event on a line of the script's stdout, or nil for anything else (it then belongs to the log as text).
     static func parse(_ line: String) -> BuildEvent? {
         guard line.hasPrefix("{"), let data = line.data(using: .utf8) else { return nil }
-        return try? decoder.decode(BuildEvent.self, from: data)
+        return try? JSONDecoder.snakeCase.decode(BuildEvent.self, from: data)
     }
 
     /// How the event reads in the full log a player copies for a bug report.
@@ -62,6 +56,15 @@ struct BuildEvent: Decodable, Equatable {
         default: return message ?? type
         }
     }
+}
+
+extension JSONDecoder {
+    /// What the build scripts write: build_app.py events, game.json and build-info.json all use snake_case keys.
+    static let snakeCase: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
+    }()
 }
 
 /// A build's steps as its script numbers them ("1/4 code" ... "4/4 app"): how many there are and what each is, learnt

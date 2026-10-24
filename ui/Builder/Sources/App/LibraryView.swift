@@ -41,13 +41,13 @@ struct LibraryView: View {
             .padding(24)
         }
         .task { await load() }
-        .confirmationDialog(Text("Move \(trash?.name ?? "") to the Trash?"), isPresented: Binding(get: { trash != nil }, set: { if !$0 { trash = nil } }),
+        .confirmationDialog(Text("Move \(trash?.name ?? "") to the Trash?"), isPresented: Binding(presenting: $trash),
                             presenting: trash) { app in
             Button("Move to Trash", role: .destructive) { moveToTrash(app) }
         } message: { app in
             Text("\(app.url.path)\n\n\(savesText(app)) You can put the app back from the Trash.")
         }
-        .confirmationDialog(Text("Move the work folder to the Trash?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+        .confirmationDialog(Text("Move the work folder to the Trash?"), isPresented: Binding(presenting: $deleting),
                             presenting: deleting) { work in
             Button("Move to Trash", role: .destructive) { moveToTrash(work) }
         } message: { work in
@@ -108,15 +108,7 @@ struct LibraryView: View {
     }
 
     private func moveToTrash(_ work: WorkFolder) {
-        NSWorkspace.shared.recycle([work.url]) { _, error in
-            DispatchQueue.main.async {
-                if let error {
-                    problem = String(localized: "\(work.url.lastPathComponent) was not moved to the Trash: \(error.localizedDescription)")
-                } else {
-                    works.removeAll { $0 == work }
-                }
-            }
-        }
+        recycle(work.url, name: work.url.lastPathComponent) { works.removeAll { $0 == work } }
     }
 
     private func moveToTrash(_ app: BuiltApp) {
@@ -124,15 +116,22 @@ struct LibraryView: View {
             problem = String(localized: "\(app.name) is open: quit it first, then move it to the Trash.")
             return
         }
-        NSWorkspace.shared.recycle([app.url]) { _, error in
-            DispatchQueue.main.async {
+        recycle(app.url, name: app.name) {
+            wizard.forget(app.url)
+            apps.removeAll { $0 == app }
+        }
+    }
+
+    /// `moved` runs once `url` is in the Trash; a failure is shown under the list instead.
+    private func recycle(_ url: URL, name: String, moved: @escaping @MainActor () -> Void) {
+        NSWorkspace.shared.recycle([url]) { _, error in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
                 if let error {
-                    problem = String(localized: "\(app.name) was not moved to the Trash: \(error.localizedDescription)")
+                    problem = String(localized: "\(name) was not moved to the Trash: \(error.localizedDescription)")
                 } else {
-                    wizard.forget(app.url)
-                    apps.removeAll { $0 == app }
+                    moved()
                 }
-            }
+            } }
         }
     }
 }
@@ -251,7 +250,7 @@ struct Contributions: View {
             }
             if let problem { Text(problem).foregroundStyle(.red) }
         }
-        .confirmationDialog(Text("Did you send the file?"), isPresented: Binding(get: { sending != nil }, set: { if !$0 { sending = nil } })) {
+        .confirmationDialog(Text("Did you send the file?"), isPresented: Binding(presenting: $sending)) {
             Button("Sent") { if let sending { update(sending) { try $0.markSent() } } }
             Button("Not Yet", role: .cancel) {}
         } message: {
