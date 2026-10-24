@@ -15,7 +15,7 @@ one XCI or NSP holding 1.3.0, through `games/odyssey/build.py`, eight steps).
 
 The **Library** (the switch at the top of the window) lists the game apps on this Mac: the ones Spotlight finds by
 their bundle identifier (`bundle_id` in a game.json) and the ones this Builder made. For each it shows what it was built
-from, and whether the files its game is built from (`sources`) changed in the checkout since. **Rebuild** fills in the Build page with the same files
+from, and whether the files its game is built from (`sources`) changed in the checkout since, local changes not committed yet included (an app built with local changes reads "Can't tell"). **Rebuild** fills in the Build page with the same files
 and output (the keys come from the remembered location, or the Keys page asks). **Move to Trash** keeps saves and
 settings. Below the apps, each game's shader list contribution file shows how many rows it holds, with **Send…** (the
 GitHub form and the file in Finder) and the game's own reminder switch: the Builder writes the same `.reminded` file the

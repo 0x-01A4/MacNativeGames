@@ -75,12 +75,15 @@ struct BuiltApp: Identifiable, Equatable {
 /// the game folders it builds from.
 enum Freshness: Equatable {
     case current        // built from this commit, or nothing that goes into the app changed since
-    case changed        // a newer checkout builds a different app
-    case unknown        // no build record, no commit in it, a game this checkout doesn't have, or a commit it lacks
+    case changed        // the checkout as it is now (local changes too) builds a different app
+    case unknown        // no build record, no commit in it, built with local changes, a game this checkout doesn't
+                        // have, or a commit it lacks
 
     static func of(_ info: BuildInfo?, repo: URL?, games: [Game]) -> Freshness {
-        guard let commit = info?.commit, let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
-        let r = Shell.run("/usr/bin/git", ["-C", repo.path, "diff", "--quiet", commit, "HEAD", "--"] + paths)
+        guard let commit = info?.commit, info?.dirty != true,   // what the local changes were is not recorded
+              let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
+        // against the working tree, not HEAD: an edit not committed yet changes the next build too
+        let r = Shell.run("/usr/bin/git", ["-C", repo.path, "diff", "--quiet", commit, "--"] + paths)
         switch r.status {
         case 0: return .current
         case 1: return .changed
@@ -148,4 +151,7 @@ enum Shell {
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
+
+    /// `text` as one word for zsh or sh, for a command the player pastes into Terminal.
+    static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 }

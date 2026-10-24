@@ -121,7 +121,8 @@ struct StepList: View {
                     : step == wizard.step ? "circle.inset.filled" : "circle"
                 Label(step.title, systemImage: state)
                     .foregroundStyle(step == wizard.step ? .primary : .secondary)
-                    .accessibilityLabel(step == wizard.step ? Text("\(step.title), current step") : Text(step.title))
+                    .accessibilityLabel(step == wizard.step ? Text("\(step.title), current step")
+                                        : step.rawValue < wizard.step.rawValue ? Text("\(step.title), done") : Text(step.title))
             }
             Spacer()
         }
@@ -230,6 +231,10 @@ struct KeysPage: View {
                 FileRow(label: "prod.keys", url: wizard.keys, placeholder: "not chosen") {
                     if let url = choose([.data], message: String(localized: "Choose your prod.keys")) { wizard.setKeys(url) }
                 }
+                if let moved = wizard.keysMoved {
+                    Text("The remembered prod.keys is no longer at \(moved). Choose it where it is now.")
+                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
                 Toggle("Remember this location", isOn: $wizard.rememberKeys)
                     .onChange(of: wizard.rememberKeys) { wizard.saveKeysChoice() }
                     .help("Only the path is kept, in this app's preferences; the keys themselves are never copied or read by the Builder.")
@@ -242,6 +247,7 @@ struct KeysPage: View {
 /// What build_app.py needs on this Mac; the commands to run when something is missing.
 struct SetupStatus: View {
     @EnvironmentObject var wizard: Wizard
+    @State private var notRepo: String?
 
     var body: some View {
         let p = wizard.preflight
@@ -253,8 +259,14 @@ struct SetupStatus: View {
                     HStack {
                         Text("The MacNativeGames folder (the one with build_app.py) was not found.")
                         Button("Choose Folder…") {
-                            if let url = choose([], folder: true, message: String(localized: "Choose the MacNativeGames folder")) { wizard.chooseRepo(url) }
+                            if let url = choose([], folder: true, message: String(localized: "Choose the MacNativeGames folder")) {
+                                notRepo = wizard.chooseRepo(url) ? nil : url.path
+                            }
                         }
+                    }
+                    if let notRepo {
+                        Text("\(notRepo) isn't a MacNativeGames checkout: it needs build_app.py and games/*/game.json.")
+                            .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Commands(items: p.missing)
@@ -284,7 +296,7 @@ struct Commands: View {
                 }
             }
         }
-        Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary)
+        if !items.isEmpty { Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary) }
         Button("Check Again") { wizard.recheck() }
     }
 }
@@ -328,8 +340,8 @@ struct GamePage: View {
                 }
                 // Shown as soon as there is a game file, not only once --inspect asks for fonts: the folder can be
                 // chosen while the game file is still being read, and an XCI simply doesn't need it.
-                if wizard.game != nil {
-                    Picker("System fonts from", selection: $wizard.fontsAreFirmware) {
+                if wizard.game != nil && (wizard.fontsNeeded != false || wizard.fonts != nil) {
+                    Picker("System fonts from", selection: Binding(get: { wizard.fontsAreFirmware }, set: { wizard.setFontsAreFirmware($0) })) {
                         Text("Unpacked firmware folder").tag(true)
                         Text("Extracted shared fonts").tag(false)
                     }
@@ -338,10 +350,10 @@ struct GamePage: View {
                                 placeholder: wizard.report?.needsFonts == true ? "needed for this game file" : "only for NSP files") {
                             if let url = choose([], folder: true, message: wizard.fontsAreFirmware
                                 ? String(localized: "Choose the folder with the firmware's .nca files")
-                                : String(localized: "Choose the folder with the six .bfttf shared fonts")) { wizard.fonts = url }
+                                : String(localized: "Choose the folder with the six .bfttf shared fonts")) { wizard.setFonts(url) }
                         }
                         if wizard.fonts != nil {
-                            Button("Remove") { wizard.fonts = nil }
+                            Button("Remove") { wizard.setFonts(nil) }
                         }
                     }
                 }
@@ -380,19 +392,7 @@ struct GamePage: View {
                 }
             }
             .formStyle(.grouped)
-            .dropDestination(for: URL.self) { urls, _ in
-                guard let url = urls.first else { return false }
-                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                    // a folder is never a game file: it's the firmware or the extracted fonts
-                    guard wizard.game != nil else { return false }
-                    wizard.fonts = url
-                } else if wizard.game != nil, url.pathExtension.lowercased() == "nsz" || wizard.report?.needsUpdate == true {
-                    wizard.setUpdate(url)
-                } else {
-                    wizard.setGame(url)
-                }
-                return true
-            } isTargeted: { targeted = $0 }
+            .dropDestination(for: URL.self) { urls, _ in wizard.drop(urls) } isTargeted: { targeted = $0 }
             .overlay { if targeted { RoundedRectangle(cornerRadius: 10).stroke(.tint, lineWidth: 3) } }
             Found()
         }
@@ -622,9 +622,8 @@ struct ResultPage: View {
                 Text(app.path).textSelection(.enabled)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
-                    Text("2. Run this in Terminal from the MacNativeGames folder:")
-                    Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"),
-                                                       command: "python3.14 games/totk/ios/tools/install_device.py '\(app.path)'")])
+                    Text("2. Run this in Terminal:")
+                    Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(app))])
                     Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -635,7 +634,7 @@ struct ResultPage: View {
                 Notices()
             case .done(let app):
                 PageTitle(title: "Your app is ready",
-                          detail: "The first start verifies the game data once. Saves, the shader cache and the log are kept in ~/Library/Application Support/MacNativeGames.")
+                          detail: "The first start verifies the game data once. Saves, the shader cache and the log are kept in \(wizard.preflight.games.dataLocation(wizard.identified)).")
                 Text(app.path).textSelection(.enabled)
                 HStack {
                     Button("Open") { NSWorkspace.shared.open(app) }.keyboardShortcut(.defaultAction)
@@ -655,6 +654,13 @@ struct ResultPage: View {
             }
             LogView()
         }
+    }
+
+    /// The sign-and-install command, with absolute paths so it runs from any folder.
+    private func installCommand(_ app: URL) -> String {
+        let tool = wizard.preflight.repo?.appendingPathComponent("games/totk/ios/tools/install_device.py").path
+            ?? "games/totk/ios/tools/install_device.py"
+        return [wizard.preflight.python ?? "python3.14", tool, app.path].map(Shell.quote).joined(separator: " ")
     }
 
     private var resultButtons: some View {

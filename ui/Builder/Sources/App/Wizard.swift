@@ -38,11 +38,15 @@ final class Wizard: ObservableObject {
     @Published var preflight: Preflight
     @Published var keys: URL?
     @Published var rememberKeys: Bool
+    @Published var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
     @Published var game: URL?
     @Published var update: URL?
     @Published var fonts: URL?
     @Published var fontsAreFirmware = true
     @Published var report: BuildEvent?
+    // what the last --inspect of this game file said, kept while a re-inspect runs (report is nil then)
+    @Published var identified: String?   // the game's id
+    @Published var fontsNeeded: Bool?
     @Published var inspectFailure: Outcome?
     @Published var inspecting = false
     @Published var out: URL?
@@ -73,7 +77,9 @@ final class Wizard: ObservableObject {
         preflight = Preflight.check(repo: Preflight.findRepo(chosen: defaults.string(forKey: Defaults.repo)))
         let saved = defaults.string(forKey: Defaults.keys)
         rememberKeys = saved != nil
-        if let saved, FileManager.default.fileExists(atPath: saved) { keys = URL(fileURLWithPath: saved) }
+        if let saved {
+            if FileManager.default.fileExists(atPath: saved) { keys = URL(fileURLWithPath: saved) } else { keysMoved = saved }
+        }
     }
 
     // MARK: setup
@@ -82,14 +88,17 @@ final class Wizard: ObservableObject {
         preflight = Preflight.check(repo: preflight.repo ?? Preflight.findRepo(chosen: nil))
     }
 
-    func chooseRepo(_ url: URL) {
-        guard Preflight.isRepo(url) else { return }
+    /// false when the folder isn't a checkout (no build_app.py, or no games/*/game.json).
+    @discardableResult func chooseRepo(_ url: URL) -> Bool {
+        guard Preflight.isRepo(url) else { return false }
         UserDefaults.standard.set(url.path, forKey: Defaults.repo)
         preflight = Preflight.check(repo: url)
+        return true
     }
 
     func setKeys(_ url: URL) {
         keys = url
+        keysMoved = nil
         saveKeysChoice()
     }
 
@@ -103,22 +112,66 @@ final class Wizard: ObservableObject {
 
     var ready: Bool { preflight.python != nil && preflight.repo != nil }
 
-    /// A game its extension can be takes an update file.
+    /// The game --inspect named takes an update file; until it has, a game its extension can be does.
     var takesUpdate: Bool {
         guard let game else { return false }
+        if let found = preflight.games.named(identified) { return !(found.files.update ?? []).isEmpty }
         let candidates = preflight.games.accepting(game)
         return candidates.isEmpty || candidates.contains { !($0.files.update ?? []).isEmpty }
     }
 
     func setGame(_ url: URL) {
+        choose(game: url)
+        inspect()
+    }
+
+    /// A new game file: what was chosen for the one before goes, except the fonts folder.
+    private func choose(game url: URL) {
         game = url
+        identified = nil
+        fontsNeeded = nil
         update = nil
         dlc = []
         mod = nil
         installModRomfs = false
         out = nil
         platform = "macos"
+    }
+
+    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect.
+    func drop(_ urls: [URL]) -> Bool {
+        guard !inspecting else { return false }
+        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report?.mod == true,
+                                      isFolder: { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true },
+                                      isMod: Self.isMod,
+                                      size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
+        guard d != Dropped() else { return false }
+        if let g = d.game { choose(game: g) }
+        if let u = d.update { update = u }
+        if let f = d.fonts { fonts = f }
+        if let m = d.mod { mod = m }
         inspect()
+        return true
+    }
+
+    /// A folder with exefs/ or romfs/ in it is a mod (docs/mods.md).
+    static func isMod(_ url: URL) -> Bool {
+        ["exefs", "romfs"].contains { name in
+            var folder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.appendingPathComponent(name).path, isDirectory: &folder) && folder.boolValue
+        }
+    }
+
+    func setFonts(_ url: URL?) {
+        fonts = url
+        inspect()   // build_app.py checks the folder before the build
+    }
+
+    /// Firmware or extracted shared fonts: a folder chosen as the other kind is not this one.
+    func setFontsAreFirmware(_ firmware: Bool) {
+        guard firmware != fontsAreFirmware else { return }
+        fontsAreFirmware = firmware
+        if fonts != nil { setFonts(nil) }
     }
 
     func addDLC(_ url: URL) {
@@ -227,6 +280,8 @@ final class Wizard: ObservableObject {
             switch event.type {
             case "inspect":
                 self.report = event
+                self.identified = event.game
+                self.fontsNeeded = event.needsFonts
                 if !(event.platforms ?? ["macos"]).contains(self.platform) { self.platform = "macos" }
                 if self.out == nil, let path = event.defaultOut {
                     let url = URL(fileURLWithPath: path)
@@ -361,6 +416,8 @@ final class Wizard: ObservableObject {
         guard let info = app.info, let gamePath = info.inputs.game else { return }
         let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
         game = URL(fileURLWithPath: gamePath)
+        identified = nil
+        fontsNeeded = nil
         update = path(info.inputs.update)
         dlc = (info.inputs.dlc ?? []).map { URL(fileURLWithPath: $0) }
         mod = path(info.inputs.mod)
@@ -408,6 +465,8 @@ final class Wizard: ObservableObject {
         mod = nil
         installModRomfs = false
         report = nil
+        identified = nil
+        fontsNeeded = nil
         inspectFailure = nil
         inspecting = false
         out = nil

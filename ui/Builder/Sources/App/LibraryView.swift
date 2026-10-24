@@ -61,10 +61,7 @@ struct LibraryView: View {
     }
 
     private func savesText(_ app: BuiltApp) -> String {
-        if let beside = wizard.preflight.games.named(app.game)?.dataBesideApp {
-            return String(localized: "Your saves, settings and shader cache stay in “\(beside)” next to it.")
-        }
-        return String(localized: "Your saves, settings and shader cache stay in ~/Library/Application Support/MacNativeGames.")
+        String(localized: "Your saves, settings and shader cache stay in \(wizard.preflight.games.dataLocation(app.game)).")
     }
 
     private func moveToTrash(_ app: BuiltApp) {
@@ -135,7 +132,8 @@ struct AppRow: View {
             Label("The checkout has changed since", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
                 .help(String(localized: "The files this game is built from changed after this app was built: a rebuild picks up the changes."))
         case .unknown:
-            EmptyView()
+            Label("Can't tell", systemImage: "questionmark.circle").foregroundStyle(.secondary)
+                .help(String(localized: "There is no build record with a commit of this checkout, or the app was built with local changes: a rebuild is the way to be sure."))
         }
     }
 }

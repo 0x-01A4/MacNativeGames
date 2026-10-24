@@ -211,6 +211,14 @@ expect(Freshness.of(record(first), repo: repo, games: games) == .current, "a cha
 write("y2\n", "repo/games/totk/a.txt"); _ = git("commit", "-qam", "game")
 expect(Freshness.of(record(first), repo: repo, games: games) == .changed, "a change in games/totk: changed")
 expect(Freshness.of(record(String(repeating: "0", count: 40)), repo: repo, games: games) == .unknown, "a commit the checkout lacks: unknown")
+let second = git("rev-parse", "HEAD")
+expect(Freshness.of(record(second), repo: repo, games: games) == .current, "built from HEAD again: current")
+write("y3\n", "repo/games/totk/a.txt")
+expect(Freshness.of(record(second), repo: repo, games: games) == .changed, "an edit not committed yet: changed")
+_ = git("checkout", "-q", "--", ".")
+var dirty = record(second)
+dirty.dirty = true
+expect(Freshness.of(dirty, repo: repo, games: games) == .unknown, "built with local changes: unknown")
 
 let contrib = scratch.appendingPathComponent("TOTK/shader-list-contribution.txt")
 write("# rows\nV\ta\t{}\nV\ta\t{}\nR\tk\nB\tk\tv\tf\nnoise\n", "TOTK/shader-list-contribution.txt")
@@ -228,6 +236,32 @@ expect(Contribution.all(games: games, base: { scratch.appendingPathComponent($0)
 expect(c.step == 100 && Contribution.read(game: games.named("botw")!, file: contrib)!.step == 500, "each game's reminder step")
 expect(Contribution.read(game: games.named("by3")!, file: contrib) == nil, "a game without a shared shader list has no contribution")
 try? FileManager.default.removeItem(at: scratch)
+
+// a command for Terminal, and where an app keeps its saves
+expect(Shell.quote("/Users/j/Jae's Games/TOTK.ipa") == "'/Users/j/Jae'\\''s Games/TOTK.ipa'", "a quote in a path")
+expect(Shell.run("/bin/sh", ["-c", "printf %s " + Shell.quote("a 'b' $c")]).output == "a 'b' $c", "the shell reads it back as it was")
+expect(games.dataLocation("totk") == "~/Library/Application Support/MacNativeGames/TOTK", "a game's data folder")
+expect(games.dataLocation("odyssey").contains("Odyssey Data"), "a game that keeps its data next to the app")
+
+// drops on the Game page
+let sizes: [String: Int64] = ["/d/base.nsp": 16_000, "/d/upd.nsp": 900, "/d/card.xci": 100, "/d/upd.nsz": 2000]
+func drop(_ paths: [String], game: String? = nil, identified: String? = nil, takesMod: Bool = false) -> Dropped {
+    games.route(paths.map { URL(fileURLWithPath: $0) }, game: game.map { URL(fileURLWithPath: $0) }, identified: identified,
+                takesMod: takesMod, isFolder: { !$0.path.contains(".") }, isMod: { $0.lastPathComponent == "mod" },
+                size: { sizes[$0.path] ?? 0 })
+}
+let u = { (p: String) in URL(fileURLWithPath: p) }
+expect(drop(["/d/base.nsp"]) == Dropped(game: u("/d/base.nsp")), "the first file is the game")
+expect(drop(["/d/upd.nsp"], game: "/d/base.nsp", identified: "totk") == Dropped(update: u("/d/upd.nsp")), "an NSP onto a known game is its update")
+expect(drop(["/d/other.xci"], game: "/d/base.nsp", identified: "odyssey") == Dropped(game: u("/d/other.xci")), "a game without updates: replaced")
+expect(drop(["/d/upd.nsp"], game: "/d/base.nsp") == Dropped(game: u("/d/upd.nsp")), "before the game is known: replaced")
+expect(drop(["/d/upd.nsp", "/d/base.nsp"]) == Dropped(game: u("/d/base.nsp"), update: u("/d/upd.nsp")), "two NSPs: the larger is the game")
+expect(drop(["/d/upd.nsz", "/d/card.xci"]) == Dropped(game: u("/d/card.xci"), update: u("/d/upd.nsz")), "a card image is the game, however small")
+expect(drop(["/d/notes.txt"]) == Dropped(), "a file no game takes is ignored")
+expect(drop(["/d/fonts"]) == Dropped(), "a folder alone, before a game file, is ignored")
+expect(drop(["/d/fonts"], game: "/d/base.nsp") == Dropped(fonts: u("/d/fonts")), "a folder is the fonts")
+expect(drop(["/d/mod"], game: "/d/base.nsp", takesMod: true) == Dropped(mod: u("/d/mod")), "a folder with exefs/ or romfs/ is the mod")
+expect(drop(["/d/mod"], game: "/d/base.nsp") == Dropped(), "a mod for a game that takes none is ignored")
 
 print(failures == 0 ? "builder tests: all passed" : "builder tests: \(failures) failed")
 exit(failures == 0 ? 0 : 1)
