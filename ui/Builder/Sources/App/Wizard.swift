@@ -145,10 +145,10 @@ final class Wizard {
         out = nil
     }
 
-    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect.
+    /// Files and folders dropped on the Game page (Array<Game>.route), read again in one --inspect, which replaces one
+    /// still running. A mod is taken while --inspect hasn't said: if the game takes none, the next one says so.
     func drop(_ urls: [URL]) -> Bool {
-        guard !inspecting else { return false }
-        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report?.mod == true,
+        let d = preflight.games.route(urls, game: game, identified: identified, takesMod: report.map { $0.mod == true } ?? true,
                                       isFolder: \.isFolder,
                                       isMod: Self.isMod,
                                       size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
@@ -387,11 +387,10 @@ final class Wizard {
 
     /// Game files opened from Finder or with File > Open: the Game page, as if they were dropped there.
     func open(_ urls: [URL]) {
-        guard !running else { return }
+        guard !running, drop(urls) else { return }
         mode = .build
         if step != .keys { step = .game }
         outcome = nil
-        _ = drop(urls)
         if keys != nil && ready { step = .game }   // without the keys the Keys page asks first; the file is read after
     }
 

@@ -247,10 +247,11 @@ struct Contributions: View {
             }
             if let problem { Text(problem).foregroundStyle(.red) }
         }
-        .confirmationDialog(Text("Did you send the file?"), isPresented: Binding(presenting: $sending)) {
-            Button("Sent") { if let sending { update(sending) { try $0.markSent() } } }
+        // presenting: the dialog clears `sending` before a button's action runs, so the action gets the item from it
+        .confirmationDialog(Text("Did you send the file?"), isPresented: Binding(presenting: $sending), presenting: sending) { item in
+            Button("Sent") { update(item) { try $0.markSent() } }
             Button("Not Yet", role: .cancel) {}
-        } message: {
+        } message: { _ in
             Text("Once it's sent, the game reminds you again only after new rows.")
         }
     }

@@ -52,7 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { wizard?.running != true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let wizard, wizard.running else { return .terminateNow }
+        guard let wizard else { return .terminateNow }
+        guard wizard.running else {
+            wizard.cancel()   // a game file still being read (--inspect runs in its own process group too)
+            return .terminateNow
+        }
         let alert = NSAlert()
         alert.messageText = String(localized: "A build is running")
         alert.informativeText = String(localized: "Quitting cancels it. The next build reuses the steps that finished.")
@@ -337,10 +341,12 @@ struct SetupStatus: View {
     }
 }
 
-/// Missing tools with the command that installs each, and a way to look again after running them.
+/// Missing tools with the command that installs each, and a way to look again after running them (`recheck`; off for a
+/// command that installs nothing on this Mac).
 struct Commands: View {
     @Environment(Wizard.self) private var wizard
     var items: [Preflight.Missing]
+    var recheck = true
 
     var body: some View {
         ForEach(items, id: \.what) { item in
@@ -356,8 +362,10 @@ struct Commands: View {
                 }
             }
         }
-        if !items.isEmpty { Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary) }
-        Button("Check Again") { wizard.recheck() }
+        if recheck {
+            if !items.isEmpty { Text("Run the commands in Terminal, then check again.").foregroundStyle(.secondary) }
+            Button("Check Again") { wizard.recheck() }
+        }
     }
 }
 
@@ -736,7 +744,8 @@ struct ResultPage: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
                         Text("2. Run this in Terminal:")
-                        Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(tool, app))])
+                        Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(tool, app))],
+                                 recheck: false)
                         Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
                     }
                     .wrapping()
