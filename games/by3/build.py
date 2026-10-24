@@ -362,7 +362,7 @@ def parse_args(argv):
     ap.add_argument('-k', '--keys', type=Path, required=True, help='your prod.keys')
     ap.add_argument('-o', '--out', type=Path, help='the app to write (default: next to the game file)')
     ap.add_argument('--work', type=Path, help='work folder (default: BY3_build next to the game file); the app runs the game from it')
-    ap.add_argument('--platform', choices=('macos', 'ios'), default='macos', help='macos only')
+    ap.add_argument('--platform', choices=('macos', 'ios', 'visionos'), default='macos', help='macos only')
     fonts = ap.add_mutually_exclusive_group()
     fonts.add_argument('--firmware', type=Path, help='optional: an unpacked firmware NCA directory for the system shared fonts')
     fonts.add_argument('--shared-fonts', type=Path, help='optional: shared fonts extracted before, with their manifest.json')
@@ -392,8 +392,8 @@ def main(argv):
     for path in (game, keys):
         if not path.is_file():
             raise BuildError(f'no such file: {path}', code='input')
-    if args.platform == 'ios':
-        raise BuildError(f'{APP_NAME} has no iPhone / iPad build: build the Mac app (leave out --platform ios)', code='platform')
+    if args.platform != 'macos':
+        raise BuildError(f'{APP_NAME} has no iPhone / iPad or Vision Pro build: build the Mac app (leave out --platform)', code='platform')
     if args.dlc:
         raise BuildError(f'{APP_NAME} has no DLC support: leave out --dlc', code='input')
     if args.mod or args.install_mod_romfs:

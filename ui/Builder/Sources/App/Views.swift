@@ -379,7 +379,7 @@ struct Found: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("\(r.appName ?? "") \(r.displayVersion ?? "")", systemImage: "checkmark.seal.fill")
                     .font(.headline).foregroundStyle(.green)
-                Text("Identified from the game data (\((r.kind ?? "").uppercased())). Builds for: \((r.platforms ?? []).map { $0 == "ios" ? "iPhone/iPad" : "Mac" }.joined(separator: ", ")).")
+                Text("Identified from the game data (\((r.kind ?? "").uppercased())). Builds for: \((r.platforms ?? []).map(Wizard.platformName).joined(separator: ", ")).")
                     .foregroundStyle(.secondary)
             }
         } else if case .failed(let code, let message) = wizard.inspectFailure {
@@ -394,14 +394,13 @@ struct TargetPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PageTitle(title: "What to build",
-                      detail: wizard.platform == "ios"
-                        ? "An unsigned IPA for iPhone or iPad (iOS/iPadOS 26), which you install with a sideloading tool."
+                      detail: wizard.isDevice
+                        ? "An unsigned IPA for \(Wizard.platformName(wizard.platform)) (iOS/iPadOS 26 or visionOS 26), which you sign and install from this Mac."
                         : "Pick the app's final place now: moving it later makes the first start compile the startup shaders again (a few minutes).")
             Form {
                 if wizard.platforms.count > 1 {
                     Picker("Build for", selection: $wizard.platform) {
-                        Text("Mac").tag("macos")
-                        Text("iPhone / iPad").tag("ios")
+                        ForEach(wizard.platforms, id: \.self) { Text(Wizard.platformName($0)).tag($0) }
                     }
                     .pickerStyle(.segmented)
                 } else {
@@ -413,7 +412,7 @@ struct TargetPage: View {
                         Spacer()
                         Button("Change…") {
                             let panel = NSSavePanel()
-                            let ext = wizard.platform == "ios" ? "ipa" : "app"
+                            let ext = wizard.isDevice ? "ipa" : "app"
                             panel.allowedContentTypes = ext == "app" ? [.applicationBundle] : [UTType(filenameExtension: "ipa") ?? .data]
                             panel.nameFieldStringValue = wizard.out?.lastPathComponent ?? "\(wizard.report?.appName ?? "Game").\(ext)"
                             panel.directoryURL = wizard.out?.deletingLastPathComponent()
@@ -438,24 +437,24 @@ struct TargetPage: View {
                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if wizard.mod != nil && wizard.platform == "ios" {
-                    Text("An iPhone / iPad app loads no mod folder: only the mod's code patches go in.")
+                if wizard.mod != nil && wizard.isDevice {
+                    Text("An iPhone / iPad or Vision Pro app loads no mod folder: only the mod's code patches go in.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                if wizard.platform == "ios" {
+                if wizard.isDevice {
                     Toggle("Remind me on this Mac to send missing shaders", isOn: $wizard.shaderReminder)
-                    Text("While the iPhone / iPad with the game is connected, this Mac asks whether to send the shaders the shared list lacks (keys and bind states only, never game files). Nothing is sent without asking.")
+                    Text("While the device with the game is connected, this Mac asks whether to send the shaders the shared list lacks (keys and bind states only, never game files). Nothing is sent without asking.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .formStyle(.grouped)
-            if wizard.platform == "ios" && !wizard.preflight.iosMissing.isEmpty {
-                Missing(items: wizard.preflight.iosMissing, title: "An iPhone / iPad build needs these on this Mac")
+            if wizard.isDevice && !wizard.preflight.iosMissing.isEmpty {
+                Missing(items: wizard.preflight.iosMissing, title: "An iPhone / iPad or Vision Pro build needs these on this Mac")
             }
             Group {
                 if let space = wizard.report?.spaceGb?[wizard.platform] {
-                    Text(wizard.platform == "ios"
-                         ? "The first iPhone / iPad build downloads and compiles device libraries and needs about \(space) GB free."
+                    Text(wizard.isDevice
+                         ? "The first device build downloads and compiles device libraries and needs about \(space) GB free."
                          : "The first build takes a while and needs about \(space) GB free.")
                 }
                 Text("The work folder is kept, so a later build, or one that was stopped, reuses what is already done.")
@@ -571,13 +570,15 @@ struct ResultPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             switch wizard.outcome {
-            case .done(let app) where app.pathExtension.lowercased() == "ipa":
-                PageTitle(title: "Your IPA is ready",
-                          detail: "It is unsigned: a sideloading tool signs it with your Apple ID and installs it.")
+            case .done(let app) where wizard.isDevice:
+                PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
+                          detail: "It is unsigned: install_device.py signs it with your own Xcode team and installs it. A free Apple ID signs for 7 days; run it again to renew, and the saves stay.")
                 Text(app.path).textSelection(.enabled)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("1. Connect the iPhone or iPad (iOS/iPadOS 26) and open your sideloading tool.")
-                    Text("2. Install this IPA with it, keeping the app's entitlements: the game needs the increased memory limit.")
+                    Text("1. Add your Apple ID in Xcode (Xcode > Settings > Accounts), and connect the device.")
+                    Text("2. Run this in Terminal from the MacNativeGames folder:")
+                    Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"),
+                                                       command: "python3.14 games/totk/ios/tools/install_device.py '\(app.path)'")])
                     Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
                 }
                 .fixedSize(horizontal: false, vertical: true)

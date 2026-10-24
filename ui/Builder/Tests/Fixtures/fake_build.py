@@ -44,8 +44,8 @@ if '--inspect' in argv:
           display_version={'botw190': '1.9.0', 'botw160': '1.6.0', 'v143': '1.4.3', 'v0': '1.0.0'}[version],
           kind='nsp' if game.endswith('.nsp') else 'xci',
           needs_fonts=(botw or game.endswith('.nsp')) and '--firmware' not in argv and '--shared-fonts' not in argv,
-          needs_update=False, platforms=['macos'] if botw else ['macos', 'ios'], dlc=version == 'botw190', mod=not botw,
-          space_gb={'macos': 22} if botw else {'macos': 40 if update else 25, 'ios': 60 if update else 45},
+          needs_update=False, platforms=['macos', 'ios'] if botw else ['macos', 'ios', 'visionos'], dlc=version == 'botw190', mod=not botw,
+          space_gb={'macos': 22, 'ios': 22} if botw else {'macos': 40 if update else 25, 'ios': 60 if update else 45, 'visionos': 60 if update else 45},
           work=os.path.join(folder, 'BotW_build' if botw else 'TOTK_build'), default_out=os.path.join(folder, APP + '.app'))
     sys.exit(0)
 steps = [(0, 'prepare', 'fetching the pinned SPIRV-Cross sources'), (1, 'code', 'extracting the ExeFS from the game file'),

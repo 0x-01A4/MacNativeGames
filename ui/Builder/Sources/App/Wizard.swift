@@ -140,14 +140,26 @@ final class Wizard: ObservableObject {
         return FileManager.default.fileExists(atPath: mod.appendingPathComponent("romfs").path, isDirectory: &folder) && folder.boolValue
     }
 
-    /// The platforms the found game builds for (inspect); iPhone/iPad also needs an Xcode on this Mac.
+    /// The platforms the found game builds for (inspect); iPhone/iPad and Vision Pro also need an Xcode on this Mac.
     var platforms: [String] { report?.platforms ?? ["macos"] }
+
+    /// An iPhone / iPad or Vision Pro build: an IPA made with ios/tools/build_ipa.py, with no mod folder.
+    var isDevice: Bool { platform != "macos" }
+
+    static func platformName(_ platform: String) -> String {
+        switch platform {
+        case "macos": String(localized: "Mac")
+        case "ios": String(localized: "iPhone / iPad")
+        case "visionos": String(localized: "Apple Vision Pro")
+        default: platform
+        }
+    }
 
     /// .app for the Mac, .ipa for iPhone/iPad, in the same folder and with the same name.
     private func matchOutToPlatform() {
         guard let current = out ?? report?.defaultOut.map({ URL(fileURLWithPath: $0) }) else { return }
-        out = current.deletingPathExtension().appendingPathExtension(platform == "ios" ? "ipa" : "app")
-        if platform == "ios" { installModRomfs = false }
+        out = current.deletingPathExtension().appendingPathExtension(isDevice ? "ipa" : "app")
+        if isDevice { installModRomfs = false }
     }
 
     func setUpdate(_ url: URL?) {
@@ -168,7 +180,7 @@ final class Wizard: ObservableObject {
         switch step {
         case .keys: ready && keys != nil
         case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
-        case .target: out != nil && (platform != "ios" || preflight.iosMissing.isEmpty)
+        case .target: out != nil && (!isDevice || preflight.iosMissing.isEmpty)
         case .build, .result: false
         }
     }
@@ -190,7 +202,7 @@ final class Wizard: ObservableObject {
     private func buildOptions(_ out: URL) -> [String] {
         var args = ["--platform", platform, "-o", out.path]
         if installModRomfs && platform == "macos" && mod != nil { args.append("--install-mod-romfs") }
-        if platform == "ios" && !shaderReminder { args.append("--no-shader-reminder") }
+        if isDevice && !shaderReminder { args.append("--no-shader-reminder") }
         return args
     }
 
@@ -214,7 +226,7 @@ final class Wizard: ObservableObject {
                 if !(event.platforms ?? ["macos"]).contains(self.platform) { self.platform = "macos" }
                 if self.out == nil, let path = event.defaultOut {
                     let url = URL(fileURLWithPath: path)
-                    self.out = self.platform == "ios" ? url.deletingPathExtension().appendingPathExtension("ipa") : url
+                    self.out = self.isDevice ? url.deletingPathExtension().appendingPathExtension("ipa") : url
                 }
             case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "")
             default: break
@@ -249,7 +261,7 @@ final class Wizard: ObservableObject {
             case "done":
                 let app = URL(fileURLWithPath: event.out ?? out.path)
                 self.outcome = .done(app)
-                if event.platform != "ios" { self.remember(app) }
+                if (event.platform ?? "macos") == "macos" { self.remember(app) }
             case "error": self.outcome = .failed(code: event.code, message: event.message ?? "")
             case "cancelled": self.outcome = .cancelled
             default: break

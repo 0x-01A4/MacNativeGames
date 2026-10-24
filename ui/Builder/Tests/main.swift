@@ -90,7 +90,7 @@ do {
 
     setenv("FAKE_GAME", "botw", 1)
     let (_, botw) = try fakeRun("ok", ["/Games/botw.nsp", "-k", "/Keys/prod.keys", "--update", "/Games/u.nsp", "--inspect", "--json-progress"])
-    expect(botw.events.last?.dlc == true && botw.events.last?.platforms == ["macos"], "Breath of the Wild 1.9.0 takes DLC, Mac only")
+    expect(botw.events.last?.dlc == true && botw.events.last?.platforms == ["macos", "ios"], "Breath of the Wild 1.9.0 takes DLC, Mac and iPhone / iPad")
     let (refused, mod) = try fakeRun("ok", ["/Games/botw.xci", "-k", "/Keys/prod.keys", "--mod", "/Mods/x", "--inspect", "--json-progress"])
     expect(refused == 1 && mod.events.last?.code == "input", "a mod for Breath of the Wild is refused at inspect")
     setenv("FAKE_GAME", "by3", 1)
