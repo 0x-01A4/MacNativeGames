@@ -45,7 +45,9 @@ HEADER = ('# TOTK shader list v1 (games/totk/scripts/shader_list.py; docs/shader
 HEADERS = {'botw': ('# Breath of the Wild shader list v1 (games/totk/scripts/shader_list.py; docs/shader-list.md). The one list for every platform.\n'
                     '# Identifiers and pipeline descriptors only, no game data. Translation chain totk-native-v7-unverified.\n'),
            'smo': ('# Super Mario Odyssey shader list v1 (games/smo/scripts/shader_list.py; docs/shader-list.md). The one list for every platform.\n'
-                   '# Identifiers and pipeline descriptors only, no game data. Translation chain totk-native-v7-unverified.\n')}
+                   '# Identifiers and pipeline descriptors only, no game data. Translation chain totk-native-v7-unverified.\n'),
+           'ssbu': ('# Super Smash Bros. Ultimate shader list v1 (games/ssbu/scripts/shader_list.py; docs/shader-list.md). The one list for every platform.\n'
+                    '# Identifiers and pipeline descriptors only, no game data. Translation chain totk-native-v7-ssbu-offsets.\n')}
 EXPORT = '# Generated from {} by scripts/shader_list.py; edit that list, not this file.\n'
 KEY = re.compile(r'^[0-9a-f]{64}$')
 VARIANT = re.compile(r'^[0-9a-f]{64}-[0-9a-f]{12}_b$')
