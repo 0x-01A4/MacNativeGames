@@ -7198,6 +7198,10 @@ int mtl_warm_wait(int timeout_ms) {
     uint64_t t0 = bp_now();
     while (atomic_load(&g_warm_running) && (timeout_ms < 0 || (bp_now() - t0) / 1000000ull < (uint64_t)timeout_ms)) usleep(2000);
     atomic_store(&g_warm_in_play, 1);   // the player goes into the world: the rest of the warm-up uses at most 2 threads
+    /* Odyssey: the game plays from here, so the boot overlay ("Warming shaders and pipelines N%") goes away now, not when
+       the whole list is done: on a first launch it covered the world for minutes while sound and input already ran (24
+       October). The rest of the warm-up keeps going behind the game. */
+    if (runtime_warm_done) runtime_warm_done();
     return (int)((bp_now() - t0) / 1000000ull) + 1;
 }
 /* TOTK (iOS): variants the phone was missing (shader-requests/, written by totk_rt_variant) that fill_shaders.py has since
