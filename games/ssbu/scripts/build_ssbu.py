@@ -30,6 +30,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -288,6 +289,23 @@ def step_data(work, py, game, keys, logs, firmware=None, shared_fonts=None):
     run([py, 'scripts/prepare_runtime.py', '--work', work, *copy], logs / 'prepare-runtime.log')
 
 
+def make_path(work):
+    """The work folder as make can name it. Make splits every path at spaces (2026-10-24: a work folder in
+    "Super Smash Brothers Ultimate/" stopped the first make with "No rule to make target"), so a folder with a space is
+    handed over as a link without one in the temporary folder; everything still lands in the work folder."""
+    if ' ' not in str(work):
+        return work
+    alias = Path(tempfile.gettempdir()) / f'ssbu-work-{hashlib.sha256(str(work).encode()).hexdigest()[:12]}'
+    if ' ' in str(alias):
+        raise BuildError(f'the work folder {work} has a space and the temporary folder {alias.parent} too; pass --work '
+                         'a folder without spaces')
+    if alias.is_symlink() and alias.resolve() != work.resolve():
+        alias.unlink()
+    if not alias.is_symlink():
+        alias.symlink_to(work)
+    return alias
+
+
 # ---- 5. shaders ----
 def list_with_notes(work, py, logs):
     """The shared list plus what the player's own game noted that it lacks (the app keeps those rows in
@@ -312,7 +330,8 @@ def list_with_notes(work, py, logs):
 
 
 def step_shaders(work, py, logs):
-    make = ['make', f'WORK={work}', f'PY={py}']
+    mk = make_path(work)
+    make = ['make', f'WORK={mk}', f'PY={mk / "venv/bin/python"}']
     run([*make, 'shader-tools'], logs / 'shader-tools.log')
     lst = list_with_notes(work, py, logs)
     say('5. shaders: the startup shaders from data.arc and the shared list (long the first time; a rerun reuses them)')
@@ -330,7 +349,8 @@ def step_shaders(work, py, logs):
 # ---- 6. binary, launcher, icon ----
 def step_binary(work, py, game, keys, logs):
     say('6. app: the game binary and the launcher')
-    run(['make', f'-j{os.cpu_count() or 4}', f'WORK={work}', f'PY={py}', 'runtime'], logs / 'runtime.log')
+    mk = make_path(work)
+    run(['make', f'-j{os.cpu_count() or 4}', f'WORK={mk}', f'PY={mk / "venv/bin/python"}', 'runtime'], logs / 'runtime.log')
     run(['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wall', '-Ithird_party/d2r_gfx/gfx/nvn', '-Iruntime', 'app/launcher.m',
          '-framework', 'AppKit', '-o', work / 'build/app-launcher'], logs / 'launcher.log')
     icon = work / 'build/AppIcon.icns'
