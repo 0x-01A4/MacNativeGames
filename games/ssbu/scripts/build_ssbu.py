@@ -146,6 +146,20 @@ def input_kind(game):
     raise BuildError(f'{game}: expected an XCI card image or an NSP')
 
 
+def running_from(work):
+    """Pids of games started from this work folder's binary (make boot, a test script): a build replaces files they run
+    (the binary, the shader translator), so it waits for them to close instead (2026-10-24: a build during play ended
+    the player's session; the save was intact)."""
+    binary = (work / 'build/ssbu-native').resolve()
+    found = subprocess.run(['pgrep', '-x', 'ssbu-native'], capture_output=True, text=True).stdout.split()
+    pids = []
+    for pid in found:
+        lines = subprocess.run(['lsof', '-a', '-p', pid, '-d', 'txt', '-Fn'], capture_output=True, text=True).stdout.splitlines()
+        if any(line[1:] and Path(line[1:]).resolve() == binary for line in lines if line.startswith('n')):
+            pids.append(pid)
+    return pids
+
+
 def step_environment(work, python, logs):
     venv = work / 'venv'
     if not (venv / 'bin/python').exists():
@@ -240,10 +254,12 @@ def step_code(work, py, base, update, keys, logs):
 
 
 def fonts_valid(folder):
+    """scripts/extract_shared_fonts.py finished: six fonts, each <type>-<name>.bfttf with the SHA-256 the manifest names
+    ("file" there is the font's name in the firmware, not in this folder)."""
     try:
         manifest = json.loads((folder / 'manifest.json').read_text())
         return (manifest.get('status') == 'pass' and [f['type'] for f in manifest['fonts']] == list(range(6))
-                and all((folder / f['file']).is_file() and sha256(folder / f['file']) == f['sha256'] for f in manifest['fonts']))
+                and all(sha256(folder / f"{f['type']}-{f['name']}.bfttf") == f['sha256'] for f in manifest['fonts']))
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
@@ -267,7 +283,9 @@ def step_data(work, py, game, keys, logs, firmware=None, shared_fonts=None):
             raise BuildError(f'the system fonts in {fonts} do not check out (see {logs / "shared-fonts.log"})')
         source = fonts
     say('4. data: runtime tables, RomFS index and fonts')
-    run([py, 'scripts/prepare_runtime.py', '--work', work, '--shared-fonts', source], logs / 'prepare-runtime.log')
+    # fonts already in the work folder are read there; --shared-fonts copies another folder in
+    copy = [] if Path(source).resolve() == fonts.resolve() else ['--shared-fonts', source]
+    run([py, 'scripts/prepare_runtime.py', '--work', work, *copy], logs / 'prepare-runtime.log')
 
 
 # ---- 5. shaders ----
@@ -505,6 +523,12 @@ def main(argv):
     if shutil.disk_usage(work).free / 2**30 < 30 and not romfs_valid(work / f'extracted/{VERSION}/romfs'):
         raise BuildError('needs about 30 GB free for the work folder (the app itself is an APFS clone of it on the same volume)')
     say(f'{APP_NAME} {EXPECTED["display_version"]}; work folder {work}')
+    notified = 0
+    while pids := running_from(work):
+        if time.monotonic() - notified >= 60:
+            say(f'the game runs from this work folder (pid {", ".join(pids)}); the build waits until it is closed')
+            notified = time.monotonic()
+        time.sleep(5)
     py = step_environment(work, sys.executable, logs)
     step_code(work, py, game, update, keys, logs)
     step_data(work, py, game, keys, logs, firmware=a.firmware and a.firmware.expanduser().resolve(),

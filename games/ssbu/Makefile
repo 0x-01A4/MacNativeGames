@@ -40,7 +40,8 @@ $(OUT)/ssbu-native: $(RUNTIME_SRC) $(RUNTIME_HEADERS) $(GENERATED) $(GFX_OBJECTS
 	  -framework Metal -framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics \
 	  -framework CoreText -framework UniformTypeIdentifiers -fobjc-arc -framework Cocoa -framework CoreVideo -framework CoreFoundation \
 	  -framework VideoToolbox -framework CoreMedia \
-	  -framework AudioToolbox -framework GameController -framework CoreHaptics -framework IOKit -o "$@"
+	  -framework AudioToolbox -framework GameController -framework CoreHaptics -framework IOKit -o "$@.new"
+	mv -f "$@.new" "$@"   # a new file, not new bytes in the old one: a game started from it keeps running
 
 runtime: $(OUT)/ssbu-native
 
@@ -55,7 +56,7 @@ shader-tools: $(OUT)/shader-service/totk_xlate $(OUT)/spirv-cross/spirv-cross
 $(OUT)/shader-service/totk_xlate: prebuilt/macos-arm64/totk_xlate prebuilt/macos-arm64/totk_xlate.sha256
 	@mkdir -p "$(dir $@)"
 	test "$$(shasum -a 256 "$<" | cut -d' ' -f1)" = "$$(cut -d' ' -f1 "prebuilt/macos-arm64/totk_xlate.sha256")"
-	cp "$<" "$@" && chmod +x "$@"
+	cp "$<" "$@.new" && chmod +x "$@.new" && mv -f "$@.new" "$@"   # as above: a running translator keeps its file
 $(OUT)/spirv-cross/spirv-cross:
 	@mkdir -p "$(WORK)/src" "$(dir $@)obj"
 	test -d "$(WORK)/src/SPIRV-Cross" || git clone -q https://github.com/KhronosGroup/SPIRV-Cross.git "$(WORK)/src/SPIRV-Cross"

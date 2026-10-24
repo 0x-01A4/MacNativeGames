@@ -1,80 +1,77 @@
-# Super Mario Odyssey (work in progress)
+# Super Smash Bros. Ultimate native Mac port
 
-An experiment: run Super Mario Odyssey natively the way `games/totk` runs Tears of the Kingdom and `games/by3` runs
-Bayonetta 3. **It starts and draws its first screen** (the "Try playing with detached Joy-Con" notice, with the game's
-logo and the system fonts) and runs its frame loop without a stop for minutes; not played further yet, no sound heard
-yet. How the work was done and what was found on the way: [CHANGELOG.md](CHANGELOG.md).
+Super Smash Bros. Ultimate **13.0.2** running natively on Apple silicon Macs, built from **your own copy** of the game.
+The game's own ARM64 code (the program and the 98 NRO modules for fighters, stages and modes) is rewritten ahead of time
+and runs directly on the Mac's CPU: no interpreter, no JIT, no CPU emulator. System services are answered by a small
+native host, and the Switch's NVN graphics are rebuilt on Metal 4, with the game's GPU shaders translated to Metal.
 
-Run (after stage 1 below), from `games/smo`:
+**No game content is in this repository, and none will ever be.** You need a legal dump of your own cartridge and its
+update, and keys from your own Switch. We do not help anyone obtain keys or game files.
 
-```sh
-make prepare SHARED_FONTS="<a TotK build>/totk/extracted/firmware/shared-fonts"
-make seed shader-libs runtime boot
-```
+This folder carries its own copy of everything it builds and runs with (runtime, graphics layer, rewriter, shader
+translator, scripts); nothing outside `games/ssbu` is read. How the port was done and what was found on the way:
+[CHANGELOG.md](CHANGELOG.md).
 
-`make shader-libs` compiles the seed's shaders into Metal libraries ahead of time (needs the Metal toolchain:
-`xcodebuild -downloadComponent MetalToolchain`), so a new area does not wait for Metal to compile them while it loads.
+## Status (24 October 2026)
 
-`make seed` prepares the shaders before the first start, as the Tears of the Kingdom build does: every shader of
-`ShaderData/` and `SystemData/` for its default bind state and every variant the shared list `assets/shader_list.tsv`
-names (identifiers only, no game data; [docs/shader-list.md](../../docs/shader-list.md)). After playing, `make shader-list`
-adds what you met to the list; send it in a pull request so everyone's next build carries it.
+Tested on one Mac: MacBook Pro, Apple M1 Max, 64 GB, macOS 27.
 
-Keys as for Tears of the Kingdom: J is A, K is B, WASD the left stick, Return +.
-
-You must own the game: use your own NSPs and the `prod.keys` dumped from your own Switch. Nothing from the game is in
-this repository; `SMO_build/` (the work folder) and `mods/` are ignored by git.
-
-## Inputs
-
-- Base `0100000000010000` (v0, 1.0.0) and update 1.4.1 `0100000000010800` (v393216), both NSP.
-- The code comes from the update (SDK 7.3.2; the base 1.0.0 is SDK 3.5.1). Every hash is pinned in
-  `assets/expected-v1.4.1.json`.
-
-## Stage 1: code and data
-
-From `games/smo`:
-
-```sh
-python3.14 -m venv SMO_build/venv && SMO_build/venv/bin/pip install -r requirements.txt
-PY=SMO_build/venv/bin/python
-$PY scripts/extract_code.py "<update 1.4.1>.nsp" --keys prod.keys --output SMO_build/extracted/v141/exefs
-$PY scripts/merge_romfs.py "<base>.nsp" "<update 1.4.1>.nsp" --keys prod.keys --output SMO_build/extracted/v141/romfs
-for m in sdk subsdk0 main; do
-  DM_RULESET=native DM_PRIVATE_GATES=0 $PY third_party/d2r/patch_nso.py SMO_build/extracted/v141/exefs/$m SMO_build/rewritten/v141 $m
-done
-$PY scripts/check_expected.py
-```
-
-Verifying the rewrite (needs `brew install llvm` for `structck.py`):
-
-```sh
-for m in sdk subsdk0 main; do
-  $PY third_party/d2r/structck.py SMO_build/rewritten/v141 $m SMO_build/extracted/v141/exefs/$m
-  $PY third_party/d2r/equiv.py SMO_build/rewritten/v141 $m SMO_build/extracted/v141/exefs/$m --jobs 8
-done
-```
-
-| Check | Result |
+| Works | Details |
 |---|---|
-| ExeFS (main, sdk, subsdk0, rtld, main.npdm) | FS header, hash table and every block verified |
-| Merged RomFS (base + BKTR update) | all six IVFC levels: 346,568 data blocks; 4,972 files, 5.68 GB; one flipped byte is caught |
-| Rewrite structure (`structck.py`) | OK for all three modules, 0 violations |
-| Rewrite semantics (`equiv.py`, random states) | 24,343 sites, 0 divergent; mutation controls: see the changelog |
-| Rewrite repeatability | two runs give identical bytes |
+| Start, title, menus | intro movie with sound, all main menus, options |
+| Fights | Smash with several fighters and stages, items; keyboard and game controllers |
+| World of Light (adventure) | map, spirit battles, the Spirit Board, saving and loading |
+| Saves | autosave and reload; the save picture of World of Light |
+| Language | changing it in the game's options restarts the game, as on the console |
+| Picture | 1080p as shipped or 2K (2560x1440), chosen before the start (app: Picture menu); MetalFX can upscale to the window |
+| Sound and movies | game audio (hardware Opus), VP9 movies with Vorbis sound |
 
-## What the game needs (port probe `tools/port_probe.py`, a separate change; against Tears of the Kingdom 1.4.3)
-
-| Part | 1.4.1 |
+| Not done or not verified | Details |
 |---|---|
-| NVN | 465 names carried: 383 implemented in the TotK graphics layer, 4 no-ops, 75 known but not implemented, 3 not in `names.txt` |
-| SDK functions | 1,186 imported: 98 replaced by the TotK host, 809 TotK also runs natively, 279 unproven (audio, sockets/SSL, BCAT, hid vibration, the nnos C API, 11 NVIDIA driver functions imported directly) |
-| Services | 44 in the npdm, all listed by TotK too |
-| SVCs | 3 not in TotK: 0x48, 0x49, 0x53 |
+| Online | answered as a console without an internet connection; the online menu closes again |
+| Frame interpolation (key 2) | creates no frames in this game (the host lacks the game's camera, depth and UI) |
+| Album | saving a screenshot to the Switch album is not answered yet |
+| Known picture gaps | the alpha test of a few menu graphics is not applied; fighters were seen black once in a while (cause not found yet) |
+| iPhone / iPad | no build: the game loads code modules while it runs, which iOS does not allow |
+| Labo VR | not available on the Mac |
 
-These are upper bounds: a name the game carries may never be called.
+## Build
 
-## Next
+Needs a Mac with Apple silicon and macOS 26 or later, Xcode with the Metal toolchain
+(`xcodebuild -downloadComponent MetalToolchain`), Python 3.14, and from Homebrew `opus libvpx libvorbis libogg`.
 
-Stage 4: get past the first notice with the keyboard or a controller to the title screen and into the first kingdom;
-check sound (the audio renderer runs, its output was silent so far) and whether the picture is right.
+```sh
+cd games/ssbu
+python3.14 scripts/build_ssbu.py --game "<your card image>.xci" --update "<your 13.0.2 update>.nsp" --keys "<your prod.keys>"
+```
+
+- The game file is the 1.0.0 card image (`01006A800016E000`, XCI); a base NSP works with `--firmware <unpacked firmware
+  NCA folder>` for the system fonts. The update is 13.0.2 (`01006A800016E800`), whose code the app runs. Every input is
+  checked against `assets/expected-v13.0.2.json` (hashes only).
+- The first build takes a while (the 17.6 GB RomFS, the rewrite, and the startup shaders from data.arc); a second build
+  reuses every verified step.
+- The work folder is `games/ssbu/SSBU_build` (`--work` to choose another). It holds game data: never share or commit
+  it. Git ignores it, game files, keys and apps in this folder.
+- The app goes next to the game file (`--out` to choose). Saves, the shader cache and the log are in
+  `~/Library/Application Support/MacNativeGames/SSBU` and `~/Library/Logs/MacNativeGames/ssbu.log`; a build never
+  touches them.
+
+## Play
+
+Keys as in Tears of the Kingdom: WASD the left stick, arrow keys the right stick, J is A, K or Space is B, I is X, U is Y,
+Q / E are L / R, Return is +. Key 1 shows the shortcut reminder. Game controllers recognized by macOS work as a Pro
+Controller. The **Picture** menu sets 1080p or 2K for the next start (Smash makes its render images once, at start).
+
+## Shaders
+
+The app carries every shader of data.arc and every variant of the shared list (`assets/shader_list.tsv`: shader keys and
+bind states only, no game data; [docs/shader-list.md](../../docs/shader-list.md)), compiled into Metal libraries, so a
+new stage or fighter does not translate while it draws. What your own game meets that the list lacks is noted on your
+Mac and built in by your next build; nothing is sent anywhere.
+
+## Developer tools
+
+- `scripts/gap_report.py`: what the host reported it could not do yet, from its own logs (`--session <log>` for one).
+- `scripts/override_audit.py`: every SDK function the host replaces, checked against the original's return type in the
+  SDK and how the game reads the answer.
+- `tests/`: probes of the input and graphics code, run like the other games' tests.
