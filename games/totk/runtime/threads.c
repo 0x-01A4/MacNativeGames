@@ -394,7 +394,7 @@ static void core_wait_report(thr_t *w, uint64_t since) {
    owner running game code (median 4.5 ms). A waiter now signals (SIGUSR2) each owner it beats, again every millisecond
    while it waits, and the owner gives its core up in the handler only when interrupted in the game's own code at the
    top level (pc in a module's original code, host-stack slot set: no host lock held, not in libc), as in BotW. Who may
-   preempt: a strictly better priority. TOTK_ASYNC_PREEMPT=0 leaves the preemption at SVC entry only (as before). */
+   preempt: a strictly better priority. Off by default (preemption at SVC entry only, as before); TOTK_ASYNC_PREEMPT=1 turns it on. */
 #include <string.h>
 #include <sys/ucontext.h>
 extern uint64_t runtime_hle_tsd_off;   // hle_stack.c
@@ -407,13 +407,13 @@ extern pthread_key_t runtime_keys[8];   // loader.c: [2] holds the game's thread
 static void totk_preempt_signal(int sig, siginfo_t *si, void *context);
 static int totk_ap_on(void) {   // holding G
     if (g_totk_ap < 0) {
-        const char *e = getenv("TOTK_ASYNC_PREEMPT"); g_totk_ap = !(e && !strcmp(e, "0"));
+        const char *e = getenv("TOTK_ASYNC_PREEMPT"); g_totk_ap = e && !strcmp(e, "1");   // off by default until measured on 1.4.3 (after PR #488)
         if (g_totk_ap) {
             struct sigaction a = {0}; a.sa_sigaction = totk_preempt_signal; a.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
             sigemptyset(&a.sa_mask);
             if (sigaction(SIGUSR2, &a, NULL)) g_totk_ap = 0;
         }
-        fprintf(stderr, "[threads] asynchronous preemption of virtual cores (Horizon's rule): %s\n", g_totk_ap ? "on" : "off (TOTK_ASYNC_PREEMPT=0)");
+        fprintf(stderr, "[threads] asynchronous preemption of virtual cores (Horizon's rule): %s\n", g_totk_ap ? "on (TOTK_ASYNC_PREEMPT=1)" : "off");
     }
     return g_totk_ap;
 }
