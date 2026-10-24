@@ -203,9 +203,27 @@ struct PageTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-            Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(detail).note()
         }
         .padding(.bottom, 12)
+    }
+}
+
+extension View {
+    /// As many lines as the text needs (in a Form or beside a button it would otherwise stop at one).
+    func wrapping() -> some View { fixedSize(horizontal: false, vertical: true) }
+
+    /// The explanation under a choice: secondary, and wrapping.
+    func note() -> some View { foregroundStyle(.secondary).wrapping() }
+
+    /// One item of a list: an app, a work folder, a contribution file.
+    func card(padding: CGFloat = 12) -> some View {
+        self.padding(padding).background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// A box that stands out from the page: what's missing (orange), what's good to know (blue).
+    func tinted(_ color: Color, opacity: Double = 0.1, padding: CGFloat = 14) -> some View {
+        self.padding(padding).background(color.opacity(opacity), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -266,7 +284,7 @@ struct KeysPage: View {
                 }
                 if let moved = wizard.keysMoved {
                     Text("The remembered prod.keys is no longer at \(moved). Choose it where it is now.")
-                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(.orange).wrapping()
                 }
                 Toggle("Remember this location", isOn: $wizard.rememberKeys)
                     .onChange(of: wizard.rememberKeys) { wizard.saveKeysChoice() }
@@ -283,6 +301,12 @@ struct KeysPage: View {
     }
 }
 
+extension Missing where Extra == EmptyView {
+    init(items: [Preflight.Missing], title: LocalizedStringKey) {
+        self.init(items: items, title: title) { EmptyView() }
+    }
+}
+
 /// What build_app.py needs on this Mac; the commands to run when something is missing.
 struct SetupStatus: View {
     @EnvironmentObject var wizard: Wizard
@@ -291,9 +315,7 @@ struct SetupStatus: View {
     var body: some View {
         let p = wizard.preflight
         if p.repo == nil || !p.missing.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("This Mac needs a few things first", systemImage: "exclamationmark.triangle.fill")
-                    .font(.headline).foregroundStyle(.orange)
+            Missing(items: p.missing, title: "This Mac needs a few things first") {
                 if p.repo == nil {
                     HStack {
                         Text("The MacNativeGames folder (the one with build_app.py) was not found.")
@@ -305,13 +327,10 @@ struct SetupStatus: View {
                     }
                     if let notRepo {
                         Text("\(notRepo) isn't a MacNativeGames checkout: it needs build_app.py and games/*/game.json.")
-                            .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(.red).wrapping()
                     }
                 }
-                Commands(items: p.missing)
             }
-            .padding(14)
-            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -340,17 +359,19 @@ struct Commands: View {
     }
 }
 
-struct Missing: View {
+/// What this Mac lacks for a build, under a title; `extra` comes before the commands.
+struct Missing<Extra: View>: View {
     var items: [Preflight.Missing]
     var title: LocalizedStringKey
+    @ViewBuilder var extra: Extra
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: "exclamationmark.triangle.fill").font(.headline).foregroundStyle(.orange)
+            extra
             Commands(items: items)
         }
-        .padding(14)
-        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .tinted(.orange)
     }
 }
 
@@ -426,7 +447,7 @@ struct GamePage: View {
                             }
                         }
                         Text("Code patches (exefs/) are merged into the app. RomFS files (romfs/) are installed on the Output page or by hand; see docs/mods.md.")
-                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .note()
                     }
                 }
             }
@@ -453,7 +474,7 @@ struct Found: View {
                 Label("\(r.appName ?? ""): the base game", systemImage: "plus.circle.fill")
                     .font(.headline).foregroundStyle(.orange)
                 Text("This game is built from the base game and its update together. Add the update to continue.")
-                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .note()
             }
         } else if let r = wizard.report {
             VStack(alignment: .leading, spacing: 6) {
@@ -511,20 +532,20 @@ struct TargetPage: View {
                     Toggle("Install the mod's RomFS files into the game's mod folder", isOn: $wizard.installModRomfs)
                     if wizard.installModRomfs {
                         Text("When the build ends, the mod folder for this game version is replaced by the mod's romfs/ files and their manifest. What it holds now is moved next to it as a dated backup, not deleted.")
-                            .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(.orange).wrapping()
                     } else {
                         Text("Off: the build leaves your mod folder alone and says how to fill it by hand.")
-                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .note()
                     }
                 }
                 if wizard.mod != nil && wizard.isDevice {
                     Text("An iPhone / iPad or Vision Pro app loads no mod folder: only the mod's code patches go in.")
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .note()
                 }
                 if wizard.isDevice {
                     Toggle("Remind me on this Mac to send missing shaders", isOn: $wizard.shaderReminder)
                     Text("While the device with the game is connected, this Mac asks whether to send the shaders the shared list lacks (keys and bind states only, never game files). Nothing is sent without asking.")
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .note()
                 }
             }
             .formStyle(.grouped)
@@ -536,14 +557,14 @@ struct TargetPage: View {
             }
             if let out = wizard.out, !Disk.canWrite(out) {
                 Label("The Builder can't write in \(Disk.existing(out.deletingLastPathComponent()).path): choose another place.",
-                      systemImage: "xmark.octagon.fill").foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                      systemImage: "xmark.octagon.fill").foregroundStyle(.red).wrapping()
             } else if let out = wizard.out, FileManager.default.fileExists(atPath: out.path) {
                 Label("\(out.lastPathComponent) is already there: the build replaces it. Its saves and settings are kept.",
-                      systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                      systemImage: "arrow.triangle.2.circlepath").note()
             }
             if let short = wizard.spaceShort {
                 Label("The drive has \(short.free) GB free, and a first build needs about \(short.needed) GB. Free up space, or the build stops when it checks.",
-                      systemImage: "externaldrive.badge.exclamationmark").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                      systemImage: "externaldrive.badge.exclamationmark").foregroundStyle(.orange).wrapping()
             }
             Group {
                 if let space = wizard.report?.spaceGb?[wizard.platform] {
@@ -553,7 +574,7 @@ struct TargetPage: View {
                 }
                 Text("The work folder is kept, so a later build, or one that was stopped, reuses what is already done.")
             }
-            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .note()
         }
     }
 }
@@ -659,10 +680,10 @@ struct Failure: View {
         let text = ErrorText(code: code, games: wizard.preflight.games)
         VStack(alignment: .leading, spacing: 8) {
             Label(text.title, systemImage: "xmark.octagon.fill").font(.headline).foregroundStyle(.red)
-            Text(text.next).fixedSize(horizontal: false, vertical: true)
+            Text(text.next).wrapping()
             Text(message)
                 .font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
-                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled).wrapping()
             if let log, FileManager.default.fileExists(atPath: log) {
                 Button("Show Tool Log") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: log)]) }
                     .help(log)
@@ -680,11 +701,10 @@ struct Notices: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Good to know", systemImage: "info.circle").font(.headline)
                 ForEach(Array(wizard.notices.enumerated()), id: \.offset) { _, notice in
-                    Text(Notices.text(notice.code) ?? notice.message ?? "").fixedSize(horizontal: false, vertical: true)
+                    Text(Notices.text(notice.code) ?? notice.message ?? "").wrapping()
                 }
             }
-            .padding(12)
-            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .tinted(.blue, opacity: 0.08, padding: 12)
         }
     }
 
@@ -716,7 +736,7 @@ struct ResultPage: View {
                         Commands(items: [Preflight.Missing(what: String(localized: "Sign and install"), command: installCommand(tool, app))])
                         Text("3. Pair a supported game controller, then start the game. Verify gameplay on your device.")
                     }
-                    .fixedSize(horizontal: false, vertical: true)
+                    .wrapping()
                 } else {
                     PageTitle(title: "Your \(Wizard.platformName(wizard.platform)) app is ready",
                               detail: "It is unsigned: sign it with your own Apple ID and install it on the device.")

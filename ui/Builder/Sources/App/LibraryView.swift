@@ -60,7 +60,7 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Work folders").font(.title3.bold()).accessibilityAddTraits(.isHeader)
             Text("What each build extracted and compiled. The next build reuses it, so deleting one only makes that build start from the beginning.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .note()
             ForEach(works) { work in
                 let busy = wizard.running && wizard.report?.work.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == work.url.path
                 HStack(alignment: .firstTextBaseline) {
@@ -78,8 +78,7 @@ struct LibraryView: View {
                         .disabled(work.keep != nil || busy)
                         .help(busy ? String(localized: "A build is using it") : work.keep ?? "")
                 }
-                .padding(12)
-                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+                .card()
             }
         }
     }
@@ -161,11 +160,11 @@ struct AppRow: View {
                 }
                 if !missing.isEmpty {
                     Text("Can't rebuild as it was: \(missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")) is no longer where it was.")
-                        .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        .font(.callout).foregroundStyle(.orange).wrapping()
                 }
             } else {
                 Text("Built before apps recorded what they were built from: rebuild it on the Build page once, and it will.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.callout).note()
             }
             HStack {
                 Button("Open") { NSWorkspace.shared.open(app.url) }
@@ -181,8 +180,7 @@ struct AppRow: View {
                 Button("Move to Trash…", role: .destructive, action: trash)
             }
         }
-        .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+        .card(padding: 14)
         .accessibilityElement(children: .contain)
     }
 
@@ -215,17 +213,17 @@ struct AppRow: View {
 struct Contributions: View {
     @Binding var items: [Contribution]
     @State private var problem: String?
-    @State private var sending: Int?   // the form is open: did the player send the file?
+    @State private var sending: Contribution?   // the form is open: did the player send the file?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Shader contributions").font(.title3.bold()).accessibilityAddTraits(.isHeader)
             Text("While you play, the game notes the shaders and render pipelines the shared list doesn't have yet: identifiers only, no game data, saves or personal information. Sent to GitHub, they come with everyone's next build. Nothing is sent unless you send it.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .note()
             if items.isEmpty {
                 Text("Nothing noted yet.").foregroundStyle(.secondary)
             }
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+            ForEach(items, id: \.game.id) { item in
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(item.game.name): \(item.rows) rows, \(item.unsent) new since the last reminder")
                     Text(item.never ? String(localized: "Reminders are off: the game no longer asks before it starts.")
@@ -235,18 +233,17 @@ struct Contributions: View {
                         Button("Send…") {
                             NSWorkspace.shared.open(item.form)
                             NSWorkspace.shared.activateFileViewerSelecting([item.file])
-                            sending = index
+                            sending = item
                         }
                         .help(String(localized: "Opens the GitHub form and shows the file in Finder: drag it into the form."))
                         if item.never {
-                            Button("Turn Reminders On") { update(index) { try $0.resumeReminders() } }
+                            Button("Turn Reminders On") { update(item) { try $0.resumeReminders() } }
                         } else {
-                            Button("Don't Remind Me Again") { update(index) { try $0.stopReminders() } }
+                            Button("Don't Remind Me Again") { update(item) { try $0.stopReminders() } }
                         }
                     }
                 }
-                .padding(12)
-                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+                .card()
             }
             if let problem { Text(problem).foregroundStyle(.red) }
         }
@@ -258,15 +255,15 @@ struct Contributions: View {
         }
     }
 
-    private func update(_ index: Int, _ change: (Contribution) throws -> Void) {
-        let item = items[index]
+    private func update(_ item: Contribution, _ change: (Contribution) throws -> Void) {
         do {
             try change(item)
             problem = nil
         } catch {
             problem = error.localizedDescription
         }
-        if let fresh = Contribution.read(game: item.game, file: item.file) { items[index] = fresh }
+        if let fresh = Contribution.read(game: item.game, file: item.file),
+           let index = items.firstIndex(where: { $0.game.id == item.game.id }) { items[index] = fresh }
     }
 }
 
