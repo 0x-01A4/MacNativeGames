@@ -719,6 +719,7 @@ void mtl_pool_add(const void *mem, uint64_t size) {
 
 static void stor_drop_range(uintptr_t lo, uintptr_t hi);
 static void stor_sweep(uint64_t fence);
+static void wb_drop_range(uintptr_t lo, uintptr_t hi);
 void mtl_pool_del(const void *mem) {
     g_reg_gen++;
     uintptr_t lo = 0, hi = 0;
@@ -733,6 +734,7 @@ void mtl_pool_del(const void *mem) {
     }
     pthread_mutex_unlock(&g_mu);
     if (hi > lo) stor_drop_range(lo, hi);   // TOTK: storage-shared textures of this pool
+    if (hi > lo) wb_drop_range(lo, hi);     // pending write-backs of this pool's textures, and their retained objects
 }
 
 static pidx_ent *pool_query(uintptr_t addr, uint64_t len) { // caller holds g_mu
@@ -2548,6 +2550,29 @@ static int tilelog_match(const tex_t *t) {
 }
 #define TILELOG(t, fmt, ...) do { BOTW_TILELOG_NOTE(t) if (tilelog_match(t)) MLOG("[tile] f%llu ser=%llu mem=%p nvnfmt=%#x lv%u " fmt, (unsigned long long)atomic_load(&g_cur_frame), (unsigned long long)(t)->serial, (void *)(t)->mem, (t)->d.format, (t)->d.levels, ##__VA_ARGS__); } while (0)
 static void wb_ent_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_release((__bridge id)e->obj); CFRelease(e->obj); } free(e); }
+/* A memory pool is finalized: its pending GPU renderings will never be read back. Drop their write-back records, which
+   hold the texture objects (wb_note's retain kept them resident for ever: soak-60-a, 23 October, ~96 textures / 55 MB
+   per "Throw Cap" movie play). It is also a correctness fix: a record left behind would match a later invalidate of a
+   new pool reusing the address range and write the old rendering over the game's new data. */
+static void wb_drop_range(uintptr_t lo, uintptr_t hi) {
+    uint64_t dropped = 0, bytes = 0;
+    for (;;) {
+        wb_ent *list[64]; int nl = 0;
+        pthread_mutex_lock(&g_smu);
+        for (uint32_t i = 0; g_wb.n && g_wb.vals && i < g_wb.cap && nl < 64; i++) {
+            wb_ent *e = g_wb.vals[i];
+            if (!e || (uintptr_t)e->t.mem >= hi || (uintptr_t)e->t.mem + e->t.L.size <= lo) continue;
+            uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); list[nl++] = e; i = (uint32_t)-1;   // deletion shifts entries: rescan
+        }
+        pthread_mutex_unlock(&g_smu);
+        for (int i = 0; i < nl; i++) { bytes += list[i]->t.L.size; wb_ent_free(list[i]); }
+        dropped += nl;
+        if (nl < 64) break;
+    }
+    static _Atomic unsigned shown;
+    if (dropped && atomic_fetch_add(&shown, 1) < 16)
+        MLOG("[writeback] pool freed: dropped %llu pending write-back records (%llu MB)", (unsigned long long)dropped, (unsigned long long)(bytes >> 20));
+}
 static void pre_note(const tex_t *t, id o);
 static void wb_note(const tex_t *t) {
     TILELOG(t, "GPU render (owned %d)", gpu_owned(t->serial));
@@ -2639,7 +2664,32 @@ static void pre_note(const tex_t *t, id o) {   // wb_note, replay thread
     if (g_pre_npend == PRE_PEND) return;
     g_pre_pend[g_pre_npend].t = *t; g_pre_pend[g_pre_npend].obj = (void *)CFBridgingRetain(o); g_pre_npend++;
 }
+/* Entries of textures no longer read back (cold, or the texture is gone: its serial is never seen again) release their
+   ring buffers once the GPU is done with them; an entry without buffers is dropped. Without this the ring buffers of
+   every texture ever read back stayed resident (soak-60-a, 23 October: 86 buffers after 23 minutes and rising). */
+enum { PRE_RELEASE = 4 * PRE_COOL };
+static void pre_sweep(void) {   // replay thread, at most every PRE_COOL frames
+    static uint64_t last;
+    uint64_t now = atomic_load(&g_cur_frame), done = g_done;
+    if (now - last < PRE_COOL) return;
+    last = now;
+    os_unfair_lock_lock(&g_pre_lock);
+    NSMutableArray<NSNumber *> *drop = [NSMutableArray array];
+    for (NSNumber *key in g_pre) {
+        NvPre *p = g_pre[key];
+        if (now - p->last_read <= PRE_RELEASE) continue;
+        int left = 0;
+        for (int k = 0; k < PRE_RING; k++) if (p->buf[k]) {
+            if (p->fence[k] > done) { left++; continue; }   // still being written by the GPU: next sweep
+            res_remove(p->buf[k]); p->buf[k] = nil; p->fence[k] = 0; atomic_fetch_sub(&g_pre_bufs, 1);
+        }
+        if (!left) [drop addObject:key];
+    }
+    [g_pre removeObjectsForKeys:drop];
+    os_unfair_lock_unlock(&g_pre_lock);
+}
 static void pre_emit(void) {   // mtl_sub_commit, before the copy encoder closes: this submission commits with fence g_fence + 1
+    if (pre_on() && g_pre) pre_sweep();
     if (!g_pre_npend) return;
     uint64_t fence = g_fence + 1, done = g_done;
     for (int i = 0; i < g_pre_npend; i++) {
