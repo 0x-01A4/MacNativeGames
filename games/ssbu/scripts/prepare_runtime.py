@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind the native loader to the verified Super Mario Odyssey rewrite and RomFS: generated headers stay in the work folder.
+"""Bind the native loader to the verified Super Smash Bros. Ultimate rewrite and RomFS: generated headers stay in the work folder.
 
 Writes <work>/build/runtime_tables.h (modules, symbols, relocations, gates), romfs_config.h and
 extracted/v1302/romfs/runtime-index.bin (the RomFS index the runtime reads), and shared_fonts_config.h.

@@ -1,4 +1,5 @@
-/* Horizon services Super Mario Odyssey reaches that TotK never did, answered in-process, as a Switch without a network
+/* Horizon services Super Smash Bros. Ultimate (and Super Mario Odyssey, whose copy this began as) reach that TotK never
+   did, answered in-process, as a Switch without a network
    connection. Adapted from games/by3/runtime/system_services.c (its set handler is not needed here: settings_service.c
    registers set). Command numbers and layouts follow the public switchbrew descriptions. Unknown commands still stop the
    runtime with their id. */

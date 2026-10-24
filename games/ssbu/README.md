@@ -59,8 +59,18 @@ python3.14 scripts/build_ssbu.py --game "<your card image>.xci" --update "<your 
 ## Play
 
 Keys as in Tears of the Kingdom: WASD the left stick, arrow keys the right stick, J is A, K or Space is B, I is X, U is Y,
-Q / E are L / R, Return is +. Key 1 shows the shortcut reminder. Game controllers recognized by macOS work as a Pro
-Controller. The **Picture** menu sets 1080p or 2K for the next start (Smash makes its render images once, at start).
+Q / E are L / R, Return is +. Game controllers recognized by macOS work as a Pro Controller. The **Picture** menu sets
+1080p or 2K for the next start (Smash makes its render images once, at start).
+
+| Key | What it does in Smash |
+|---|---|
+| 1 | overlays: all, FPS only, off (the FPS line names the picture size and MetalFX) |
+| 2 | frame interpolation: makes no frames in this game (see above) |
+| 3 | MetalFX upscales the finished picture to the window, on or off |
+| 4 | aspect ratio of the picture in the window |
+| 5 | edge smoothing (MetalFX Temporal), on or off |
+| 6 | controller type: auto or a fixed one |
+| 7 | mouse mode on or off |
 
 ## Shaders
 

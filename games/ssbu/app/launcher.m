@@ -1,13 +1,13 @@
-// Super Mario Odyssey's copy of games/totk/app/launcher.m (build_app.py compiles it as Contents/MacOS/SMO with this
-// folder's runtime/game_version.h: ~/Library/Application Support/MacNativeGames/SMO, ~/Library/Logs/MacNativeGames/smo.log).
-// One change: no reminder to send the shader list contribution, because the shared list it would go to is Tears of the
-// Kingdom's; the rows are still written to <data>/shader-list-contribution.txt for `make shader-list`. Instead Mario's own
-// reminder (smo_notes_reminder) says when the app lacks enough of them that a rebuild is worth it.
-// The launcher inside the packaged app (build_app.py compiles it as Contents/MacOS/TOTK).
-// The game itself is Contents/Resources/totk/build/totk-native; everything it writes goes to the player's own folders:
-//   ~/Library/Application Support/MacNativeGames/TOTK/   profile (account, saves), shader cache, game slot, RomFS proof (BotW/ for Breath of the Wild)
-//   ~/Library/Logs/MacNativeGames/totk.log             this run (totk.previous.log: the one before; botw.log for Breath of the Wild)
-// If the game is already running, the launcher only brings it to the front.
+// The launcher inside Super Smash Bros. Ultimate.app: this folder's copy of games/totk/app/launcher.m, by way of the
+// Super Mario Odyssey copy it was forked from. scripts/build_ssbu.py compiles it as Contents/MacOS/SSBU with this folder's
+// runtime/game_version.h. The game itself is Contents/Resources/totk/build/totk-native; everything it writes goes to the
+// player's own folders:
+//   ~/Library/Application Support/MacNativeGames/SSBU/   profile (account, saves), shader cache, game slot, render-size.txt
+//   ~/Library/Logs/MacNativeGames/ssbu.log             this run (ssbu.previous.log: the one before)
+// One change from Tears of the Kingdom's: no reminder to send the shader list contribution, because the shared list it
+// would go to is Tears of the Kingdom's; the rows are still written to <data>/shader-list-contribution.txt. Instead the
+// notes reminder (smo_notes_reminder, named after the copy it came from) says when the app lacks enough of them that a
+// rebuild is worth it. If the game is already running, the launcher only brings it to the front.
 #import <AppKit/AppKit.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -157,7 +157,7 @@ static void contrib_reminder(NSString *path) {
     [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
 }
 
-/* Q41 (2026-10-23): Mario's notes go into the next app build (build_app.py list_with_notes), not to the shared list. Every
+/* The game's notes go into the next app build (scripts/build_ssbu.py reads them), not to the shared list. Every
    TOTK_CONTRIB_STEP rows more than this app has built in (build/notes-rows.txt, written by that build) and than at the
    last reminder, the launcher says so before the game starts. Nothing is sent anywhere. */
 static void smo_notes_reminder(NSString *path, NSString *root) {
@@ -172,10 +172,10 @@ static void smo_notes_reminder(NSString *path, NSString *root) {
     totk_contrib_reminded(path, rows);   // "later": TOTK_CONTRIB_STEP rows later; "don't remind me again": never
     [NSApplication sharedApplication]; [NSApp activateIgnoringOtherApps:YES];
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @(TOTK_UI(GAME_NAME " 有新的着色器记录", "New shader notes for " GAME_NAME));   // the copy said Mario (Q80)
+    alert.messageText = @(TOTK_UI(GAME_NAME " 有新的着色器记录", "New shader notes for " GAME_NAME));
     alert.informativeText = [NSString stringWithFormat:@(TOTK_UI(
-        GAME_NAME " 记录了 %lu 个这个 App 还没内置的着色器和渲染管线。重新构建 App（build_app.py）会把它们内置进去，下次这些地方启动时不再卡顿。记录只留在这台 Mac 上，不会发送。",
-        GAME_NAME " noted %lu shaders and render pipelines this app does not have built in yet. Rebuilding the app (build_app.py) "
+        GAME_NAME " 记录了 %lu 个这个 App 还没内置的着色器和渲染管线。重新构建 App（scripts/build_ssbu.py）会把它们内置进去，下次这些地方启动时不再卡顿。记录只留在这台 Mac 上，不会发送。",
+        GAME_NAME " noted %lu shaders and render pipelines this app does not have built in yet. Rebuilding the app (scripts/build_ssbu.py) "
         "builds them in, so those places start without a stutter next time. The notes stay on this Mac: nothing is sent.")),
         (unsigned long)(rows > built ? rows - built : rows)];
     [alert addButtonWithTitle:@(TOTK_UI("显示文件", "Show the file"))];
@@ -300,7 +300,7 @@ int main(int argc, char **argv) {
             setenv("TOTK_SHADER_CONTRIB", contrib.fileSystemRepresentation, 1);
             smo_notes_reminder(contrib, root);
         } else unsetenv("TOTK_SHADER_CONTRIB");
-        (void)contrib_reminder;   // Super Mario Odyssey: not the shared list's reminder (see the top of this file)
+        (void)contrib_reminder;   // not the shared list's reminder (see the top of this file)
         unsetenv("TOTK_AUTOLOAD");   // the game starts at its title screen, as on the console
         /* runtime command channel (runtime/input.c): echo "shot ~/Desktop/shot.png" >> "<data>/input.txt" */
         { NSString *cmds = env_or("TOTK_INPUT_FILE", [data stringByAppendingPathComponent:@"input.txt"]);
