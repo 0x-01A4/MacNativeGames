@@ -67,9 +67,7 @@ final class Wizard {
     var lines: [String] = []
 
     @ObservationIgnored private var runner: BuildRunner?
-    @ObservationIgnored private var generation = 0   // a newer --inspect or build makes the events of an older one stale
-    @ObservationIgnored private var schemaChecked = false
-    @ObservationIgnored private var rejected = false   // the script writes another event schema: what it sends after that is not read
+    @ObservationIgnored private var job: Task<Void, Never>?   // reads the running script's output (start)
     @ObservationIgnored private var awake: NSObjectProtocol?   // keeps the Mac from idle sleep while a build runs
     /// Called once when the running build has ended (the app delegate waits on it to quit).
     @ObservationIgnored var onBuildEnded: (() -> Void)?
@@ -402,53 +400,69 @@ final class Wizard {
         runner?.cancel()
     }
 
+    /// What the script's run sends: its output, line by line, and then how it ended.
+    private enum Output: Sendable {
+        case line(String, stdout: Bool)
+        case ended(Result<Int32, Error>)
+    }
+
+    /// Runs the script with `arguments`, ending the run before it: `event` gets its events and `finished` its exit status
+    /// (with the failure to show when it ended without saying why), both on the main actor. A newer run, or newBuild(),
+    /// cancels this one's task, so nothing of it arrives after that.
     private func start(_ arguments: [String], event: @escaping (BuildEvent) -> Void,
                        finished: @escaping (Int32, Outcome?) -> Void) {
         runner?.cancel()
+        job?.cancel()
         guard let python = preflight.python, let script else {
             finished(-1, .failed(code: "toolchain", message: String(localized: "Python 3.14 or the MacNativeGames folder was not found.")))
             return
         }
-        generation += 1
-        let mine = generation
         let runner = BuildRunner()
         self.runner = runner
-        schemaChecked = false
-        rejected = false
-        // The main queue keeps the lines in the order they were read; the result comes after the last of them.
-        let deliver: @Sendable (String, Bool) -> Void = { line, isStdout in
-            DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
-                guard let self, self.generation == mine else { return }
-                if self.rejected { return self.lines.append(line) }
-                guard isStdout, let e = BuildEvent.parse(line) else { return self.lines.append(line) }
-                if e.type == "hello" {
-                    self.schemaChecked = true
-                    if e.schema != BuildEvent.schema {   // a Builder from another revision of the repository
-                        self.lines.append(e.logText)
-                        self.rejected = true
-                        runner.cancel()
-                        return event(BuildEvent(type: "error", message: String(localized: "This Builder reads event schema \(BuildEvent.schema), but build_app.py writes \(e.schema ?? 0): build the Builder from the same checkout."), code: "build"))
-                    }
-                }
-                if e.type != "heartbeat" { self.lines.append(e.logText) }
-                event(e)
-            } }
-        }
+        let (output, send) = AsyncStream.makeStream(of: Output.self)
+        // its own thread, not a task: a build blocks in waitpid for up to an hour
         Thread.detachNewThread {
-            var failure: Outcome?
-            var status: Int32 = -1
-            do {
-                status = try runner.run(python, [script] + arguments, stdout: { deliver($0, true) }, stderr: { deliver($0, false) })
-            } catch {
-                failure = .failed(code: nil, message: String(localized: "build_app.py could not be started: \(error.localizedDescription)"))
-            }
-            DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
-                guard let self, self.generation == mine else { return }
-                if failure == nil && !self.schemaChecked && status != 130 {
-                    failure = .failed(code: "build", message: String(localized: "build_app.py did not send its event header: it may be older than this Builder."))
+            let ended = Result { try runner.run(python, [script] + arguments, stdout: { send.yield(.line($0, stdout: true)) },
+                                                stderr: { send.yield(.line($0, stdout: false)) }) }
+            send.yield(.ended(ended))   // after every line: run() returns once both pipes are read to the end
+            send.finish()
+        }
+        // One loop on the main actor keeps the lines in the order they were read.
+        job = Task {
+            var schemaChecked = false
+            var rejected = false   // the script writes another event schema: what it sends after that is not read
+            for await item in output {
+                guard !Task.isCancelled else { break }   // a cancelled stream still hands over what it had buffered
+                switch item {
+                case .line(let line, let isStdout):
+                    if rejected { lines.append(line); continue }
+                    guard isStdout, let e = BuildEvent.parse(line) else { lines.append(line); continue }
+                    if e.type == "hello" {
+                        schemaChecked = true
+                        if e.schema != BuildEvent.schema {   // a Builder from another revision of the repository
+                            lines.append(e.logText)
+                            rejected = true
+                            runner.cancel()
+                            event(BuildEvent(type: "error", message: String(localized: "This Builder reads event schema \(BuildEvent.schema), but build_app.py writes \(e.schema ?? 0): build the Builder from the same checkout."), code: "build"))
+                            continue
+                        }
+                    }
+                    if e.type != "heartbeat" { lines.append(e.logText) }
+                    event(e)
+                case .ended(let ended):
+                    var failure: Outcome?
+                    var status: Int32 = -1
+                    switch ended {
+                    case .success(let code): status = code
+                    case .failure(let error):
+                        failure = .failed(code: nil, message: String(localized: "build_app.py could not be started: \(error.localizedDescription)"))
+                    }
+                    if failure == nil && !schemaChecked && status != 130 {
+                        failure = .failed(code: "build", message: String(localized: "build_app.py did not send its event header: it may be older than this Builder."))
+                    }
+                    finished(status, status == 0 ? nil : failure)
                 }
-                finished(status, status == 0 ? nil : failure)
-            } }
+            }
         }
     }
 
@@ -526,7 +540,7 @@ final class Wizard {
     func newBuild() {
         guard !running else { return }
         runner?.cancel()   // an inspect still running for the old game
-        generation += 1    // and its events are stale now
+        job?.cancel()      // and its events are stale now
         clearChoices()
         report = nil
         inspectFailure = nil
