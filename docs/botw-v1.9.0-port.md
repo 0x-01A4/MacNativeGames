@@ -419,8 +419,9 @@ stopped voice's last samples (Ryujinx.Audio `CommandGenerator.GenerateVoice`: `V
 - Rumble and motion aiming with a real controller: not tested, because no controller was connected.
 - A cold start with an empty shader cache: not tested. Every route run had a warm cache.
 - A card image as the game file with a 1.9.0 `--update`: not tested. The build takes the DLC packs from `--dlc` only.
-- BOTW 1.6.0 and the iPhone and iPad builds: not built. The write-back staging and the 120 Hz rule also act on 1.6.0.
-- Keys 4 and 5 do nothing on 1.6.0. No 1.6.0 game files were at hand for a test.
+- The iPhone and iPad builds: not built. The write-back staging and the 120 Hz rule also act on 1.6.0, which was built
+  and run on 2026-10-24 (see the audio section).
+- Keys 4 and 5 do nothing on 1.6.0.
 - TOTK: not played on this branch. The evidence is the 68 of 68 preprocessed identity.
 - Upstream's `[dead-keep]` set grows linearly (30k to 397k entries in 25 minutes, from `e0ad452`): not changed here,
   because it is upstream's shared code, and a change to it changes TOTK.
