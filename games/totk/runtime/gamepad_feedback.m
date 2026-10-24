@@ -315,11 +315,12 @@ static int triggers_wanted(void) {
         runtime_fail("TOTK_DUALSENSE_TRIGGERS must be on or off");
     }
     if (owner && (!strcmp(owner, "claude") || !strcmp(owner, "codex"))) return 0;
-    char word[16] = {0};
+    char word[16] = {0}, *w = word;
     if (!runtime_setting_word("dualsense-triggers.txt", word, sizeof word)) return 1;
-    word[strcspn(word, " \t\r\n")] = 0;
-    if (!strcmp(word, "off")) return 0;
-    if (strcmp(word, "on")) fprintf(stderr, "[triggers] dualsense-triggers.txt: not on or off; on\n");
+    while (*w && strchr(" \t\n\v\f\r", *w)) w++;   /* the blanks around the word go, as for every one-word file */
+    for (size_t n = strlen(w); n && strchr(" \t\n\v\f\r", w[n - 1]); n--) w[n - 1] = 0;
+    if (!strcmp(w, "off")) return 0;
+    if (strcmp(w, "on")) fprintf(stderr, "[triggers] dualsense-triggers.txt: not on or off; on\n");
     return 1;
 }
 static int bow_state_supported(void) {
