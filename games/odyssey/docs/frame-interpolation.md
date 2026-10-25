@@ -32,6 +32,9 @@ budget, or when macOS stops presenting an occluded window.
   Missing inputs, loading screens, first frames and cuts reset history and
   present the real picture. The translation cut threshold is 800 centimetres;
   normal camera follow motion must not trigger Zelda's 8-unit cut threshold.
+  800 is a guard, not a tuned value: in one 8-minute session normal steps
+  stayed under 110 cm per game frame (p99 about 37 cm), and the one cut seen
+  was 3,868 cm with a 29 degree turn, caught by both checks.
 - Motion vectors use camera reprojection. Mario, Cappy, skeletal motion,
   particles and disocclusions can still leave trails or incorrect edges.
   This is an optional feature, not a claim of native 120 Hz gameplay or a fix
