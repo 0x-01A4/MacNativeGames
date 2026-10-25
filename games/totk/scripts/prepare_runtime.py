@@ -149,6 +149,11 @@ assert len(header) == HEADER and all(len(r) == RECORD for r in records)
 tables = OUT / 'runtime-tables.bin'
 tables.with_suffix('.partial').write_bytes(header + b''.join(records) + arrays + strings)
 tables.with_suffix('.partial').replace(tables)
+# The patch_nso.py that rewrote these modules (it records its own SHA-256 next to them): update_runtime.py refuses an app
+# whose rewriter is not the repository's, since a runtime can rely on gates and fixes a newer rewriter puts in the code.
+rewriter = (ROOT / f'rewritten/{version}/build_src.sha256').read_text().split()[0]
+assert len(rewriter) == 64 and all(c in '0123456789abcdef' for c in rewriter), 'build_src.sha256'
+(OUT / 'rewriter.txt').write_text(f'# SHA-256 of the patch_nso.py that rewrote rewritten/{version}\nREWRITER_SHA256 {rewriter}\n')
 # Details are evidence, not additional source code.
 (ROOT / ('analysis/runtime-layout.json' if version == 'v0' else f'analysis/{version}-port/runtime-layout.json')).write_text(json.dumps(modules, indent=2) + '\n')
 print(json.dumps(dict(modules=len(modules), relocations=sum(len(m['relocs']) for m in modules), original_main_plt=hex(plt[0]), original_main_slot=hex(slot))))

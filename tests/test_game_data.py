@@ -236,6 +236,48 @@ class UpdateRuntime(unittest.TestCase):
         self.assertTrue(all(p.parent == app.parent for p in removed), 'moved out of the app, not deleted inside it')
         self.assertFalse((res / 'build/game-data/v143/shader-seed.aliases.tsv').exists(), 'the old seed\'s aliases go with it')
 
+    def test_rewriter_of_the_repository(self):
+        _, _, data = self.app()
+        want = update_runtime.rewriter_sha256()
+        with self.assertRaisesRegex(build_app.BuildError, 'no record of the rewriter'):
+            update_runtime.check_rewriter(data, want)
+        (data / 'rewriter.txt').write_text(f'# made by prepare_runtime.py\nREWRITER_SHA256 {"0" * 64}\n')
+        with self.assertRaisesRegex(build_app.BuildError, 'rewritten by another patch_nso.py .*the app was not changed'):
+            update_runtime.check_rewriter(data, want)
+        (data / 'rewriter.txt').write_text(f'REWRITER_SHA256 {want}\n')
+        update_runtime.check_rewriter(data, want)
+        self.assertEqual(want, hashlib.sha256((ROOT / 'games/totk/third_party/d2r/patch_nso.py').read_bytes()).hexdigest())
+
+    def test_probe_before_install(self):
+        app, res, _ = self.app()
+        logs = self.root / 'logs'
+        binary = res / 'build/totk-native'
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text('#!/bin/sh\ntest "$1" = rewritten/v143 && test "$2" = probe && test -z "$TOTK_GAME_DATA" && '
+                          'echo \'{"status":"pass"}\'\n')
+        binary.chmod(0o755)
+        with patch.dict('os.environ', {'TOTK_GAME_DATA': '/elsewhere'}):
+            update_runtime.probe_runtime(app, 'v143', logs)   # the app's own game data, not one the environment names
+        binary.write_text('#!/bin/sh\necho "[totk] FAIL: game tables of another game version" >&2\nexit 1\n')
+        with self.assertRaisesRegex(build_app.BuildError, 'does not load .*another game version.*the app was not changed'):
+            update_runtime.probe_runtime(app, 'v143', logs)
+        self.assertIn('another game version', (logs / 'runtime-probe.log').read_text())
+
+    def test_restore_replaced_app(self):
+        app = self.root / 'Game.app'
+        replaced = self.root / 'Game.app.replaced-1'
+        for folder, label in ((app, 'new'), (replaced, 'old')):
+            (folder / 'Contents/MacOS').mkdir(parents=True)
+            (folder / 'Contents/MacOS/TOTK').write_text(label)
+        (app / 'Contents/Helpers/GameData-v143.bundle').mkdir(parents=True)   # moved in from the old app (keep_game_data)
+        (app / 'Contents/Helpers/GameData-v143.bundle/romfs.bin').write_text('16 GB')
+        failed = update_runtime.restore_replaced(app, replaced)
+        self.assertEqual((app / 'Contents/MacOS/TOTK').read_text(), 'old')
+        self.assertEqual((app / 'Contents/Helpers/GameData-v143.bundle/romfs.bin').read_text(), '16 GB')
+        self.assertEqual((failed / 'Contents/MacOS/TOTK').read_text(), 'new')
+        self.assertFalse(replaced.exists())
+        self.assertEqual(failed.parent, app.parent)
+
     def test_seed_aliases(self):
         _, res, data = self.app()
         tree = self.root / 'tree'

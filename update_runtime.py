@@ -15,14 +15,22 @@ The startup shaders are game files too, but they must be of the runtime's shader
 changes the chain, the app is refused unless --seed is given, which makes them again from the work folder's RomFS and
 modules (checked to be the app's) as build_app.py does, still without the game file or keys.
 
+The code modules are game files as well, rewritten by the build's patch_nso.py, and a runtime can rely on what the
+rewriter puts into them (gates, fixes moved from the runtime into the code). The game data records that rewriter's
+SHA-256 (rewriter.txt, from build_src.sha256), and an app rewritten by another patch_nso.py than this repository's is
+refused: it needs build_app.py.
+
 An app made before the game data folder existed (its game binary had the tables compiled in) gets the folder once, made
 from the files the build that made the app extracted into its work folder (--work; default the TOTK_build or BotW_build
 folder next to the app). Whatever the folder comes from, it is checked against the app's own modules, RomFS index and
 fonts before anything is replaced.
 
-The new app is assembled next to the installed one (an APFS clone, no extra space), sealed and checked, and then takes the
-installed app's place as a build's does (build_app.install_app): the installed game data is kept, so the first start does
-not verify the 16 GB again, and macOS keeps its first check of the app folder. A running game is waited for, not closed.
+The new app is assembled next to the installed one (an APFS clone, no extra space), its runtime is run against its game
+files (the loader probe: the game data read, the modules mapped, checked, linked and called across, with no window, GPU or
+writes), it is sealed and checked, and then takes the installed app's place as a build's does (build_app.install_app):
+the installed game data is kept, so the first start does not verify the 16 GB again, and macOS keeps its first check of
+the app folder. If the installed app then fails its --check, the replaced one is put back. A running game is waited for,
+not closed.
 """
 import argparse, json, os, plistlib, re, struct, subprocess, sys, time
 from pathlib import Path
@@ -170,6 +178,63 @@ def check_game_data(data, res, version):
                 raise BuildError(f'{data}: made for other add-on content than the app\'s (volume {index})')
 
 
+def rewriter_sha256():
+    """The SHA-256 of this repository's rewriter, as patch_nso.py records itself in build_src.sha256."""
+    return sha256(build_app.GAME / 'third_party/d2r/patch_nso.py')
+
+
+def check_rewriter(data, want):
+    """The app's code modules were rewritten by this repository's patch_nso.py (rewriter.txt in its game data, written by
+    prepare_runtime.py from build_src.sha256). Another rewriter may have put other gates into the code, or left out fixes
+    that moved from the runtime into the rewriter (Breath of the Wild 1.9.0's job-queue spin wait, a038e6b / 470aa5f), and
+    this runtime would not know: such an app needs build_app.py, which rewrites the modules."""
+    try:
+        found = config(data / 'rewriter.txt')['REWRITER_SHA256']
+    except (OSError, ValueError, KeyError):
+        raise BuildError(f'{data}: no record of the rewriter that made the app\'s code modules (rewriter.txt); build the '
+                         f'app again with build_app.py') from None
+    if found != want:
+        raise BuildError(f'the app\'s code modules were rewritten by another patch_nso.py ({found[:12]}…) than this '
+                         f'repository\'s ({want[:12]}…): this runtime may rely on gates or fixes those modules lack. Build '
+                         f'the app again with build_app.py; the app was not changed')
+
+
+def probe_runtime(tmp, version, logs):
+    """The new runtime against the app's own game files, before anything is replaced: the loader probe (loader.c probe)
+    reads the game data, maps the modules and checks their SHA-256, links them and calls across them, with no window, GPU
+    or file written."""
+    res, log = tmp / 'Contents/Resources/totk', logs / 'runtime-probe.log'
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('TOTK_', 'DM_'))}
+    r = subprocess.run([res / 'build/totk-native', f'rewritten/{version}', 'probe'], cwd=res, env=env, capture_output=True,
+                       text=True, timeout=600)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(r.stdout + r.stderr)
+    if r.returncode or '"status":"pass"' not in r.stdout:
+        last = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ['no output'])[-1]
+        raise BuildError(f'the new runtime does not load the app\'s game files ({last}; {log}); the app was not changed')
+
+
+def restore_replaced(app, replaced):
+    """Put the replaced app back after the updated one failed its check: the replaced Contents return to the same folder,
+    with the game data bundle the update kept (keep_game_data moved it into the new Contents). Returns the failed app's
+    folder, outside the app."""
+    failed = app.with_name(f'{app.name}.failed-{os.getpid()}')
+    if failed.exists():
+        build_app.remove_tree(failed)
+    failed.mkdir()
+    for entry in list(app.iterdir()):
+        entry.rename(failed / entry.name)
+    for entry in list(replaced.iterdir()):
+        entry.rename(app / entry.name)
+    replaced.rmdir()
+    helpers = app / 'Contents/Helpers'
+    for bundle in sorted((failed / 'Contents/Helpers').glob('GameData-*.bundle')):
+        if not (helpers / bundle.name).exists():
+            helpers.mkdir(parents=True, exist_ok=True)
+            bundle.rename(helpers / bundle.name)
+    return failed
+
+
 def game_data(tree, res, version, logs, env):
     """The app's game data folder, or else one made once from the work folder (an app made before the folder existed)."""
     installed = res / f'build/game-data/{version}'
@@ -223,6 +288,7 @@ def main(argv):
     res = app / 'Contents/Resources/totk'
     data = game_data(tree, res, version, logs, env)
     check_game_data(data, res, version)
+    check_rewriter(data, rewriter_sha256())
     if args.seed:
         check_work_files(tree, data, version)
         if not stale:
@@ -251,15 +317,27 @@ def main(argv):
         if not lists:
             say('   the startup shader seed of the app is not the work folder\'s, so the app keeps its warm-up lists')
         build_app.place_runtime(tree, tmp, version, logs, game=game, lists=lists)
+        probe_runtime(tmp, version, logs)
         build_app.sign_app(tmp, logs)
         build_app.wait_until_closed(app)
-        if build_app.install_app(tmp, app):
+        replaced = []   # the replaced Contents are deleted only once the updated app passes its check
+        if build_app.install_app(tmp, app, remove=replaced.append):
             say('   the game data is unchanged; kept the installed copy, so the first start need not verify it again')
     finally:
         if tmp.exists():
             build_app.remove_tree(tmp)
     run([build_app.LSREGISTER, '-f', app], logs / 'register-app.log')
     r = subprocess.run([app / f'Contents/MacOS/{APPS[game][2]}', '--check'], capture_output=True, text=True, timeout=1800)
+    mine = app.with_name(f'{app.name}.replaced-{os.getpid()}')
+    if r.returncode and mine in replaced and mine.is_dir():
+        build_app.remove_in_background(restore_replaced(app, mine))
+        run([build_app.LSREGISTER, '-f', app], logs / 'register-app.log')
+        for path in replaced:
+            if path != mine:
+                build_app.remove_in_background(path)
+        raise BuildError(f'the updated app does not start ({(r.stdout + r.stderr).strip()}); the previous app was put back')
+    for path in replaced:
+        build_app.remove_in_background(path)
     if r.returncode:
         raise BuildError(f'the app does not start: {(r.stdout + r.stderr).strip()}')
     if args.seed:

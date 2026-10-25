@@ -71,13 +71,15 @@ verify:
 # $(1) the version, $(2) its validation report (scripts/verify_rewrites.py)
 define GAME_DATA
 .PHONY: game-data-$(1)
-build/game-data/$(1)/runtime-tables.bin: scripts/prepare_runtime.py $(2)
+build/game-data/$(1)/runtime-tables.bin: scripts/prepare_runtime.py $(2) rewritten/$(1)/build_src.sha256
 	"$$(PY)" scripts/prepare_runtime.py --version $(1)
+build/game-data/$(1)/rewriter.txt: build/game-data/$(1)/runtime-tables.bin
+	@test -f $$@ || "$$(PY)" scripts/prepare_runtime.py --version $(1)
 build/game-data/$(1)/romfs-config.txt: scripts/prepare_romfs_backend.py extracted/$(1)/romfs/index.json
 	"$$(PY)" scripts/prepare_romfs_backend.py --version $(1)
 build/game-data/$(1)/shared-fonts.txt: scripts/prepare_shared_fonts.py extracted/firmware/shared-fonts/manifest.json
 	"$$(PY)" scripts/prepare_shared_fonts.py --version $(1)
-game-data-$(1): build/game-data/$(1)/runtime-tables.bin build/game-data/$(1)/romfs-config.txt build/game-data/$(1)/shared-fonts.txt
+game-data-$(1): build/game-data/$(1)/runtime-tables.bin build/game-data/$(1)/rewriter.txt build/game-data/$(1)/romfs-config.txt build/game-data/$(1)/shared-fonts.txt
 endef
 $(eval $(call GAME_DATA,v0,analysis/phase12-validation.json))
 $(eval $(call GAME_DATA,v112,analysis/v112-port/phase12-validation.json))

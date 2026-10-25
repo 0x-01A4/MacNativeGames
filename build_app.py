@@ -1208,7 +1208,7 @@ def data_bundle(tree, version, logs, *, bundle_id=BUNDLE_ID):
     return bundle
 
 
-GAME_DATA = ('runtime-tables.bin', 'romfs-config.txt', 'shared-fonts.txt')   # games/totk/runtime/game_data.h
+GAME_DATA = ('runtime-tables.bin', 'romfs-config.txt', 'shared-fonts.txt', 'rewriter.txt')   # games/totk/runtime/game_data.h
 
 
 def game_data_files(version):
