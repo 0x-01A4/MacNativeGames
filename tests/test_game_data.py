@@ -237,16 +237,30 @@ class UpdateRuntime(unittest.TestCase):
         self.assertFalse((res / 'build/game-data/v143/shader-seed.aliases.tsv').exists(), 'the old seed\'s aliases go with it')
 
     def test_rewriter_of_the_repository(self):
-        _, _, data = self.app()
+        _, res, data = self.app()   # modules that are not the pinned rewrites (as a --mod build's): judged by rewriter.txt
         want = update_runtime.rewriter_sha256()
         with self.assertRaisesRegex(build_app.BuildError, 'no record of the rewriter'):
-            update_runtime.check_rewriter(data, want)
+            update_runtime.check_rewriter(data, res, 'v143', want)
         (data / 'rewriter.txt').write_text(f'# made by prepare_runtime.py\nREWRITER_SHA256 {"0" * 64}\n')
-        with self.assertRaisesRegex(build_app.BuildError, 'rewritten by another patch_nso.py .*the app was not changed'):
-            update_runtime.check_rewriter(data, want)
+        with self.assertRaisesRegex(build_app.BuildError, 'not the rewrites this repository pins for 1.4.3.*another '
+                                                          'patch_nso.py .*the app was not changed'):
+            update_runtime.check_rewriter(data, res, 'v143', want)
         (data / 'rewriter.txt').write_text(f'REWRITER_SHA256 {want}\n')
-        update_runtime.check_rewriter(data, want)
+        update_runtime.check_rewriter(data, res, 'v143', want)
         self.assertEqual(want, hashlib.sha256((ROOT / 'games/totk/third_party/d2r/patch_nso.py').read_bytes()).hexdigest())
+
+    def test_pinned_rewrites_pass_with_an_older_rewriter_record(self):
+        """build_app.py keeps modules that match expected-<version>.json, so rewriter.txt can name an older patch_nso.py
+        whose output for this version is the same (the maintainer's 1.4.3 build, 2026-10-25)."""
+        _, res, data = self.app()
+        (data / 'rewriter.txt').write_text(f'REWRITER_SHA256 {"3d" * 32}\n')   # an older rewriter
+        pins = {f'{n}.patched.bin': hashlib.sha256((res / f'rewritten/v143/{n}.patched.bin').read_bytes()).hexdigest()
+                for n in ('main', 'subsdk0', 'sdk')}
+        with patch.dict(build_app.VERSIONS, {'v143': dict(build_app.VERSIONS['v143'], rewritten_sha256=pins)}):
+            update_runtime.check_rewriter(data, res, 'v143', update_runtime.rewriter_sha256())
+            (res / 'rewritten/v143/sdk.patched.bin').write_bytes(b'one module not the pinned rewrite')
+            with self.assertRaisesRegex(build_app.BuildError, 'another patch_nso.py'):
+                update_runtime.check_rewriter(data, res, 'v143', update_runtime.rewriter_sha256())
 
     def test_probe_before_install(self):
         app, res, _ = self.app()

@@ -16,9 +16,9 @@ changes the chain, the app is refused unless --seed is given, which makes them a
 modules (checked to be the app's) as build_app.py does, still without the game file or keys.
 
 The code modules are game files as well, rewritten by the build's patch_nso.py, and a runtime can rely on what the
-rewriter puts into them (gates, fixes moved from the runtime into the code). The game data records that rewriter's
-SHA-256 (rewriter.txt, from build_src.sha256), and an app rewritten by another patch_nso.py than this repository's is
-refused: it needs build_app.py.
+rewriter puts into them (gates, fixes moved from the runtime into the code). Modules that are the rewrites this
+repository pins (expected-<version>.json) are accepted; others (a --mod build) only when the game data's record of their
+rewriter (rewriter.txt, from build_src.sha256) is this repository's patch_nso.py. Otherwise the app needs build_app.py.
 
 An app made before the game data folder existed (its game binary had the tables compiled in) gets the folder once, made
 from the files the build that made the app extracted into its work folder (--work; default the TOTK_build or BotW_build
@@ -183,20 +183,30 @@ def rewriter_sha256():
     return sha256(build_app.GAME / 'third_party/d2r/patch_nso.py')
 
 
-def check_rewriter(data, want):
-    """The app's code modules were rewritten by this repository's patch_nso.py (rewriter.txt in its game data, written by
-    prepare_runtime.py from build_src.sha256). Another rewriter may have put other gates into the code, or left out fixes
-    that moved from the runtime into the rewriter (Breath of the Wild 1.9.0's job-queue spin wait, a038e6b / 470aa5f), and
-    this runtime would not know: such an app needs build_app.py, which rewrites the modules."""
+def check_rewriter(data, res, version, want):
+    """The app's code modules are what this repository's rewriter makes. They are when they are the rewrites this
+    repository pins (expected-<version>.json rewritten_sha256), whatever build_src.sha256 says: build_app.py does not run
+    the rewriter again for modules that already match those, so its record can name an older patch_nso.py whose output for
+    this version is byte for byte the same (a038e6b changed patch_nso.py for Breath of the Wild 1.9.0 only). Modules that
+    are not the pinned ones (a --mod build) are judged by the rewriter that made them (rewriter.txt in the game data,
+    written by prepare_runtime.py from build_src.sha256): another one may have put other gates into the code, or left out
+    fixes that moved from the runtime into the rewriter (Breath of the Wild 1.9.0's job-queue spin wait, a038e6b /
+    470aa5f), and this runtime would not know. Such an app needs build_app.py, which rewrites the modules."""
+    pinned = VERSIONS[version].get('rewritten_sha256') or {}
+    if pinned and all(sha256(res / f'rewritten/{version}/{name}') == digest for name, digest in pinned.items()):
+        return
     try:
         found = config(data / 'rewriter.txt')['REWRITER_SHA256']
     except (OSError, ValueError, KeyError):
-        raise BuildError(f'{data}: no record of the rewriter that made the app\'s code modules (rewriter.txt); build the '
-                         f'app again with build_app.py') from None
+        raise BuildError(f'{data}: the app\'s code modules are not the rewrites this repository pins for '
+                         f'{VERSIONS[version]["display_version"]}, and there is no record of the rewriter that made them '
+                         f'(rewriter.txt); build the app again with build_app.py') from None
     if found != want:
-        raise BuildError(f'the app\'s code modules were rewritten by another patch_nso.py ({found[:12]}…) than this '
-                         f'repository\'s ({want[:12]}…): this runtime may rely on gates or fixes those modules lack. Build '
-                         f'the app again with build_app.py; the app was not changed')
+        raise BuildError(f'the app\'s code modules are not the rewrites this repository pins for '
+                         f'{VERSIONS[version]["display_version"]} (a build with a mod\'s code patches?), and another '
+                         f'patch_nso.py ({found[:12]}…) than this repository\'s ({want[:12]}…) made them: this runtime may '
+                         f'rely on gates or fixes those modules lack. Build the app again with build_app.py; the app was '
+                         f'not changed')
 
 
 def probe_runtime(tmp, version, logs):
@@ -301,7 +311,7 @@ def main(argv):
     res = app / 'Contents/Resources/totk'
     data = game_data(tree, res, version, logs, env)
     check_game_data(data, res, version)
-    check_rewriter(data, rewriter_sha256())
+    check_rewriter(data, res, version, rewriter_sha256())
     if args.seed:
         check_work_files(tree, data, version)
         if not stale:
