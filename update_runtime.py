@@ -214,6 +214,19 @@ def probe_runtime(tmp, version, logs):
         raise BuildError(f'the new runtime does not load the app\'s game files ({last}; {log}); the app was not changed')
 
 
+def record_commit(tmp):
+    """The commit this runtime is built from, in the app's Info.plist (MNGSourceCommit, build_app.source_commit): the
+    launcher hands it to the HUD, which would otherwise keep showing the commit of the app's first build."""
+    path = tmp / 'Contents/Info.plist'
+    info = plistlib.loads(path.read_bytes())
+    commit = build_app.source_commit()
+    if commit:
+        info['MNGSourceCommit'] = commit
+    else:
+        info.pop('MNGSourceCommit', None)
+    path.write_bytes(plistlib.dumps(info))
+
+
 def restore_replaced(app, replaced):
     """Put the replaced app back after the updated one failed its check: the replaced Contents return to the same folder,
     with the game data bundle the update kept (keep_game_data moved it into the new Contents). Returns the failed app's
@@ -317,6 +330,7 @@ def main(argv):
         if not lists:
             say('   the startup shader seed of the app is not the work folder\'s, so the app keeps its warm-up lists')
         build_app.place_runtime(tree, tmp, version, logs, game=game, lists=lists)
+        record_commit(tmp)
         probe_runtime(tmp, version, logs)
         build_app.sign_app(tmp, logs)
         build_app.wait_until_closed(app)
