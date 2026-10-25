@@ -86,7 +86,12 @@ SPIRV_CROSS_SOURCES = ('main.cpp', 'spirv_cfg.cpp', 'spirv_cpp.cpp', 'spirv_cros
                        'spirv_cross_util.cpp', 'spirv_glsl.cpp', 'spirv_hlsl.cpp', 'spirv_msl.cpp', 'spirv_parser.cpp',
                        'spirv_reflect.cpp')
 SPIRV_CROSS_FLAGS = ('-O3', '-DNDEBUG', '-std=c++11', '-arch', 'arm64', '-Wno-deprecated-declarations')
-TOOL_PATHS = ['/opt/homebrew/bin', '/usr/local/bin']
+TOOL_PATHS = [
+    # Include the interpreter selected by uv or an activated virtual environment.
+    str(Path(sys.executable).parent),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+]
 
 
 def contrib_folder():
