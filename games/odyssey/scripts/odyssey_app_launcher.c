@@ -106,6 +106,10 @@ int main(void) {
     /* A freeze (no frame for 15 s) logs which threads hold and wait for the virtual cores (runtime/freeze_watchdog.c),
        so a hang in play can be diagnosed afterwards (23 October: a world-travel hang left no such record). */
     setenv("ODYSSEY_FREEZE_WATCHDOG", "15", 0);
+    /* Shader variants and pipelines the game met that the app's list lacks (docs/shader-list.md), for the player to send
+       in a shader-list issue: identifiers only. Without this the runtime writes no contribution file at all. */
+    char contrib[PATH_MAX]; join(contrib, data, "shader-list-contribution.txt");
+    setenv("TOTK_SHADER_CONTRIB", contrib, 0);
     /* MetalFX spatial upscale of the 1600x900 game output to the window (Applier's A/B, 22 October: no artifacts, no
        measurable cost, slightly crisper edges). On unless "Odyssey Data/no-metalfx" exists. */
     char no_mfx[PATH_MAX]; join(no_mfx, data, "no-metalfx");
