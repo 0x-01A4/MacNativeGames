@@ -537,6 +537,35 @@ void runtime_core_back(int *away) {
     thr_t *t = me_or_null(); if (!*away || !t) return;
     pthread_mutex_lock(&G); core_take(t); pthread_mutex_unlock(&G);
 }
+/* A pass of a gated spin wait (patch_nso.py "Spin waits", registered builds only): a guest loop that polls memory until
+   another thread changes it. On the Switch it fills only its own core; here it holds a virtual core that the thread it
+   waits for, or a thread that one waits for, may need (Breath of the Wild 1.9.0's job queue, issue #480: workers at
+   priority 44 polled until the main thread took its item, while priority 45-48 threads waited for their cores). A wait
+   is a run of passes through the same loop with no SVC and at most SPIN_GAP_NS between them. Once a run has lasted
+   TOTK_SPIN_HANDOFF_US (default 50 us) and a thread is queued for a virtual core, each pass gives the core to the waiter,
+   whatever its priority, yields the host CPU and takes a core again (the job-queue hook of PR #621 did that on every
+   pass of that one loop). Shorter waits (a lock held for a moment) keep the core: handing it over there made the next
+   pass wait for a lower-priority thread's next SVC. TOTK_SPIN=0 keeps the core always (the gate's own cost only, A/B). */
+#define SPIN_GAP_NS 20000ull
+static _Atomic uint64_t g_spin_passes, g_spin_handoffs;
+static int spin_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_SPIN"); v = !(e && !strcmp(e, "0")); } return v; }
+static uint64_t spin_handoff_ns(void) { static int64_t v = -1; if (v < 0) { const char *e = getenv("TOTK_SPIN_HANDOFF_US"); v = (e ? atoll(e) : 50) * 1000; } return (uint64_t)v; }
+static __thread uint64_t sw_head, sw_t0, sw_last, sw_nsvc;
+void runtime_spin_wait(unsigned module, uint64_t head) {
+    atomic_fetch_add_explicit(&g_spin_passes, 1, memory_order_relaxed);
+    if (!spin_on()) return;
+    thr_t *t = me_or_null(); if (!t || t->cur_core < 0) return;
+    uint64_t now = now_ns(), key = head ^ ((uint64_t)module << 56);
+    if (key != sw_head || t->nsvc != sw_nsvc || now - sw_last > SPIN_GAP_NS) { sw_head = key; sw_t0 = now; sw_nsvc = t->nsvc; }
+    sw_last = now;
+    if (now - sw_t0 < spin_handoff_ns() || !__atomic_load_n(&g_core_wait, __ATOMIC_RELAXED)) return;   // a racy look: a waiter missed now is seen at the next pass
+    atomic_fetch_add_explicit(&g_spin_handoffs, 1, memory_order_relaxed);
+    int away = runtime_core_away();
+    sched_yield();
+    runtime_core_back(&away);
+    sw_last = now_ns();
+}
+uint64_t runtime_spin_passes(void) { return atomic_load_explicit(&g_spin_passes, memory_order_relaxed); }
 // Preemption point at SVC entry: a higher-priority thread waits for this core.
 void runtime_core_checkpoint(void) {
     thr_t *t = me_or_null();
@@ -722,6 +751,7 @@ static void core_table(void) {
 #endif
     pthread_mutex_unlock(&G);
     fprintf(stderr,"[core-table] last %.0f ms; mask: bit 0-2 = virtual cores 0-2\n",span);
+    { uint64_t sp = atomic_load_explicit(&g_spin_passes, memory_order_relaxed); if (sp) fprintf(stderr, "[core-table] spin-wait gate passes so far: %llu, core hand-offs %llu%s\n", (unsigned long long)sp, (unsigned long long)atomic_load_explicit(&g_spin_handoffs, memory_order_relaxed), spin_on() ? "" : " (TOTK_SPIN=0: the core is kept)"); }
 #ifndef GAME_BOTW
     if (ap_on) fprintf(stderr,"[core-table] asynchronous preemption so far: %llu signals, %llu cores given up in the handler, %llu refused (host code), "
                        "%llu deferred to SVC 0x36; not signalled: %llu in a host function, %llu with preemption disabled, %llu signalled < 2 ms ago\n",
