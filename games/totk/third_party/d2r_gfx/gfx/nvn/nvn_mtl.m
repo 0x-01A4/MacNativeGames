@@ -295,11 +295,37 @@ static uint64_t gpu_budget_bytes(void) {
     }
     return b;
 }
+static void defer_drain(void);
 static void gpu_budget_check(const char *where) {
     uint64_t budget = gpu_budget_bytes(); if (!budget) return;
     uint64_t cur = (uint64_t)g_dev.currentAllocatedSize; if (cur <= budget) return;
+    /* Over the line, part of it can be objects already retired and the staging of submissions still on the GPU, both freed
+       when those submissions complete (#616: stopped 51 s after the start while the world loaded; #614: on a dive). Let the
+       running work complete and release what it held (at most 2 s; it stops early once nothing more completes), then look
+       again: only memory still allocated after that stops the game. The submission being built is not committed yet, so its
+       own fence is never waited for. */
+    const uint64_t first = cur, t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    uint64_t done = __atomic_load_n(&g_done, __ATOMIC_ACQUIRE), quiet = t0;
+    for (;;) {
+        defer_drain();
+        cur = (uint64_t)g_dev.currentAllocatedSize; if (cur <= budget) break;
+        uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), d = __atomic_load_n(&g_done, __ATOMIC_ACQUIRE);
+        if (d != done || atomic_load(&g_q4_inflight)) { done = d; quiet = t; }
+        else if (t - quiet > 20000000ull) break;   // nothing is running or completing any more
+        if (t - t0 > 2000000000ull) break;
+        usleep(500);
+    }
+    double waited_ms = (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0) / 1e6;
+    if (cur <= budget) {
+        static unsigned spikes; spikes++;
+        if (spikes <= 8 || spikes % 100 == 0)
+            MLOG("显存短时超过预算（第 %u 次，%s）：%llu MB，等在途提交完成、放掉退役对象后 %llu MB，等了 %.1f ms（预算 %llu MB）",
+                 spikes, where, (unsigned long long)(first >> 20), (unsigned long long)(cur >> 20), waited_ms, (unsigned long long)(budget >> 20));
+        return;
+    }
     res_site_report(16);
-    MDIE("%s：显卡已分配 %llu MB 超过预算 %llu MB；四次内核崩溃都发生在驻留内存约 15 GB 时，拒绝继续提交（TOTK_GPU_BUDGET_MB 调整）", where, (unsigned long long)(cur >> 20), (unsigned long long)(budget >> 20));
+    MDIE("%s：显卡已分配 %llu MB 超过预算 %llu MB（等在途提交完成、放掉退役对象 %.1f ms 前是 %llu MB）；四次内核崩溃都发生在驻留内存约 15 GB 时，拒绝继续提交（TOTK_GPU_BUDGET_MB 调整）",
+         where, (unsigned long long)(cur >> 20), (unsigned long long)(budget >> 20), waited_ms, (unsigned long long)(first >> 20));
 }
 // DM_RES_CHECK=1（诊断）：着色器经参数块访问的贴图 / 缓冲若不在驻留集里，打出前 40 个（贴图按父贴图 / 底层缓冲归到实际分配）
 // DM_RES_CHECK=1 (diagnostic): if textures / buffers the shader accesses through the argument block are not in the residency set, print the first 40 (textures are attributed to the actual allocation via parent texture / underlying buffer)
@@ -2701,6 +2727,7 @@ static void wb_write_list_body(wb_ent **list, int nl, int force) {
         unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1; BOTW_WB_FROM_STAGE(e, ok, layers)
         for (unsigned l = 0; l < t->d.levels && ok == 1; l++) for (unsigned y = 0; y < layers && ok == 1; y++) ok = wb_level_back(t, mt, l, y);
         nvn_dirty_gpu_write_end(tok);
+        if (ok == WB_POOL_GONE) { wb_ent_free(e); continue; }   // counted and logged by wb_target_lock
         if (ok) { uint64_t d = ++g_wb_done; if (d <= 8 || d % 500 == 0) MLOG("[writeback] ser=%llu %ux%u nvnfmt=%#x lv%u：GPU 渲染结果写回内存（累计 %llu 张 / %llu MB，CPU 已改写而跳过 %llu 张）", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, t->d.levels, (unsigned long long)d, (unsigned long long)(g_wb_bytes >> 20), (unsigned long long)g_wb_skip_cpu); }
         else MLOG("【红】GPU 写回内存失败 ser=%llu 格式 %#x", (unsigned long long)t->serial, t->d.format);
         wb_ent_free(e);
@@ -2727,7 +2754,6 @@ static int bc_unpack(uint32_t nvn_fmt, uint32_t *pf, int *bpp) { return no_bc() 
    memory. Uploads transcode on the GPU (bc1astc kernel, tex/nvn_bc1astc_msl.h) after the deswizzle; CPU paths use the C
    transcoder (tex/nvn_bc1astc.c). 3D, 1D and multisample BC1 textures keep the decompressed path. TOTK_BC1_ASTC=0 turns
    it off. probe-bc1astc checks the transcoding through Metal's ASTC decoder. */
-        if (ok == WB_POOL_GONE) { wb_ent_free(e); continue; }   // counted and logged by wb_target_lock
 static int bc1_fmt(uint32_t f) { return f == 0x41 || f == 0x42 || f == 0x45 || f == 0x46; }
 static int bc1_rgba(uint32_t f) { return f == 0x42 || f == 0x46; }
 static MTLPixelFormat bc1_astc_pf(uint32_t f) { return (f == 0x45 || f == 0x46) ? MTLPixelFormatASTC_4x4_sRGB : MTLPixelFormatASTC_4x4_LDR; }
@@ -16010,10 +16036,12 @@ int botw_wb_from_stage(void *ev) {
     const uint8_t *src; @autoreleasepool { src = (const uint8_t *)((__bridge id<MTLBuffer>)e->stage).contents; }
     size_t off = 0;
     unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1;
+    if (!wb_target_lock(t)) return WB_POOL_GONE;
     for (unsigned l = 0; l < t->d.levels && ok; l++) for (unsigned y = 0; y < layers && ok; y++) {
         size_t lp; size_t n = wb_level_size(t, l, &lp, NULL, NULL);
         ok = !nvn_swizzle(&t->d, l, y, src + off, lp, t->mem); off += n; g_wb_bytes += n;
     }
+    pthread_mutex_unlock(&g_mu);
     if (++g_wb_from_stage == 1 || g_wb_from_stage % 5000 == 0) MLOG("[writeback] %llu written back from the submission's own copy (%llu copies staged)", (unsigned long long)g_wb_from_stage, (unsigned long long)g_wb_staged);
     return ok;
 }
@@ -16022,5 +16050,3 @@ int botw_wb_from_stage(void *ev) {
 #include "nvn_sampler_border_probe.h"
 #include "nvn_texels_region_probe.h"
 #include "nvn_writeback_probe.h"
-    if (!wb_target_lock(t)) return WB_POOL_GONE;
-    pthread_mutex_unlock(&g_mu);
