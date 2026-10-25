@@ -1068,6 +1068,7 @@ def step_binary(tree, game, keys, env, logs, *, version="v0", title='0100f2c0115
     # the launcher is per game and version (runtime/game_version.h: the data folder, the log name, the backup of saves)
     defines = [] if version == 'v0' else [f'-DGAME_{version.upper()}=1'] if version.startswith('botw') else [f'-DTOTK_GAME_{version.upper()}=1']
     run(['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wall', '-Ithird_party/d2r_gfx/gfx/nvn', '-Iruntime', *defines, 'app/launcher.m', '-framework', 'AppKit',
+         '-framework', 'GameController', '-framework', 'IOKit',
          '-o', 'build/app-launcher'], logs / 'launcher.log', cwd=tree, env=env)
     # used only while packaging (step_warm_metal); not part of the app
     run(['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wall', '-Wextra', 'tools/warm_metal_cache.m', '-framework', 'Metal',

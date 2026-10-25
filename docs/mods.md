@@ -24,6 +24,16 @@ The launcher points `TOTK_ROMFS_MODS` at
 where `<version>` is the game version the app was built from: `v0` (1.0.0), `v112` (1.1.2), `v121`
 (1.2.1) or `v143` (1.4.3).
 
+When no controller is connected at start and `mods/<version>-keyboard/manifest.tsv` exists, the launcher points
+`TOTK_ROMFS_MODS` at that folder instead, so the prompts show the Mac keyboard's keys while you play on the keyboard:
+
+```sh
+python3.14 scripts/make_button_icons.py "$HOME/Library/Application Support/MacNativeGames/TOTK/mods/v0-keyboard" \
+  --app "Tears of the Kingdom.app" --version v0 --style azerty   # or --style keyboard for a US layout
+```
+
+The choice is made once per start: connecting a controller later keeps the keyboard icons until the next start.
+
 ### What `manifest.tsv` is
 
 Only the files listed in `manifest.tsv` are served. Each line has four tab-separated fields:
@@ -338,6 +348,16 @@ never checks and Metal refuses to build; the app caps the chain at what the dime
 
 `<version>` 是构建这个 App 时使用的游戏版本：`v0`（1.0.0）、`v112`（1.1.2）、`v121`（1.2.1）、
 `v143`（1.4.3）。
+
+启动时没有连接手柄、且 `mods/<version>-keyboard/manifest.tsv` 存在时，启动器改把 `TOTK_ROMFS_MODS` 指向那个目录，
+用键盘玩的时候提示里显示的就是 Mac 键盘的按键：
+
+```sh
+python3.14 scripts/make_button_icons.py "$HOME/Library/Application Support/MacNativeGames/TOTK/mods/v0-keyboard" \
+  --app "Tears of the Kingdom.app" --version v0 --style azerty   # 美式键盘用 --style keyboard
+```
+
+每次启动只选一次：游戏中途再接上手柄，键盘图标会保留到下次启动。
 
 ### manifest.tsv 是什么
 
