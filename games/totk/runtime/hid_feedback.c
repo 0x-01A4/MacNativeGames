@@ -153,6 +153,29 @@ int runtime_hid_feedback_flag(const char *name, int v) {
     fprintf(stderr, "[hid] %s %s%s\n", name, v ? "on" : "muted", on ? "" : " (no effect: the game has no such device in this run; start it with TOTK_RUMBLE=1 / TOTK_GYRO=1, or without rumble.txt / gyro.txt saying off)");
     return 1;
 }
+/* The settings panel (key 1, runtime/settings_panel.h). The variable or an agent's test session decides first, as above; the
+   row then shows that value, greyed out. Otherwise the switch shows the choice in force: until the player picks, whether
+   the game has the device and it is not muted. A pick is saved in rumble.txt / gyro.txt for the next launch and, when the
+   game has the device in this run, mutes or unmutes it at once, as "flag rumble|gyro 0|1" does. A device the run started
+   without comes at the next launch: the game asked for its devices at the start. */
+static _Atomic int rumbleChoice = -1, gyroChoice = -1;   /* -1: no pick in this run */
+int runtime_feedback_locked(int gyro) {
+    const char *o = getenv("TOTK_SLOT_OWNER");
+    return getenv(gyro ? "TOTK_GYRO" : "TOTK_RUMBLE") || (o && (!strcmp(o, "claude") || !strcmp(o, "codex")));
+}
+int runtime_feedback_present(int gyro) { return gyro ? runtime_gyro_enabled() : runtime_rumble_enabled(); }
+int runtime_feedback_choice(int gyro) {
+    int c = atomic_load(gyro ? &gyroChoice : &rumbleChoice);
+    return c >= 0 ? c : runtime_feedback_present(gyro) && !atomic_load(gyro ? &gyro_muted : &rumble_muted);
+}
+void runtime_feedback_choose(int gyro, int on) {
+    if (runtime_feedback_locked(gyro)) return;
+    on = !!on;
+    atomic_store(gyro ? &gyroChoice : &rumbleChoice, on);
+    runtime_setting_save(gyro ? "gyro.txt" : "rumble.txt", on ? "on" : "off", gyro ? "gyro setting" : "rumble setting");
+    if (runtime_feedback_present(gyro)) runtime_hid_feedback_flag(gyro ? "gyro" : "rumble", on);
+    else fprintf(stderr, "[hid] %s %s from the next launch (saved)\n", gyro ? "gyro" : "rumble", on ? "on" : "off");
+}
 void runtime_hid_feedback_stats(uint64_t *values, uint64_t *motion_reads) { *values = atomic_load(&values_in); *motion_reads = atomic_load(&reads); }
 
 void *runtime_hid_feedback_override(const char *name) {

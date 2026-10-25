@@ -111,6 +111,8 @@ int runtime_setting_word(const char *name, char *word, size_t size) {
     char path[4096];
     return setting_read(name, word, size, path, sizeof path);
 }
+/* ... and saves one, as controller-type.txt is saved (the settings panel's controller rows). */
+void runtime_setting_save(const char *name, const char *word, const char *what) { setting_write(name, word, what); }
 
 /* Controller type (gamepad_layout.h GAMEPAD_TYPE_*), in the Mac settings panel, in controller-type.txt. */
 static _Atomic int controllerType = GAMEPAD_TYPE_AUTO;
