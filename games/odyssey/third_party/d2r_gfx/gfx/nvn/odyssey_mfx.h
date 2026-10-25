@@ -42,6 +42,19 @@ static inline int odyssey_mfx_camera(const float *h, float cam[84]) {
             if (fabsf(a[0]*b[0] + a[1]*b[1] + a[2]*b[2]) > 0.05f) return 0;
         }
     }
+    /* Check the complete affine V * inverse(V), including translation. A model block can pass the
+       orthonormal / near-far checks: slot 3 did so in Cap Kingdom, but its inverse error exceeded 18,000 cm.
+       Double accumulation avoids adding cancellation error to the float uniforms. Rotation has a fixed
+       tolerance; translation allows 0.05 cm plus float rounding proportional to the terms being cancelled. */
+    for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) {
+        double v = c == 3 ? h[4*r+3] : 0, scale = fabs(v);
+        for (int k = 0; k < 3; k++) {
+            double term = (double)h[4*r+k] * h[12+4*k+c];
+            v += term; scale += fabs(term);
+        }
+        double tolerance = c == 3 ? 0.05 + 1e-5 * scale : 1e-3;
+        if (fabs(v - (r == c ? 1 : 0)) > tolerance) return 0;
+    }
     if (!(h[0x160/4] > 0 && h[0x164/4] > h[0x160/4])) return 0;
     float x = sqrtf(h[24]*h[24] + h[25]*h[25] + h[26]*h[26]);
     float y = sqrtf(h[28]*h[28] + h[29]*h[29] + h[30]*h[30]);

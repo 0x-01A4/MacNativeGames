@@ -9770,30 +9770,31 @@ static void odyssey_mfx_after_draw(void) {   // draw_inner: the draw is encoded
 }
 
 /* Odyssey camera bytes are materialized with pending updates, just like draw uniforms. */
-/* The first block that passes is taken. The remaining slots are still checked, for the summary below (PR #568 review:
-   which slots carry the camera, and whether another block, e.g. a rotation-only model matrix, ever passes as well). */
+/* Publish only after all slots agree. Even a consistent view/inverse pair can describe another camera;
+   differing valid blocks make the input ambiguous, so this frame keeps its real picture. */
 static void mfx_take_camera(void) {
     g_mfx.want_cam = 0;
-    static uint64_t taken[16], also, captures; static int said;
-    int first = -1; uint64_t first_addr = 0; float first_view[12];
+    static uint64_t taken[16], ambiguous, captures; static int said;
+    int first = -1; float selected[84];
     for (int slot = 0; slot < 16; slot++) {
         const p_bind_buf *u = &S.ubo[0][slot];
         if (!u->addr || u->size < 0x180) continue;
         float h[0x180 / 4], cam[84];
         pend_materialize(u->addr, (uint8_t *)h, sizeof h, 0);
         if (!odyssey_mfx_camera(h, cam)) continue;
-        if (first < 0) { first = slot; first_addr = u->addr; memcpy(first_view, h, sizeof first_view); mfx_note_camera(cam, 84); continue; }
-        if (u->addr == first_addr || !memcmp(first_view, h, sizeof first_view)) continue;   // the same camera bound twice
-        also++;
-        if (said < 5) { said++; MLOG("[mfx] camera F%llu: vertex uniform %d taken, %d (another block) also passes", (unsigned long long)atomic_load(&g_cur_frame), first, slot); }
-        break;
+        if (first < 0) { first = slot; memcpy(selected, cam, sizeof selected); continue; }
+        if (!memcmp(selected, cam, sizeof selected)) continue;   // the same camera bound twice
+        ambiguous++;
+        if (said < 5) { said++; MLOG("[mfx] camera F%llu: vertex uniforms %d and %d disagree; keeping real picture", (unsigned long long)atomic_load(&g_cur_frame), first, slot); }
+        return;
     }
     if (first < 0) return;
+    mfx_note_camera(selected, 84);
     taken[first]++;
     if (++captures % 600 == 0) {
         char b[160]; int n = 0;
         for (int i = 0; i < 16; i++) if (taken[i]) n += snprintf(b + n, sizeof b - n, " %d:%llu", i, (unsigned long long)taken[i]);
-        MLOG("[mfx] camera from vertex uniform slot (slot:frames)%s; frames where another block also passed %llu", b, (unsigned long long)also);
+        MLOG("[mfx] camera from vertex uniform slot (slot:frames)%s; ambiguous frames kept real %llu", b, (unsigned long long)ambiguous);
     }
 }
 

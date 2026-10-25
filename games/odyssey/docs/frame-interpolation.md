@@ -21,7 +21,14 @@ budget, or when macOS stops presenting an occluded window.
   +0, inverse view at +0x30, view-projection at +0x60 and near/far at +0x160.
   Uniform slots vary with the material, so the host checks the bound blocks.
   It reads pending updates and derives FOV/aspect from the projection instead
-  of assuming Zelda's 2368-byte camera layout or a placeholder FOV.
+  of assuming Zelda's 2368-byte camera layout or a placeholder FOV. The affine
+  view times inverse-view must be approximately identity, including translation.
+  Rotation tolerance is 0.001; translation allows 0.05 cm plus 0.00001 times the
+  sum of the absolute product terms to accommodate float cancellation. If two
+  passing blocks decode to different cameras (including projection), no camera
+  is published and the frame keeps its real picture. Identical copies are fine.
+  This checks consistency, not semantic identity: a single unrelated block with
+  a consistent inverse and plausible projection can still pass.
 - The final FXAA draw (`5345f3231650f0b7...`) identifies the tone-mapped canvas
   once it is encoded: a draw skipped while its pipeline is missing or still
   compiling leaves the frame without a scene, and the real picture is shown.
@@ -56,9 +63,10 @@ python -B -m unittest discover -s games/odyssey/tests -v
 ```
 
 The added probes exercise the production camera callback with a rotated
-projection, changing uniform bytes, a different slot, a second block that also
-passes, and invalid input; cuts at Odyssey's scale; the display link mode while
-60+60 is on and after it; the scene canvas when the FXAA draw is skipped or
+projection, changing uniform bytes, a different slot, a lower-slot false match
+with an inconsistent inverse, large world positions, identical camera copies,
+conflicting valid cameras/projections, and invalid input; cuts at Odyssey's
+scale; the display link mode while 60+60 is on and after it; the scene canvas when the FXAA draw is skipped or
 encoded; and the actual interpolator request/latch lifecycle across unsupported
 screens, 120 Hz, suspension and recovery. They do not execute guest code or
 encode GPU work.
@@ -70,7 +78,7 @@ which forces the screen rate because it has no window
 those cases are skipped and the probe says so.
 
 With `TOTK_MFX` on, the log reports which vertex uniform slots the camera came
-from, whether another block also passed (`[mfx] camera ...`), and where the
+from, how many ambiguous frames were kept real (`[mfx] camera ...`), and where the
 final copy found the canvas (`[mfx] final copy ...`).
 
 For a short game check, use a separate test profile and cache, the pinned 1.3.0
@@ -83,3 +91,19 @@ the other screen if checking automatic suspension/recovery.
 
 Keep generated apps, game data, saves, shaders, caches and logs outside the
 source checkout. Never upload the game-derived seed or libraries with the PR.
+
+## Camera follow-up (2026-10-25)
+
+On the same M3 Mac and Odyssey 1.3.0 Cap Kingdom save, a short diagnostic run
+reproduced the old slot-3 false match: the maximum rotation identity error was
+1.28–1.29 and translation error 18,957–19,298 cm. It is rejected by the inverse
+check above. Diagnostic code used for this measurement is not shipped. This
+is evidence from one kingdom, not validation of every camera in the game.
+
+The final runtime was rebuilt and booted with a separate test save. In a
+117-second smoke check (Cap Kingdom, camera turn and walking), 2,400 captures
+used slot 1 and no conflicting valid camera was seen; 2,711 generated pictures
+were encoded by game frame 4,200. The game exited normally and the HUD/tutorial
+capture remained legible. This was a functional smoke check, not a performance
+comparison: the GPU was saturated and the presentation window included dropped
+pictures (p50 16.67–25 ms). It does not establish sustained 120 Hz output.
