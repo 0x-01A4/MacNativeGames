@@ -2772,14 +2772,26 @@ static int uncapped_cap(int scr) {
     return v < 30 ? 30 : v > UNCAPPED_HZ ? UNCAPPED_HZ : v;
 }
 void nvn_present_config(int hz, int display_mode) { g_hz = g_paced_hz = hz; g_display_mode = display_mode; }
+/* The game's rate follows the window's screen only when nothing fixed it: no DM_PRESENT_HZ (Odyssey sets 60,
+   runtime/system_services.c) and real-time pacing on. The display link range and the cadence window read
+   mtl_display_hz() at every use, so after a move to a screen with another rate (or when the first present came before
+   the frontend sampled one: mtl_display_hz() is 0 until the first front_sync_drawable) the game's rate catches up. */
+static int g_hz_follows;
+static void present_follow_display(void) {
+    int scr = mtl_display_hz();
+    if (scr <= 0 || scr == g_paced_hz) return;
+    LOG("[nvn] window screen %d -> %d Hz: game rate follows%s", g_paced_hz, scr, g_uncapped ? " (uncapped ceiling too)" : "");
+    g_paced_hz = scr; g_hz = g_uncapped ? uncapped_cap(scr) : scr;
+}
 static void present_cfg(const win_t *o) {
-    if (g_hz >= 0) return;
+    if (g_hz >= 0) { if (g_hz_follows) present_follow_display(); return; }
     // 有窗口仍缺省 display 间隔模式；无窗口缺省 game 模式。环境变量可覆盖固定 60 Hz。
     // With a window the default is still display interval mode; without a window the default is game mode. Environment variables can override the fixed 60 Hz.
     int scr = mtl_display_hz();
     const char *e = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int realtime = !(rt && !strcmp(rt, "0"));
     g_hz = g_paced_hz = e ? atoi(e) : (realtime && scr > 0 ? scr : 60);
+    g_hz_follows = !e && realtime;
     { const char *u = getenv("TOTK_UNCAPPED");
       /* Odyssey has no verified variable-frame-rate patch. Keep the game's own pacing by default. */
       g_uncapped = !e && realtime && u && !strcmp(u, "1") && g_hz < UNCAPPED_HZ; }
@@ -2825,9 +2837,10 @@ static uint64_t present_period(const win_t *o) {
 /* Exercise production policy, including the shrine's interval=2 and the
    legacy 30 FPS path. No sleep, present or GPU allocation is involved. */
 void dm_nvn_probe_present_interval(void) {
-    int saved_hz = g_hz, saved_display = g_display_mode, saved_uncapped = g_uncapped;
+    int saved_hz = g_hz, saved_display = g_display_mode, saved_uncapped = g_uncapped, saved_follows = g_hz_follows;
     int saved_flag = atomic_load(&g_uncapped_interval), checked = 0;
     const char *neg = getenv("TOTK_PROBE_NEGATIVE");
+    g_hz_follows = 0;   // the cases below set the rate themselves
     for (int hz = 60; hz <= 120; hz += 60) for (int uncapped = 0; uncapped < 2; uncapped++)
     for (int display = 0; display < 2; display++) for (int on = 0; on < 2; on++)
     for (int interval = -1; interval <= 3; interval++) {
@@ -2838,6 +2851,18 @@ void dm_nvn_probe_present_interval(void) {
             die("present interval probe: effective pacing differs from expected");
         checked++;
     }
+    /* The window moves between screens (forced rate; the probe has no window). A rate nothing fixed follows the screen
+       at the next present; DM_PRESENT_HZ (Odyssey's 60) keeps it. Negative control 40: the rate never follows. */
+    { extern void mtl_display_hz_force(int hz);
+      const int follows[] = {1, 1, 0}, screen[] = {120, 60, 120}, expect[] = {120, 60, 60}, paced = g_paced_hz;
+      g_display_mode = 0; g_uncapped = 0; g_hz = g_paced_hz = 60;
+      for (int i = 0; i < 3; i++) {
+          win_t w = {.interval = 1}; g_hz_follows = follows[i] && !(neg && atoi(neg) == 40); mtl_display_hz_force(screen[i]);
+          if (present_period(&w) != 1000000000ull / expect[i] || g_hz != expect[i] || g_paced_hz != expect[i])
+              die("present interval probe: the game's rate must follow the window's screen unless DM_PRESENT_HZ fixed it");
+          checked++;
+      }
+      mtl_display_hz_force(0); g_paced_hz = paced; }
     /* Frame interpolation modes (key 2 / flag mfx_interp, taken over at the frame boundary). Half the refresh rate: two
        display ticks per game frame at the display rate, also when the uncapped mode is configured (suspended). 30+30:
        exactly 1/30 s, by display ticks where the rate is a multiple of 30 and by our own clock otherwise (100 Hz).
@@ -2870,7 +2895,7 @@ void dm_nvn_probe_present_interval(void) {
         checked++;
     }
     mfx_set(saved_mfx); mfx_latch();
-    g_hz = saved_hz; g_paced_hz = saved_paced; g_display_mode = saved_display; g_uncapped = saved_uncapped;
+    g_hz = saved_hz; g_paced_hz = saved_paced; g_display_mode = saved_display; g_uncapped = saved_uncapped; g_hz_follows = saved_follows;
     atomic_store(&g_uncapped_interval, saved_flag);
     LOG("[present-interval] %d pacing cases passed", checked);
 }
