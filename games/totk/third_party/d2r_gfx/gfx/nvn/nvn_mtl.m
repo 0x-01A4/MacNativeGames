@@ -14069,7 +14069,11 @@ static CAFrameRateRange link_range(int mode) {
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
     const char *explicit_hz = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int hz = explicit_hz ? atoi(explicit_hz) : (rt && !strcmp(rt, "0")) ? 60 : mtl_display_hz();
-    if (hz < 30 || hz > 120) hz = 60;
+    /* A display above 120 Hz (a 144 / 160 / 240 Hz monitor) keeps its own rate, up to 240 (hle_nvn.c UNCAPPED_HZ): the
+       fallback to 60 made the system tick at a divisor of the refresh instead (160 Hz: every third or fourth refresh,
+       18.75 / 25 ms on screen, about 53 FPS) and merge away half of the uncapped game frames. Only an unknown rate
+       (below 30) falls back to 60. */
+    if (hz < 30) hz = 60; else if (hz > 240) hz = 240;
     return CAFrameRateRangeMake(hz, hz, hz);
 }
 static int g_link_mode = 1;   // 节拍对象当前的模式：1 / 2 同 g_dm_present_link，3 = 省电模式 30 Hz | Current mode of the display link object: 1 / 2 same as g_dm_present_link, 3 = power-saving mode 30 Hz
