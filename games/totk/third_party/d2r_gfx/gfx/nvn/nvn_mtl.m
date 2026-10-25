@@ -7168,36 +7168,94 @@ static id<MTLFunction> fs_fn_fbread_slow(NvShader *fs, const int aid[], const in
     os_unfair_lock_unlock(&g_bpatch_lock);
     return fn == VARIANT_NONE ? nil : fn;
 }
-static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NSString *bkey, border_in b, NSString **cache_key);
+/* TOTK (2026-10-25): a vertex input is declared with the type of the format the game binds there, as NVN's hardware
+   has it: its vertex fetch fills a 32-bit register per component, with integer bits for a pure integer format (R8_UI to
+   RGBA32_I) and float bits for every other one (float, half, normalized, *_UI2F / *_I2F), and the shader code reads the
+   registers untyped. Metal fixes each input's type in the function, and the translator typed the inputs from their use
+   (Service.cs InferAttributeTypes): that differed from the bound format for 1,876 of the 2,069 non-default 1.4.3
+   variants in the shared list (1,873 inputs taken for integers had float formats bound), each a variant of its own. An
+   input whose declared type class differs from its format's is redeclared with the format's type and read back as the
+   declared type with as_type, so the code sees the bits the hardware's fetch gives (Metal converts *_UI2F / *_I2F to
+   float for a float input); the variant's recorded input types no longer matter (totk_shader_rt.m deps_match). */
+static char vfmt_class(int f) {   // 'u' / 's' pure unsigned / signed integer, 'f' any other, 0 unmapped or unbound
+    if (f >= 0x51 && f <= 0x68) return 'f';   // *_UI2F / *_I2F: converted to float values
+    switch (vfmt(f)) {
+        case MTLVertexFormatInvalid: return 0;
+        case MTLVertexFormatUChar: case MTLVertexFormatUChar2: case MTLVertexFormatUChar3: case MTLVertexFormatUChar4:
+        case MTLVertexFormatUShort: case MTLVertexFormatUShort2: case MTLVertexFormatUShort3: case MTLVertexFormatUShort4:
+        case MTLVertexFormatUInt: case MTLVertexFormatUInt2: case MTLVertexFormatUInt3: case MTLVertexFormatUInt4: return 'u';
+        case MTLVertexFormatChar: case MTLVertexFormatChar2: case MTLVertexFormatChar3: case MTLVertexFormatChar4:
+        case MTLVertexFormatShort: case MTLVertexFormatShort2: case MTLVertexFormatShort3: case MTLVertexFormatShort4:
+        case MTLVertexFormatInt: case MTLVertexFormatInt2: case MTLVertexFormatInt3: case MTLVertexFormatInt4: return 's';
+        default: return 'f';
+    }
+}
+/* "<location><u|s|f>," for each input of vs whose declared type the pipeline's bound formats change, nil for none. An
+   unbound input keeps its type: the replay feeds it a constant of the declared type (pso_desc). */
+static NSString *vs_vin(NvShader *vs, const pso_key *k) {
+    if (!vs || !k) return nil;
+    NSMutableString *s = nil; const nvn_refl *rf = &vs->rf;
+    for (int v = 0; v < rf->nv; v++) {
+        int a = rf->v[v].nvn; if (a >= 16) continue;
+        char want = vfmt_class(k->attr[a].fmt); if (!want) continue;
+        int ct = rf->v[v].ct; char have = ct == NVN_CT_UINT ? 'u' : ct == NVN_CT_INT ? 's' : 'f';
+        if (want == have) continue;
+        if (!s) s = [NSMutableString string];
+        [s appendFormat:@"%d%c,", rf->v[v].loc, want];
+    }
+    return s;
+}
+/* The MSL with the inputs vin names redeclared (vs_vin): "float4 m_49 [[attribute(6)]];" becomes
+   "uint4 m_49_vin [[attribute(6)]];", and every in.m_49 reads as_type<float4>(in.m_49_vin). */
+static NSString *msl_retype_inputs(NSString *msl, NSString *vin, const char *key) {
+    NSString *src = msl;
+    for (NSString *item in [vin componentsSeparatedByString:@","]) {
+        if (item.length < 2) continue;
+        int loc = item.intValue; unichar w = [item characterAtIndex:item.length - 1];
+        NSString *want = w == 'u' ? @"uint" : w == 's' ? @"int" : @"float";
+        NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"\\b(float|uint|int)([234]?)\\s+(\\w+)\\s*\\[\\[attribute\\(%d\\)\\]\\];", loc] options:0 error:nil];
+        NSTextCheckingResult *m = [re firstMatchInString:src options:0 range:NSMakeRange(0, src.length)];
+        if (!m) MDIE("vertex shader %s: no declaration of vertex input %d to retype", key, loc);
+        NSString *type = [src substringWithRange:[m rangeAtIndex:1]], *width = [src substringWithRange:[m rangeAtIndex:2]], *name = [src substringWithRange:[m rangeAtIndex:3]];
+        src = [src stringByReplacingCharactersInRange:m.range withString:[NSString stringWithFormat:@"%@%@ %@_vin [[attribute(%d)]];", want, width, name, loc]];
+        NSRegularExpression *use = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"\\bin\\.%@\\b", name] options:0 error:nil];
+        src = [use stringByReplacingMatchesInString:src options:0 range:NSMakeRange(0, src.length) withTemplate:[NSString stringWithFormat:@"as_type<%@%@>(in.%@_vin)", type, width, name]];
+    }
+    return src;
+}
+static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NSString *bkey, border_in b, NSString **cache_key, const pso_key *pk);
 /* The vertex function for the pass (layer index), the fragment shader's varyings and, with border, the draw's vertex-stage
-   samplers with a border colour Metal lacks (PSO_VBORDER). recipe: their border_key. */
-static id<MTLFunction> vs_fn_for(NvShader *vs, NvShader *fs, int layered, int border, NSString **recipe) {
+   samplers with a border colour Metal lacks (PSO_VBORDER), and pk's bound vertex formats (vs_vin). recipe: their border_key. */
+static id<MTLFunction> vs_fn_for(NvShader *vs, NvShader *fs, int layered, int border, NSString **recipe, const pso_key *pk) {
     border_in b; b.n = 0;
     NSString *bkey = border && sh_has_src(vs) ? border_key(vs, 0, b.c, b.a, b.x, b.p, &b.n) : nil;
     if (recipe) *recipe = bkey;
-    if (!function_cache_on()) return vs_fn_variant(vs, fs, layered, bkey, b, NULL);
+    if (!function_cache_on() || vs_vin(vs, pk)) return vs_fn_variant(vs, fs, layered, bkey, b, NULL, pk);   // retyped inputs: vs->vpatch caches them
     os_unfair_lock_lock(&g_vpatch_lock);
     id<MTLFunction> fn = function_cache_get(vs->vertex_cache, fs, bkey, layered);
     os_unfair_lock_unlock(&g_vpatch_lock);
     if (fn) return fn;
-    fn = vs_fn_variant(vs, fs, layered, bkey, b, NULL);
+    fn = vs_fn_variant(vs, fs, layered, bkey, b, NULL, NULL);
     os_unfair_lock_lock(&g_vpatch_lock);
     function_cache_put(&vs->vertex_cache, fs, bkey, layered, fn);
     os_unfair_lock_unlock(&g_vpatch_lock);
     return fn;
 }
-/* The same for a border key and its inputs (a draw's samplers, or a recipe); cache_key: its vpatch key (nil: vs->fn). */
-static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NSString *bkey, border_in b, NSString **cache_key) {
+/* The same for a border key and its inputs (a draw's samplers, or a recipe) and pk's bound vertex formats; cache_key: its
+   vpatch key (nil: vs->fn). */
+static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NSString *bkey, border_in b, NSString **cache_key, const pso_key *pk) {
     os_unfair_lock *lk = &g_vpatch_lock;
     if (cache_key) *cache_key = nil;
     if (layered && !vs_layerable(vs)) MDIE("vertex shader %s cannot write the render target array index", vs->key);
-    if (!sh_has_src(vs) || (!layered && !bkey && (!fs || !sh_has_src(fs)))) return vs->fn;
+    NSString *vin = vs_vin(vs, pk);
+    if (vin && !sh_has_src(vs)) { static int said; if (said++ < 8) MLOG("【红】vertex shader %s: inputs %s need their format's type, but there is no MSL to retype", vs->key, vin.UTF8String); vin = nil; }
+    if (!sh_has_src(vs) || (!layered && !bkey && !vin && (!fs || !sh_has_src(fs)))) return vs->fn;
     os_unfair_lock_lock(lk);
     NSDictionary *in = fs && sh_has_src(fs) ? msl_varyings(fs) : nil, *out = in ? msl_varyings(vs) : nil;
     NSMutableArray *miss = [NSMutableArray array];
     for (NSNumber *l in [in.allKeys sortedArrayUsingSelector:@selector(compare:)]) if (!out[l]) [miss addObject:l];
-    if (!miss.count && !layered && !bkey) { os_unfair_lock_unlock(lk); return vs->fn; }
-    NSString *key = [NSString stringWithFormat:@"%@%@%@", layered ? @"layer;" : @"", bkey ? [NSString stringWithFormat:@"border:%@", bkey] : @"", [miss componentsJoinedByString:@","]];
+    if (!miss.count && !layered && !bkey && !vin) { os_unfair_lock_unlock(lk); return vs->fn; }
+    NSString *key = [NSString stringWithFormat:@"%@%@%@%@", layered ? @"layer;" : @"", vin ? [NSString stringWithFormat:@"vin:%@;", vin] : @"", bkey ? [NSString stringWithFormat:@"border:%@", bkey] : @"", [miss componentsJoinedByString:@","]];
     if (cache_key) *cache_key = key;
     id<MTLFunction> f = vs->vpatch[key];
     os_unfair_lock_unlock(lk);
@@ -7210,6 +7268,7 @@ static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NS
         NSString *head = @"struct main0_out\n{\n";
         NSString *vsrc0 = sh_src(vs);
         if (bkey) { NSString *bs = border_src(vs, vsrc0, v.c, v.a, v.x, v.p, v.n); if (bs) vsrc0 = bs; }
+        if (vin) vsrc0 = msl_retype_inputs(vsrc0, vin, vs->key);
         NSRange r = [vsrc0 rangeOfString:head];
         if (r.location == NSNotFound) MDIE("vertex shader %s: no main0_out to extend", vs->key);
         NSString *src = [vsrc0 stringByReplacingCharactersInRange:r withString:[head stringByAppendingString:add]];
@@ -7236,6 +7295,7 @@ static id<MTLFunction> vs_fn_variant(NvShader *vs, NvShader *fs, int layered, NS
             static int once, lonce;
             if (miss.count && once++ < 64) MLOG("[totk] fragment shader %s reads varyings the vertex shader %s leaves unwritten (locn %s): added as zero outputs", fs ? fs->key : "-", vs->key, [miss componentsJoinedByString:@","].UTF8String);
             if (layered && !lonce++) MLOG("[totk] layered pass: vertex shader %s writes the render target array index", vs->key);
+            static unsigned vonce; if (vin && (vonce++ < 8 || vonce % 1000 == 0)) MLOG("[vin] vertex shader %s: inputs %s redeclared with their bound formats' types (%u so far)", vs->key, vin.UTF8String, vonce);
         }
         g = vs->vpatch[key];
         os_unfair_lock_unlock(lk);
@@ -7456,7 +7516,7 @@ static id<MTLComputePipelineState> cs_new(NvShader *cs, NSError **e) {
 static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvShader *fs, id<MTLFunction> fsfn, int merged) {
     MTLRenderPipelineDescriptor *d = [MTLRenderPipelineDescriptor new];
     // A border pipeline's key carries its vertex function (pso_get, warm_worker): built off the submit thread too, it reads no sampler here.
-    d.vertexFunction = (k->a2c & PSO_VBORDER) ? (__bridge id<MTLFunction>)k->vs : vs_fn_for(vs, fs, (k->a2c & PSO_LAYERED) != 0, 0, NULL); d.fragmentFunction = fsfn ? fsfn : fs ? (k->dfmt ? fs->fn : fs_fn_without_depth(fs)) : nil;
+    d.vertexFunction = (k->a2c & PSO_VBORDER) ? (__bridge id<MTLFunction>)k->vs : vs_fn_for(vs, fs, (k->a2c & PSO_LAYERED) != 0, 0, NULL, k); d.fragmentFunction = fsfn ? fsfn : fs ? (k->dfmt ? fs->fn : fs_fn_without_depth(fs)) : nil;
     if (!fsfn && nan_trace_match(fs) && !fs->writes_depth) d.fragmentFunction = nan_trace_fn(fs);   // diagnostic TOTK_NAN_TRACE
     // 诊断 DM_NVN_HILITE=片元着色器键,…：这些绘制改用纯色片元（第 1–6 个键依次 品红 / 绿 / 青 / 黄 / 蓝 / 白），看几何落在哪里
     // Diagnostic DM_NVN_HILITE=fragment shader key,...: these draws use a solid-color fragment instead (keys 1–6 in order magenta / green / cyan / yellow / blue / white), to see where the geometry lands
@@ -7620,7 +7680,7 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // �
     // compiled in the background (variant_defer) instead of here on the submission thread, where it took up to 225 ms
     // cold; the guess is left to a later scan or to its draw.
     g_vprobe = 1; g_vmissing = 0;
-    if (!(k->a2c & PSO_VBORDER)) vs_fn_for(vs, fs, (k->a2c & PSO_LAYERED) != 0, 0, NULL);
+    if (!(k->a2c & PSO_VBORDER)) vs_fn_for(vs, fs, (k->a2c & PSO_LAYERED) != 0, 0, NULL, k);
     if (fs && !k->dfmt) fs_fn_without_depth(fs);
     g_vprobe = 0;
     if (g_vmissing) { g_pp_vdefer++; return; }
@@ -7775,8 +7835,8 @@ static void *pso_get_p(NvProg *pr, MTLRenderPassDescriptor *unused) {
         // recipes clear this pointer in pso_skey_from, keeping the stable ABI.
         /* TOTK_PSO_MEMO: the key just made is the one vs_fn_for would make again (border_key's per-stage cache, under the
            registry lock once more); vs_fn_for takes it only from a vertex shader with source. */
-        if (pso_memo_on()) { vrec = sh_has_src(vs) ? vkey : nil; if (!vrec) vb.n = 0; k.vs = (__bridge void *)vs_fn_variant(vs, fs, (k.a2c & PSO_LAYERED) != 0, vrec, vb, NULL); }
-        else k.vs = (__bridge void *)vs_fn_for(vs, fs, (k.a2c & PSO_LAYERED) != 0, 1, &vrec);
+        if (pso_memo_on()) { vrec = sh_has_src(vs) ? vkey : nil; if (!vrec) vb.n = 0; k.vs = (__bridge void *)vs_fn_variant(vs, fs, (k.a2c & PSO_LAYERED) != 0, vrec, vb, NULL, &k); }
+        else k.vs = (__bridge void *)vs_fn_for(vs, fs, (k.a2c & PSO_LAYERED) != 0, 1, &vrec, &k);
     } }
     g_vprobe = 0;
     if (g_vmissing && !plain) { g_pso_deferred = 1; return NULL; }
@@ -7800,7 +7860,7 @@ static void *pso_get_p(NvProg *pr, MTLRenderPassDescriptor *unused) {
     } else if (g_vmissing) atomic_fetch_add_explicit(&g_stat_variant_plain, 1, memory_order_relaxed);
     if (probe) {   // the functions pso_desc takes for a new pipeline (apso_defer and the synchronous build call it here)
         g_vprobe = 1;
-        if (!(k.a2c & PSO_VBORDER)) vs_fn_for(vs, fs, (k.a2c & PSO_LAYERED) != 0, 0, NULL);
+        if (!(k.a2c & PSO_VBORDER)) vs_fn_for(vs, fs, (k.a2c & PSO_LAYERED) != 0, 0, NULL, &k);
         if (fs && !bfn && !k.dfmt) fs_fn_without_depth(fs);
         if (fs && g_mfx.role) fs_fn_mfx(fs, g_mfx.role, k.dfmt == 0);
         g_vprobe = 0;
@@ -8077,7 +8137,7 @@ static int warm_border(NSArray<NSString *> *c, NSMutableDictionary<NSString *, N
     border_in bv, bf;
     if (!vs || (!hv && !hf) || (hv && !border_parse(c[2], &bv)) || (hf && (!fs || !border_parse(c[3], &bf)))) return 0;
     NSString *vk = nil, *fk = nil;
-    id<MTLFunction> vfn = hv ? vs_fn_variant(vs, fs, (sk.k.a2c & PSO_LAYERED) != 0, c[2], bv, &vk) : nil;
+    id<MTLFunction> vfn = hv ? vs_fn_variant(vs, fs, (sk.k.a2c & PSO_LAYERED) != 0, c[2], bv, &vk, &sk.k) : nil;
     id<MTLFunction> bfn = hf ? fs_fn_border_with(fs, sk.k.dfmt == 0, c[3], bf, &fk) : nil;
     if ((hv && (!vfn || !vk)) || (hf && !bfn)) return 0;
     pso_key k = sk.k; k.vs = (__bridge void *)(hv ? vfn : (id)vs); k.fs = (__bridge void *)fs; k.fsfn = (__bridge void *)bfn;
@@ -16053,6 +16113,69 @@ int mtl_probe_layer_merge(void) {
     for (int i = 0; i < 4; i++) defer_obj_release(rb[i]);
     for (id o in @[cube, arr, arr2]) defer_obj_release(o);
     return checked + 5 * 4;
+}
+
+/* probe-gpu-vin: a vertex input reads the bits NVN's vertex fetch gives for the bound format, whatever type the MSL
+   declares it with (vs_vin). Three inputs of a translated-style shader: declared float with RGBA8_UI bound (integer
+   bits 7, 200), declared uint with RGBA32_F bound (1.5: 0x3fc00000, top byte 63), declared float with RGBA8_I bound (-1:
+   0xffffffff, top byte 255; read as the value -1.0 it would be 191). The draw writes those bytes as its colour.
+   TOTK_PROBE_NEGATIVE=16 skips the retyping: the integer inputs then arrive as float values (0, 0 and 191). */
+int mtl_probe_vertex_input_types(void) {
+    mtl_init(); int checked = 0;
+    const size_t size = 16384; void *mem = NULL; if (posix_memalign(&mem, size, size) || !mem) MDIE("vertex input probe memory");
+    memset(mem, 0, size); mtl_pool_add(mem, size);
+    float pos[12] = {-1, -1, 0, 1, 3, -1, 0, 1, -1, 3, 0, 1}; memcpy(mem, pos, sizeof pos);
+    for (int v = 0; v < 3; v++) {
+        uint8_t u8[4] = {7, 200, 3, 1}; memcpy((uint8_t *)mem + 256 + 16 * v, u8, 4);
+        float f[4] = {1.5f, 0, 0, 0}; memcpy((uint8_t *)mem + 512 + 16 * v, f, 16);
+        int8_t s8[4] = {-1, 0, 0, 0}; memcpy((uint8_t *)mem + 768 + 16 * v, s8, 4);
+    }
+    NSString *vsrc = @"#include <metal_stdlib>\nusing namespace metal;\n\nstruct main0_out\n{\n    float4 c [[user(locn0)]];\n    float4 gl_Position [[position]];\n};\n\n"
+        "struct main0_in\n{\n    float4 m_p [[attribute(0)]];\n    float4 m_a [[attribute(1)]];\n    uint4 m_b [[attribute(2)]];\n    float4 m_s [[attribute(3)]];\n};\n\n"
+        "vertex main0_out main0(main0_in in [[stage_in]])\n{\n    main0_out out = {};\n    uint4 a = as_type<uint4>(in.m_a);\n    uint4 s = as_type<uint4>(in.m_s);\n"
+        "    out.c = float4(float(a.x & 0xff), float(a.y & 0xff), float((in.m_b.x >> 24) & 0xff), float((s.x >> 24) & 0xff)) / 255.0;\n"
+        "    out.gl_Position = in.m_p;\n    return out;\n}\n";
+    NSString *fsrc = @"#include <metal_stdlib>\nusing namespace metal;\nstruct V { float4 c [[user(locn0)]]; };\nfragment float4 main0(V i [[stage_in]]) { return i.c; }\n";
+    NSError *error = nil;
+    id<MTLLibrary> vl = [g_dev newLibraryWithSource:vsrc options:nil error:&error]; if (!vl) MDIE("vertex input probe shader: %s", error.localizedDescription.UTF8String);
+    id<MTLLibrary> fl = [g_dev newLibraryWithSource:fsrc options:nil error:&error]; if (!fl) MDIE("vertex input probe fragment: %s", error.localizedDescription.UTF8String);
+    NvShader *vs = [NvShader new], *fs = [NvShader new];
+    vs->fn = [vl newFunctionWithName:@"main0"]; vs->src = vsrc; vs->io = @{}; strcpy(vs->key, "probe-vertex-input-types");
+    fs->fn = [fl newFunctionWithName:@"main0"]; fs->io = @{}; fs->stage = 1; strcpy(fs->key, "probe-vertex-input-types-fs");
+    vs->rf.route_b = 1; vs->rf.nv = 4;
+    const int cts[4] = {NVN_CT_FLOAT, NVN_CT_FLOAT, NVN_CT_UINT, NVN_CT_FLOAT};
+    for (int i = 0; i < 4; i++) { vs->rf.v[i].loc = i; vs->rf.v[i].nvn = i; vs->rf.v[i].ct = cts[i]; }
+    int negative = getenv("TOTK_PROBE_NEGATIVE") && atoi(getenv("TOTK_PROBE_NEGATIVE")) == 16;
+    MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:16 height:16 mipmapped:NO];
+    td.storageMode = MTLStorageModePrivate; td.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture = [g_dev newTextureWithDescriptor:td]; res_add(texture); id<MTLBuffer> rb = probe_buf(1024);
+    op_hdr end = {OP_END, 8};
+    mtl_sub_begin(); mtl_exec((const uint8_t *)&end);
+    S.nattr = 4; memset(S.attr, 0, sizeof S.attr); memset(S.stream, 0, sizeof S.stream); memset(S.vbuf, 0, sizeof S.vbuf);
+    const int fmts[4] = {0x2e, 0x27, 0x2e, 0x28};   // RGBA32_F position, RGBA8_UI, RGBA32_F, RGBA8_I
+    for (int i = 0; i < 4; i++) { S.attr[i] = (va_st){.fmt = (uint32_t)fmts[i], .stream = (uint32_t)i}; S.stream[i].stride = 16; S.vbuf[i] = (NVNbufferRange){.address = (uint64_t)(uintptr_t)mem + 256 * i, .size = 48}; }
+    uint32_t formats[8] = {MTLPixelFormatRGBA8Unorm}; pso_key key; pso_key_fill(&key, vs, fs, formats, 0, 0, 1, 0); key.chmask = 15;
+    NSString *vin = vs_vin(vs, &key);
+    if (![vin isEqualToString:@"1u,2f,3s,"]) MDIE("vertex input probe: inputs to retype %s, expected 1u,2f,3s,", vin ? vin.UTF8String : "none");
+    checked++;
+    if (negative) { vs->rf.v[1].ct = NVN_CT_UINT; vs->rf.v[2].ct = NVN_CT_FLOAT; vs->rf.v[3].ct = NVN_CT_INT; }   // pretend they match: no retyping
+    MTLRenderPipelineDescriptor *pd = pso_desc(&key, vs, fs, nil, 0);
+    id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithDescriptor:pd error:&error];
+    if (!ps) MDIE("vertex input probe pipeline: %s", error.localizedDescription.UTF8String);
+    MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; rp.colorAttachments[0].texture = texture; rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    rp.renderTargetWidth = rp.renderTargetHeight = 16; id<MTL4RenderCommandEncoder> en = enc_r_begin(rp); enc_r_pso(en, ps); enc_r_cull(en, MTLCullModeNone);
+    enc_r_viewport(en, (MTLViewport){0, 0, 16, 16, 0, 1}); enc_r_scissor(en, (MTLScissorRect){0, 0, 16, 16});
+    bind_vertex_streams(en, vs);
+    enc_r_draw(en, MTLPrimitiveTypeTriangle, 0, 3); enc_r_end(en);
+    enc_b_copy_texture_buffer(blit(), texture, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(16, 16, 1), rb, 0, 64, 1024); mtl_sub_commit(); mtl_finish();
+    const uint8_t want[4] = {7, 200, 63, 255};
+    for (unsigned i = 0; i < 1024; i++) {
+        int got = ((uint8_t *)rb.contents)[i];
+        if (abs(got - want[i % 4]) > 1) MDIE("vertex input probe: pixel %u channel %u is %d, expected %d (the bits of the bound format)", i / 4, i % 4, got, want[i % 4]);
+        checked++;
+    }
+    res_remove(texture); mtl_pool_del(mem);
+    return checked;
 }
 
 /* Render through the same descriptor and stream-binding helper as draw_inner.
