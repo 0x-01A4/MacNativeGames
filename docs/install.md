@@ -126,7 +126,7 @@ bytes and that every edit is inside main's own segments. The merged module is th
 app is bound to its SHA-256. `analysis/phase12-validation.json` (1.0.0) or `analysis/<version>-port/phase12-validation.json`
 in `--work` records the mod folder, each patch file's SHA-256 and the addresses it changed, under `mod_exefs`. An extra
 code module a mod ships (`subsdk9`, a hooking framework's) is not loaded and the build says so: such a mod keeps its
-main patches and its RomFS, but not the code changes that live in that module. Step by step: [docs/mods.md](mods.md).
+main patches and its RomFS, but not the code changes that live in that module. Step by step: [docs/mods.md](mods.md); a manager's merged `exefs/` + `romfs/` folder in practice: [docs/merged-mod-pack.md](merged-mod-pack.md).
 
 To keep one desktop entry, link the packaged app with the optional installer:
 
