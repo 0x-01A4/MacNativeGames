@@ -34,6 +34,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 25 | Mac | **Tears of the Kingdom**: 8 GB mode (`TOTK_DRAM_8GB`) for large texture packs such as HDPacks' 4K pack, and `texture_pack_tables.py` to fit a pack's size tables to 1.4.3 ([how](docs/mods.md)) |
 | Oct 23 | iPhone | **Breath of the Wild 1.6.0** on the iPhone: full screen, add-on content, saves copied from the Mac; both games render at 960x540 on the phone and use their own upscale to 1280x720 (no MetalFX) |
 | Oct 23 | Mac | **Super Mario Odyssey 1.3.0** (community port, early): Cap Kingdom and Bonneton playable at 60 fps on an M3, own runtime in [`games/odyssey`](games/odyssey/README.md), which has the build steps |
 | Oct 23 | iPhone, iPad | **Tears of the Kingdom** fills the screen, 60 fps by default, MetalFX upscaling |
@@ -364,6 +365,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 25 日 | Mac | **王国之泪**：8 GB 模式（`TOTK_DRAM_8GB`），用于 HDPacks 4K 包这类大型材质包；`texture_pack_tables.py` 把材质包的尺寸表改成 1.4.3 的（[说明](docs/mods.md)） |
 | 10 月 23 日 | iPhone | **旷野之息 1.6.0** 上 iPhone：铺满屏幕、带 DLC、可拷入 Mac 的存档；两款游戏在手机上都是内部 960×540，用游戏自己的放大到 1280×720（不用 MetalFX） |
 | 10 月 23 日 | Mac | **超级马力欧 奥德赛 1.3.0**（社区移植，早期）：帽子王国和 Bonneton 在 M3 上 60 帧可玩，运行时独立放在 [`games/odyssey`](games/odyssey/README.md)，构建步骤见那里 |
 | 10 月 23 日 | iPhone、iPad | **王国之泪** 铺满屏幕 默认锁 60、MetalFX放大|
