@@ -42,6 +42,7 @@ python3.14 scripts/build_mvdk.py --game "<your base game>.nsp" --update "<your 1
 | `runtime/audio_out.c` | from games/dkcr: `audout:u`, the movie sound's output; `TOTK_AUDIOOUT_TRACE=1` logs the queue each second, `TOTK_AUDIOOUT_DUMP=<file>` keeps the PCM |
 | `third_party/d2r_gfx/gfx/nvn/hle_nvn.c` | `dm_nvn_texture_write_rgba` (from games/ori); advanced blend modes (Porter-Duff) as ordinary blend factors |
 | `Makefile` | also links VideoToolbox and CoreMedia |
+| `runtime/gamepad.m`, `runtime/input.c` | two players: the first controller (with the keyboard and mouse) is player 1, the second is the Switch's controller No. 2, with the same layout file; the controllers' lights show 1 and 2. `TOTK_TWO_PLAYERS=0` merges every controller into player 1 |
 
 The game imports the runtime GLSL compiler (`glslc*`); those symbols are weak and resolve to zero, as on the Switch when it
 is not linked. `subsdk0` is the same audio/movie middleware Donkey Kong Country Returns HD ships.
@@ -49,6 +50,6 @@ is not linked. `subsdk0` is the same audio/movie middleware Donkey Kong Country 
 ## Status
 
 Tested on a Mac (October 2026) with scripted input: the intro cutscene with sound, the title screen, a new save, the
-opening scene and Level 1-1 at a steady 60 fps with its HUD, the pause menu; the intro's sound is continuous (checked
+opening scene and Level 1-1 at a steady 60 fps with its HUD, the pause menu, two-player co-op with two controllers; the intro's sound is continuous (checked
 against a reference decode of the same track). Not yet: later levels, saves across restarts, a
 startup shader set, the advanced blend modes that need the destination in the shader (multiply, screen, overlay, ...).

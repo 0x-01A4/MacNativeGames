@@ -423,14 +423,36 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
     if (mouseButtons) { mouseButtons = 0; refresh_gamepads(); }
 }
 
+/* Two players (games/mvdk: Mario vs. Donkey Kong's co-op): the first controller is player 1, with the keyboard, the mouse,
+   a generic HID pad and the touch controls; the second (and any further) controller is player 2, the Switch's controller
+   No. 2 (runtime/input.c), with the same layout file, held buttons only. TOTK_TWO_PLAYERS=0 merges every controller into
+   player 1, as before. */
+static RuntimeGamepadState player2State;
+static uint64_t player2Edges;
+static int two_players(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_TWO_PLAYERS"); v = !(e && !strcmp(e, "0")); } return v; }
+
 static void refresh_gamepads(void) {
-    RuntimeGamepadState next = {0};
+    RuntimeGamepadState next = {0}, second = {0};
+    uint64_t physical2 = 0;
+    int index = 0;
     uint64_t physical = (uint64_t)mouseButtons << CONTROLLER_MOUSE_FIRST;
     int32_t nativeLx = 0, nativeLy = 0;
     uint64_t rawAt = 0;
     for (GCController *controller in GCController.controllers) {
         GCExtendedGamepad *pad = controller.extendedGamepad;
         if (!pad) continue;
+        int player = two_players() && index++ > 0 ? 2 : 1;
+        GCControllerPlayerIndex light = player == 1 ? GCControllerPlayerIndex1 : GCControllerPlayerIndex2;
+        if (two_players() && controller.playerIndex != light) controller.playerIndex = light;
+        if (player == 2) {
+            second.connected = 1;
+            physical2 |= gamepad_buttons(pad, face_by_position(controller));
+            second.lx = stronger_axis(second.lx, stick_axis(pad.leftThumbstick.xAxis.value));
+            second.ly = stronger_axis(second.ly, stick_axis(pad.leftThumbstick.yAxis.value));
+            second.rx = stronger_axis(second.rx, stick_axis(pad.rightThumbstick.xAxis.value));
+            second.ry = stronger_axis(second.ry, stick_axis(pad.rightThumbstick.yAxis.value));
+            continue;
+        }
         next.connected = 1;
         physical |= gamepad_buttons(pad, face_by_position(controller));
         float lx = pad.leftThumbstick.xAxis.value, ly = pad.leftThumbstick.yAxis.value;
@@ -489,7 +511,14 @@ static void refresh_gamepads(void) {
     uint64_t held = physical & ~suppressed;
     for (int i = 0; i < CONTROLLER_BUTTONS; i++) if (controllerModes[i] != CONTROLLER_HOLD) held &= ~(1ULL << i);
     next.buttons |= controller_map_apply(controllerMap, held) | synthetic;
+    uint64_t held2 = physical2 & ((1ULL << CONTROLLER_MOUSE_FIRST) - 1);
+    for (int i = 0; i < CONTROLLER_MOUSE_FIRST; i++) if (controllerModes[i] != CONTROLLER_HOLD) held2 &= ~(1ULL << i);
+    second.buttons = controller_map_apply(controllerMap, held2);
     pthread_mutex_lock(&gamepadLock);
+    if (second.connected != player2State.connected)
+        fprintf(stderr, "[totk-input] player 2 %s\n", second.connected ? "connected: the second controller" : "disconnected");
+    player2Edges |= second.buttons & ~player2State.buttons;
+    player2State = second;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
     gamepadState = next;
     gamepadRawLeftAt = rawAt;
@@ -569,6 +598,7 @@ void runtime_gamepad_clear(void) {
     memset(toggleMoved, 0, sizeof toggleMoved);
     pthread_mutex_lock(&gamepadLock);
     gamepadState = (RuntimeGamepadState){0};
+    player2State.buttons = 0; player2Edges = 0;
     gamepadRawLeftAt = 0;
     gamepadNativeLx = gamepadNativeLy = 0;
     pressedEdges = 0;
@@ -586,6 +616,13 @@ void runtime_touch_pad_set(const RuntimeGamepadState *s) {
     touchState = *s;
     pthread_mutex_unlock(&gamepadLock);
 }
+
+void runtime_gamepad_read_player2(RuntimeGamepadState *out) {   /* runtime/input.c: controller No. 2 */
+    pthread_mutex_lock(&gamepadLock);
+    *out = player2State; out->buttons |= player2Edges; player2Edges = 0;
+    pthread_mutex_unlock(&gamepadLock);
+}
+int runtime_gamepad_player2_connected(void) { pthread_mutex_lock(&gamepadLock); int c = player2State.connected; pthread_mutex_unlock(&gamepadLock); return c; }
 
 void runtime_gamepad_read(RuntimeGamepadState *out) {
     pthread_mutex_lock(&gamepadLock);
