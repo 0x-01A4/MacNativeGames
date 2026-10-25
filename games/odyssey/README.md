@@ -31,6 +31,19 @@ Tested on one Mac: MacBook Pro, Apple M3, 8 GB, macOS 26.6.
 
 Exact measurements and logs are in the development log below and in the project's test evidence.
 
+## Optional frame interpolation
+
+Key **2** toggles a request for **60 real + 60 generated pictures** on a 120 Hz
+window screen and supported Metal 4 GPU. It is off by default. Odyssey's game
+logic stays at 60 Hz; other screen rates suspend generation. Motion comes from
+camera reprojection, so moving characters can still show artifacts. See
+[frame interpolation](docs/frame-interpolation.md) for inputs, limits and checks.
+
+The modes copied from Tears of the Kingdom are gone: key 2 now toggles instead
+of cycling, and `TOTK_MFX=interp30`, `interpmax` and numeric values all request
+60+60. 30+30 no longer exists, so on 60, 100 or 144 Hz screens nothing is
+generated.
+
 ## What you need
 
 - An Apple silicon Mac with macOS 26 or newer, and Xcode with the Metal 4 SDK (tested with Xcode 27.1).
