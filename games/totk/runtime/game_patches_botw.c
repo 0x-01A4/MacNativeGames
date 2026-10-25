@@ -879,21 +879,12 @@ static float aspect_requested(void) {   /* TOTK's parser (aspect_math.h); "displ
    singleton, +0xe8 = projection +0x38 + aspect +0xb0). The straight run main+0x15c2118..0x15c214c (no branch lands in it)
    is rewritten so that store takes a float from the data page after the module (+0x20) when it is not 0.0, else the
    game's own ratio as shipped: near / far copied with one ldp / stp, the three repeated dirty-byte stores before the
-   aspect folded into one, x9 / s1..s3 / flags free there. Key 4 then only sets that word (g_uw_word). 1.9.0 has the
-   same path (main+0x10edaf8) yet kept a written ratio; not looked into. */
-static _Atomic uint32_t *g_uw_word;
-static void botw_aspect_writer(Module *m) {
-    static const uint32_t original[14] = {0x39010277, 0xb9406ec8, 0xb900d268, 0x39010277, 0xb94072c8, 0xb900d668, 0x39010277,
-                                          0x2d4806a0, 0x2d470ea2, 0x39010277, 0x1e233821, 0x1e223800, 0x1e211800, 0xbd00ea60};
-    const uint32_t at = 0x15c2118;
-    for (int i = 0; !CODE_PATCHED_AT_BUILD && i < 14; i++) {
-        uint32_t w; memcpy(&w, m->base + at + 4 * i, 4);
-        if (w != original[i]) { fprintf(stderr, "[botw] ultrawide main+%#x: found %08x expected %08x\n", at + 4 * i, w, original[i]); runtime_fail("ultrawide requires the 1.6.0 camera update"); }
-    }
-    uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
-    if (data_off + 0x4000 != m->size) runtime_fail("ultrawide: no data page after the main module");
-    const uint64_t page = (uintptr_t)m->base + data_off;
-    const uint32_t patched[14] = {
+   aspect folded into one, x9 / s1..s3 / flags free there. Key 4 then only sets that word (g_uw_word). */
+#define UW_WRITER_AT 0x15c2118u
+static const uint32_t uw_writer_original[] = {0x39010277, 0xb9406ec8, 0xb900d268, 0x39010277, 0xb94072c8, 0xb900d668, 0x39010277,
+                                              0x2d4806a0, 0x2d470ea2, 0x39010277, 0x1e233821, 0x1e223800, 0x1e211800, 0xbd00ea60};
+static void uw_writer_words(uint32_t *out, uint32_t adrp) {
+    const uint32_t patched[] = {
         0x39010277,   /* strb w23, [x19, #0x40]       dirty */
         0x294da6c8,   /* ldp w8, w9, [x22, #0x6c]     near, far */
         0x291a2668,   /* stp w8, w9, [x19, #0xd0] */
@@ -902,21 +893,60 @@ static void botw_aspect_writer(Module *m) {
         0x1e233821,   /* fsub s1, s1, s3 */
         0x1e223800,   /* fsub s0, s0, s2 */
         0x1e211800,   /* fdiv s0, s0, s1              the game's ratio */
-        adrp_reg(8, (uintptr_t)m->base + at + 32, page),
+        adrp,         /* adrp x8, <data page> */
         0xbd402101,   /* ldr s1, [x8, #0x20]          ours, 0.0 = none */
         0x1e202028,   /* fcmp s1, #0.0 */
         0x1e201c20,   /* fcsel s0, s1, s0, ne */
         0x39010277,   /* strb w23, [x19, #0x40]       dirty */
         0xbd00ea60,   /* str s0, [x19, #0xe8]         the aspect */
     };
-    put_words(m, at, patched, 14, "ultrawide aspect writer");
+    memcpy(out, patched, sizeof patched);
+}
+#else
+/* 1.9.0 keeps a written ratio at the title but writes the aspect every frame in the world too (2026-10-25, iPhone 14:
+   from the first world frames the picture flickered between full screen and 720p, as 1.6.0 did). Its camera update
+   main+0x10eda5c holds the projection at x19 + 0x10 (aspect +0xc0 = projection +0xb0, dirty byte +0x18) and after the
+   fovy call stores near / far and the layer rectangle's width / height in the straight run main+0x10edae0..0x10edb10
+   (13 words, no branch lands in it, x8 / x9 / s1..s3 / flags free before the return). The same rewrite: near / far with
+   one ldp / stp, one dirty-byte store, the aspect from the data page (+0x20) when it is not 0.0. */
+#define UW_WRITER_AT 0x10edae0u
+static const uint32_t uw_writer_original[] = {0xbd406e80, 0x39006276, 0xbd00aa60, 0xbd407280, 0x39006276, 0xbd00ae60, 0x2d4806a0,
+                                              0x2d470ea2, 0x39006276, 0x1e233821, 0x1e223800, 0x1e211800, 0xbd00c260};
+static void uw_writer_words(uint32_t *out, uint32_t adrp) {
+    const uint32_t patched[] = {
+        0x39006276,   /* strb w22, [x19, #0x18]       dirty */
+        0x294da688,   /* ldp w8, w9, [x20, #0x6c]     near, far */
+        0x29152668,   /* stp w8, w9, [x19, #0xa8] */
+        0x2d4806a0,   /* ldp s0, s1, [x21, #0x40]     the layer rectangle */
+        0x2d470ea2,   /* ldp s2, s3, [x21, #0x38] */
+        0x1e233821,   /* fsub s1, s1, s3 */
+        0x1e223800,   /* fsub s0, s0, s2 */
+        0x1e211800,   /* fdiv s0, s0, s1              the game's ratio */
+        adrp,         /* adrp x8, <data page> */
+        0xbd402101,   /* ldr s1, [x8, #0x20]          ours, 0.0 = none */
+        0x1e202028,   /* fcmp s1, #0.0 */
+        0x1e201c20,   /* fcsel s0, s1, s0, ne */
+        0xbd00c260,   /* str s0, [x19, #0xc0]         the aspect */
+    };
+    memcpy(out, patched, sizeof patched);
+}
+#endif
+#define UW_WRITER_N (sizeof uw_writer_original / sizeof *uw_writer_original)
+static _Atomic uint32_t *g_uw_word;
+static void botw_aspect_writer(Module *m) {
+    for (unsigned i = 0; !CODE_PATCHED_AT_BUILD && i < UW_WRITER_N; i++) {
+        uint32_t w; memcpy(&w, m->base + UW_WRITER_AT + 4 * i, 4);
+        if (w != uw_writer_original[i]) { fprintf(stderr, "[botw] ultrawide main+%#x: found %08x expected %08x\n", UW_WRITER_AT + 4 * i, w, uw_writer_original[i]); runtime_fail("ultrawide requires this game version's camera update"); }
+    }
+    uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
+    if (data_off + 0x4000 != m->size) runtime_fail("ultrawide: no data page after the main module");
+    const uint64_t page = (uintptr_t)m->base + data_off;
+    uint32_t patched[UW_WRITER_N];
+    uw_writer_words(patched, adrp_reg(8, (uintptr_t)m->base + UW_WRITER_AT + 32, page));
+    put_words(m, UW_WRITER_AT, patched, UW_WRITER_N, "ultrawide aspect writer");
     g_uw_word = (_Atomic uint32_t *)(void *)(page + 0x20);
 }
 static void botw_aspect_word(int on) { float v = on ? g_uw_wide : 0.0f; uint32_t b; memcpy(&b, &v, 4); if (g_uw_word) atomic_store(g_uw_word, b); }
-#else
-static void botw_aspect_writer(Module *m) { (void)m; }
-static void botw_aspect_word(int on) { (void)on; }
-#endif
 static float g_uw_view;                  /* runtime_aspect_view, below */
 static void botw_aspect_phone(float a);
 static void botw_aspect_install(Module *m) {
