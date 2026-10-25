@@ -16,6 +16,7 @@
 int totk_host_main(int argc, char **argv);
 void runtime_ios_attach_layer(CAMetalLayer *layer, UIView *host);
 void runtime_ios_sync_drawable(UIView *host);
+void runtime_ios_sync_safe_area(UIView *host);
 static char *host_argv[3];
 static NSString *g_no_game_data;   // set when there is no RomFS image to play from (didFinishLaunching)
 static NSString *g_seed_pack, *g_seed_unpack_to;   // a pushed shader pack to unpack before the game starts (seed_unpack)
@@ -68,8 +69,8 @@ static NSString *seed_unpack(NSString *base, NSString *dest, void (^progress)(ui
     return nil;
 }
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)totk_host_main(3, host_argv); }
-/* The desktop keyboard-overlay shortcut has no counterpart on iOS. */
-void runtime_shortcut_help_toggle(void) {}
+/* Key 1's settings panel is Mac only (runtime/frontend.m). */
+void runtime_settings_toggle(void) {}
 
 @interface TOTKMetalView : UIView @end
 @implementation TOTKMetalView
@@ -77,6 +78,7 @@ void runtime_shortcut_help_toggle(void) {}
 #if TARGET_OS_VISION
 - (void)layoutSubviews { [super layoutSubviews]; runtime_ios_sync_drawable(self); }
 #endif
+- (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; runtime_ios_sync_safe_area(self); }   // the HUD boxes keep out of the notch
 @end
 
 @interface TOTKGameController : UIViewController @property(nonatomic,strong) TOTKMetalView *gameView; @end
