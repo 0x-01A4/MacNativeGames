@@ -17,6 +17,7 @@ Not an emulator: the game's own ARM64 code runs directly on Apple chips, and its
 | Super Smash Bros. Ultimate | 13.0.2 | Mac | Community port | [`games/ssbu`](games/ssbu/README.md) |
 | Super Mario Odyssey | 1.3.0 | Mac | Community port, early | [`games/odyssey`](games/odyssey/README.md) |
 | Bayonetta 3 | 1.2.0 | Mac | Community port, work in progress | [`games/by3`](games/by3/README.md) |
+| Super Mario Bros. Wonder | 1.0.0, 1.2.1 | Mac | Community port, early | [`games/wonder`](games/wonder/README.md) |
 
 Community ports keep their own runtime, graphics layer and scripts in their folder and are built with the steps there.
 
@@ -114,6 +115,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 | 任天堂明星大乱斗 特别版 | 13.0.2 | Mac | 社区移植 | [`games/ssbu`](games/ssbu/README.md) |
 | 超级马力欧 奥德赛 | 1.3.0 | Mac | 社区移植，早期 | [`games/odyssey`](games/odyssey/README.md) |
 | 猎天使魔女 3 | 1.2.0 | Mac | 社区移植，开发中 | [`games/by3`](games/by3/README.md) |
+| 超级马力欧兄弟 惊奇 | 1.0.0、1.2.1 | Mac | 社区移植，早期 | [`games/wonder`](games/wonder/README.md) |
 
 社区移植的游戏各自在自己的目录里带一份运行时、图形层和脚本，按那里的步骤构建。
 
