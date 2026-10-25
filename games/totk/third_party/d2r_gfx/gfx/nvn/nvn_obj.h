@@ -5,6 +5,12 @@
 // Objects are stored in place in the NVN object memory allocated by the game, with size not exceeding the reserved size in nvn.h (FITS static assertion).
 // State objects (Blend / Color / ... 4–0x18 bytes) are small structs the game copies by value; their layout is packed in place with bit-fields.
 #pragma once
+/* 1 in a Breath of the Wild build: defaults measured on Tears of the Kingdom only stay off there (#750). */
+#ifdef GAME_BOTW
+#define TOTK_BOTW_BUILD 1
+#else
+#define TOTK_BOTW_BUILD 0
+#endif
 #include <stdint.h>
 #include <string.h>
 #include "nvn.h"
@@ -251,11 +257,11 @@ int botw_wb_newer(const void *mem, uint64_t gen);
 /* ... and while a GPU rendering of the same memory and layout waits for its write-back (the CPU has not written there
    since), a sampled copy reads that rendering, as its descriptor would on hardware. */
 void botw_render_note(const tex_t *t, void *obj, uint64_t stamp);
-void *botw_render_alias(const tex_t *t, const void *own);   /* CFBridgingRetain'ed MTLTexture or NULL */
+void *botw_render_alias(const tex_t *t, const void *own);   /* the pending rendering's MTLTexture (not retained: its record holds it) or NULL */
 void botw_render_gone(const void *mem, const void *obj);   /* its write-back record was freed */
 extern _Thread_local int botw_bra_attach;   /* tex_mtl for a render target: its own copy, never the alias */
-#define BOTW_ATTACH_TEX_MTL(t) ({ botw_bra_attach = 1; id<MTLTexture> r_ = tex_mtl(t); botw_bra_attach = 0; r_; })
-#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned && !botw_bra_attach) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return CFBridgingRelease(a_); }
+#define BOTW_ATTACH_TEX_U(t) ((__bridge id<MTLTexture>)({ botw_bra_attach = 1; void *r_ = tex_mtl_p(t); botw_bra_attach = 0; r_; }))
+#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned && !botw_bra_attach) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return a_; }
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -305,7 +311,7 @@ int totk_wb_fence_on(void);
 #define BOTW_PKG_WB_SET(pk)
 #define BOTW_PKG_WB_STALE(pk, t, clean)
 #define BOTW_PKG_RENDER_ALIAS(pk, t)
-#define BOTW_ATTACH_TEX_MTL(t) tex_mtl(t)
+#define BOTW_ATTACH_TEX_U(t) tex_mtl(t)
 #endif
 /* Key 5 (MetalFX temporal anti-aliasing, totk_taa.m): the compose draw that samples the linear HDR scene at fragment
    texture slot 0 before tone mapping. TOTK: 0ac9a549 (tone mapping and bloom). Breath of the Wild 1.9.0: f7ee6fe1 (two
