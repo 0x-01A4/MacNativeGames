@@ -17,6 +17,10 @@
                                                              window any more); TOTK_ASPECT's ratio is offered too
      edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
      controller type      auto / Xbox / PlayStation / Switch runtime_gamepad_type_set (gamepad.m), saved
+     DualSense bow trigger switch                            runtime_triggers_choose (gamepad_feedback.m), saved in
+                                                             dualsense-triggers.txt; Breath of the Wild 1.9.0 and Tears of
+                                                             the Kingdom 1.4.3 only; TOTK_DUALSENSE_TRIGGERS or an agent's
+                                                             test session decide first (greyed out)
      mouse                switch                             runtime_mouse_set (gamepad.m), saved
    Below the rows two buttons (user 2026-10-25): contribute the shaders and pipelines the shared list lacks (sent with gh
    in the background when it is signed in, as the launcher's reminder does; else the GitHub form opens and Finder shows the
@@ -149,6 +153,10 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   @[@(GAMEPAD_TYPE_AUTO),@(GAMEPAD_TYPE_XBOX),@(GAMEPAD_TYPE_PLAYSTATION),@(GAMEPAD_TYPE_SWITCH)],
   ^int{return runtime_gamepad_type(NULL);},^(int v){runtime_gamepad_type_set(v);});
  pad.firstTitle=^NSString *{return settings_pad_auto_text();};[rows addObject:pad];
+ NSString *bow=settings_text("DualSense 拉弓扳机（R2）","DualSense bow trigger (R2)");
+ if(!runtime_triggers_available())[rows addObject:settings_fixed(bow,settings_text("这个版本没有","Not in this version"))];
+ else if(runtime_triggers_locked())[rows addObject:settings_fixed(bow,runtime_triggers_choice()?settings_text("开","On"):settings_text("关","Off"))];
+ else [rows addObject:settings_row(bow,nil,nil,^int{return runtime_triggers_choice();},^(int v){runtime_triggers_choose(v);})];
  [rows addObject:settings_row(settings_text("鼠标操作（视角、按键）","Mouse (camera, buttons)"),nil,nil,
   ^int{return runtime_mouse_enabled();},^(int v){runtime_mouse_set(v);})];
  return rows;
@@ -168,7 +176,11 @@ static NSPoint g_settings_at = {-1, -1};
 enum { SETTINGS_W = 520, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 54, SETTINGS_BOTTOM = 86, SETTINGS_POP_W = 260 };
 -(instancetype)init{
  NSArray<TOTKSettingRow *> *rows=settings_rows();
- CGFloat h=SETTINGS_TOP+rows.count*(SETTINGS_ROW_H+SETTINGS_GAP)-SETTINGS_GAP+SETTINGS_BOTTOM;
+ /* The rows close up (down to 26 pt, 2 pt apart) when the panel would not fit the window (21:9 or 32:9 on a laptop
+    screen), so its title, close button and first rows stay in view. */
+ CGFloat n=rows.count,rowH=SETTINGS_ROW_H,gap=SETTINGS_GAP,room=window?window.contentView.bounds.size.height-8:CGFLOAT_MAX;
+ if(n&&SETTINGS_TOP+n*(rowH+gap)-gap+SETTINGS_BOTTOM>room){gap=2;rowH=fmax(26,floor((room-SETTINGS_TOP-SETTINGS_BOTTOM+gap)/n-gap));}
+ CGFloat h=SETTINGS_TOP+n*(rowH+gap)-gap+SETTINGS_BOTTOM;
  if(!(self=[super initWithFrame:NSMakeRect(0,0,SETTINGS_W,h)]))return nil;
  self.rows=rows;self.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
  self.wantsLayer=YES;self.layer.backgroundColor=[NSColor colorWithCalibratedRed:0.10 green:0.16 blue:0.20 alpha:0.9].CGColor;
@@ -179,13 +191,13 @@ enum { SETTINGS_W = 520, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 5
  NSButton *close=[NSButton buttonWithTitle:@"✕" target:self action:@selector(close:)];close.bordered=NO;close.refusesFirstResponder=YES;
  close.font=[NSFont systemFontOfSize:15 weight:NSFontWeightBold];close.contentTintColor=NSColor.whiteColor;close.frame=NSMakeRect(SETTINGS_W-40,h-40,28,28);[self addSubview:close];
  for(NSUInteger i=0;i<rows.count;i++){
-  TOTKSettingRow *r=rows[i];CGFloat y=h-SETTINGS_TOP-(i+1)*SETTINGS_ROW_H-i*SETTINGS_GAP,rw=SETTINGS_W-28;
-  NSView *band=[[NSView alloc] initWithFrame:NSMakeRect(14,y,rw,SETTINGS_ROW_H)];band.wantsLayer=YES;
+  TOTKSettingRow *r=rows[i];CGFloat y=h-SETTINGS_TOP-(i+1)*rowH-i*gap,rw=SETTINGS_W-28;
+  NSView *band=[[NSView alloc] initWithFrame:NSMakeRect(14,y,rw,rowH)];band.wantsLayer=YES;
   band.layer.backgroundColor=[NSColor colorWithCalibratedWhite:0 alpha:0.28].CGColor;band.layer.cornerRadius=6;[self addSubview:band];
   NSTextField *label=[NSTextField labelWithString:r.title];label.font=[NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-  label.textColor=[NSColor colorWithCalibratedWhite:0.92 alpha:1];label.frame=NSMakeRect(12,8,rw-SETTINGS_POP_W-24,18);[band addSubview:label];
-  if(!r.choices){NSSwitch *s=[NSSwitch new];[s sizeToFit];s.frame=NSMakeRect(rw-12-s.frame.size.width,(SETTINGS_ROW_H-s.frame.size.height)/2,s.frame.size.width,s.frame.size.height);r.control=s;}
-  else{NSPopUpButton *p=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(rw-SETTINGS_POP_W-8,4,SETTINGS_POP_W,26) pullsDown:NO];[p addItemsWithTitles:r.choices];
+  label.textColor=[NSColor colorWithCalibratedWhite:0.92 alpha:1];label.frame=NSMakeRect(12,floor((rowH-18)/2),rw-SETTINGS_POP_W-24,18);[band addSubview:label];
+  if(!r.choices){NSSwitch *s=[NSSwitch new];[s sizeToFit];s.frame=NSMakeRect(rw-12-s.frame.size.width,(rowH-s.frame.size.height)/2,s.frame.size.width,s.frame.size.height);r.control=s;}
+  else{NSPopUpButton *p=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(rw-SETTINGS_POP_W-8,floor((rowH-26)/2),SETTINGS_POP_W,26) pullsDown:NO];[p addItemsWithTitles:r.choices];
    p.enabled=r.set!=nil;r.control=p;}
   r.control.refusesFirstResponder=YES;r.control.target=r;r.control.action=@selector(changed:);[band addSubview:r.control];
  }

@@ -21,6 +21,10 @@
 #include "runtime.h"
 
 #if !TARGET_OS_OSX
+int runtime_triggers_available(void) { return 0; }
+int runtime_triggers_locked(void) { return 1; }
+int runtime_triggers_choice(void) { return 0; }
+void runtime_triggers_choose(int on) { (void)on; }
 void runtime_feedback_attach(GCController *c) { (void)c; }
 void runtime_feedback_detach(GCController *c) { (void)c; }
 void runtime_feedback_quiet(void) {}
@@ -307,6 +311,7 @@ static void hid_motion_stop(void) {   /* main queue */
 enum { BOW_POLL_MS = 10 };
 static GCDualSenseGamepad *triggerPad;   /* main queue */
 static BOOL bowDrawn;                    /* main queue: what R2 shows */
+static int triggerChoice = -1;   /* main queue: the settings panel's pick, or the file's word once read; -1 not yet */
 static int triggers_wanted(void) {
     const char *e = getenv("TOTK_DUALSENSE_TRIGGERS"), *owner = getenv("TOTK_SLOT_OWNER");
     if (e && *e) {
@@ -315,13 +320,14 @@ static int triggers_wanted(void) {
         runtime_fail("TOTK_DUALSENSE_TRIGGERS must be on or off");
     }
     if (owner && (!strcmp(owner, "claude") || !strcmp(owner, "codex"))) return 0;
+    if (triggerChoice >= 0) return triggerChoice;
     char word[16] = {0}, *w = word;
-    if (!runtime_setting_word("dualsense-triggers.txt", word, sizeof word)) return 1;
+    if (!runtime_setting_word("dualsense-triggers.txt", word, sizeof word)) return triggerChoice = 1;
     while (*w && strchr(" \t\n\v\f\r", *w)) w++;   /* the blanks around the word go, as for every one-word file */
     for (size_t n = strlen(w); n && strchr(" \t\n\v\f\r", w[n - 1]); n--) w[n - 1] = 0;
-    if (!strcmp(w, "off")) return 0;
+    if (!strcmp(w, "off")) return triggerChoice = 0;
     if (strcmp(w, "on")) fprintf(stderr, "[triggers] dualsense-triggers.txt: not on or off; on\n");
-    return 1;
+    return triggerChoice = 1;
 }
 static int bow_state_supported(void) {
 #if defined(GAME_BOTW190) || defined(TOTK_GAME_V143)
@@ -406,6 +412,7 @@ static void triggers_watch(void) {   /* main queue, every 250 ms */
 static void triggers_apply(GCController *c, const char *name) {   /* main queue */
     if (![c.extendedGamepad isKindOfClass:GCDualSenseGamepad.class] || !triggers_wanted()) return;
     if (!bow_state_supported()) { fprintf(stderr, "[triggers] %s: no bow state for this game version; triggers left alone\n", name); return; }
+    if (triggerPad && triggerPad != c.extendedGamepad) { [triggerPad.leftTrigger setModeOff]; [triggerPad.rightTrigger setModeOff]; }   /* a newer pad takes the bow; the old one goes slack */
     triggerPad = (GCDualSenseGamepad *)c.extendedGamepad;
     triggers_send();
     fprintf(stderr, "[triggers] %s: R2 is a bowstring while the bow is drawn (slope 0.2 -> 0.8 over 5-95 %%), L2 slack\n", name);
@@ -428,6 +435,34 @@ static void triggers_apply(GCController *c, const char *name) {   /* main queue 
         if (r) fprintf(stderr, "[triggers] the bow thread could not start (%d): R2 stays slack\n", r);
         else pthread_detach(thread);
     });
+}
+
+/* The settings panel (key 1, runtime/settings_panel.h; main queue). TOTK_DUALSENSE_TRIGGERS or an agent's test session decide
+   first: the row then shows that value, greyed out. A pick is saved in dualsense-triggers.txt and acts at once: on puts the
+   connected DualSense's R2 on the bow (as at its attach), off lets both triggers go. */
+int runtime_triggers_available(void) { return bow_state_supported(); }
+int runtime_triggers_locked(void) {
+    const char *e = getenv("TOTK_DUALSENSE_TRIGGERS"), *owner = getenv("TOTK_SLOT_OWNER");
+    return (e && *e) || (owner && (!strcmp(owner, "claude") || !strcmp(owner, "codex")));
+}
+int runtime_triggers_choice(void) {
+    const char *e = getenv("TOTK_DUALSENSE_TRIGGERS");
+    if (e && *e) return !strcmp(e, "on") || !strcmp(e, "1");   /* shown only: a bad value stops the game at a DualSense's attach, as before */
+    return triggers_wanted();
+}
+void runtime_triggers_choose(int on) {
+    if (runtime_triggers_locked() || !bow_state_supported()) return;
+    triggerChoice = !!on;
+    runtime_setting_save("dualsense-triggers.txt", on ? "on" : "off", "DualSense trigger setting");
+    if (!on) {   /* every DualSense's triggers go slack, also one that an earlier pad took the bow from */
+        for (GCController *c in GCController.controllers)
+            if ([c.extendedGamepad isKindOfClass:GCDualSenseGamepad.class]) { GCDualSenseGamepad *p = (GCDualSenseGamepad *)c.extendedGamepad; [p.leftTrigger setModeOff]; [p.rightTrigger setModeOff]; }
+        triggerPad = nil; fprintf(stderr, "[triggers] off (settings): both triggers slack\n"); return;
+    }
+    if (triggerPad) return;
+    GCController *pick = [GCController.current.extendedGamepad isKindOfClass:GCDualSenseGamepad.class] ? GCController.current : nil;   /* the pad in use */
+    for (GCController *c in GCController.controllers) if (!pick && [c.extendedGamepad isKindOfClass:GCDualSenseGamepad.class]) pick = c;
+    if (pick) triggers_apply(pick, (pick.vendorName ?: @"controller").UTF8String);
 }
 
 /* ---- controllers ---- */
