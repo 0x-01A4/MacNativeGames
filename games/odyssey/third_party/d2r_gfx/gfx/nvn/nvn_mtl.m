@@ -9717,22 +9717,40 @@ static void prepare_draw_textures(NvProg *pr) {
 /* The FXAA destination is the tone-mapped scene canvas. Snapshot it before the first
    later canvas draw (HUD, text, tutorial video), then duplicate those draws to UI.
    A HUD-free frame snapshots at the final copy and supplies a transparent UI layer. */
-static int g_odyssey_scene_ready;
+static odyssey_scene g_odyssey_scene;   // odyssey_mfx.h: the FXAA draw counts once encoded (odyssey_mfx_after_draw)
+/* Diagnostic summary (PR #568 review): where the final copy into the swapchain finds the canvas. It is assumed at
+   fragment texture 0; elsewhere the frame counts as missing its scene (safe: the real picture is shown). */
+static void odyssey_canvas_slot_note(int slot) {   // slot of the canvas, -1 = not bound; counted once a frame
+    static uint64_t at0, other, none, last_frame = ~0ull; static int said;
+    uint64_t f = atomic_load(&g_cur_frame); if (f == last_frame) return; last_frame = f;
+    if (slot == 0) at0++; else if (slot > 0) other++; else none++;
+    if (slot != 0 && said < 5) { said++; MLOG("[mfx] final copy F%llu: canvas %s %d (assumed 0)", (unsigned long long)atomic_load(&g_cur_frame),
+                                              slot > 0 ? "at fragment texture" : "not bound, fragment texture slot", slot > 0 ? slot : 0); }
+    if ((at0 + other + none) % 600 == 0) MLOG("[mfx] final copy: canvas at fragment texture 0 in %llu, at another slot %llu, not bound %llu",
+                                              (unsigned long long)at0, (unsigned long long)other, (unsigned long long)none);
+}
 static void odyssey_mfx_before_draw(NvProg *pr) {
-    if (!mfx_enabled() || !pr || !pr->sh[1] || !R.rt.n || !R.rt.color[0]) return;
+    if (!mfx_enabled()) return;
+    odyssey_scene_draw(&g_odyssey_scene);
+    if (!pr || !pr->sh[1] || !R.rt.n || !R.rt.color[0]) return;
     const tex_t *target = R.rt.color[0];
     if (g_mfx.depth_done && odyssey_mfx_fxaa(pr->sh[1]->key) && R.rt.n == 1 && !(S.color.blend_en & 1) &&
         target->d.width >= 320 && target->d.height >= 180) {
-        g_mfx.canvas = target->serial; g_odyssey_scene_ready = 1; return;
+        odyssey_scene_fxaa(&g_odyssey_scene, target->serial); return;
     }
-    if (!g_odyssey_scene_ready || g_mfx.scene_done) return;
+    if (!g_odyssey_scene.ready || g_mfx.scene_done) return;
     if (target->serial == g_mfx.canvas) { mfx_snapshot_scene(); return; }
     int swap = 0;
     for (int i = 0; i < g_mfx.nswap; i++) swap |= g_mfx.swap[i] == target->serial;
     if (!swap) return;
     int tid = (int)(S.tex[1][0] & 0xfffff);
     const tex_t *canvas = tid > 0 && tid < g_ntreg ? &g_treg[tid].t : NULL;
-    if (!canvas || canvas->serial != g_mfx.canvas) return;
+    if (!canvas || canvas->serial != g_mfx.canvas) {
+        int found = -1;
+        for (int i = 1; i < 16 && found < 0; i++) { int t = (int)(S.tex[1][i] & 0xfffff); if (t > 0 && t < g_ntreg && g_treg[t].t.serial == g_mfx.canvas) found = i; }
+        odyssey_canvas_slot_note(found); return;
+    }
+    odyssey_canvas_slot_note(0);
     R.rt.color[0] = canvas; mfx_snapshot_scene(); R.rt.color[0] = target;
     id<MTLTexture> c = tex_mtl(canvas);
     id<MTLTexture> ui = c ? mfx_ui_target(g_dev, c.width, c.height) : nil;
@@ -9747,18 +9765,35 @@ static void odyssey_mfx_before_draw(NvProg *pr) {
         args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
     }
 }
+static void odyssey_mfx_after_draw(void) {   // draw_inner: the draw is encoded
+    uint64_t c = odyssey_scene_drawn(&g_odyssey_scene); if (c) g_mfx.canvas = c;
+}
 
 /* Odyssey camera bytes are materialized with pending updates, just like draw uniforms. */
+/* The first block that passes is taken. The remaining slots are still checked, for the summary below (PR #568 review:
+   which slots carry the camera, and whether another block, e.g. a rotation-only model matrix, ever passes as well). */
 static void mfx_take_camera(void) {
     g_mfx.want_cam = 0;
+    static uint64_t taken[16], also, captures; static int said;
+    int first = -1; uint64_t first_addr = 0; float first_view[12];
     for (int slot = 0; slot < 16; slot++) {
         const p_bind_buf *u = &S.ubo[0][slot];
         if (!u->addr || u->size < 0x180) continue;
         float h[0x180 / 4], cam[84];
         pend_materialize(u->addr, (uint8_t *)h, sizeof h, 0);
         if (!odyssey_mfx_camera(h, cam)) continue;
-        mfx_note_camera(cam, 84);
-        return;
+        if (first < 0) { first = slot; first_addr = u->addr; memcpy(first_view, h, sizeof first_view); mfx_note_camera(cam, 84); continue; }
+        if (u->addr == first_addr || !memcmp(first_view, h, sizeof first_view)) continue;   // the same camera bound twice
+        also++;
+        if (said < 5) { said++; MLOG("[mfx] camera F%llu: vertex uniform %d taken, %d (another block) also passes", (unsigned long long)atomic_load(&g_cur_frame), first, slot); }
+        break;
+    }
+    if (first < 0) return;
+    taken[first]++;
+    if (++captures % 600 == 0) {
+        char b[160]; int n = 0;
+        for (int i = 0; i < 16; i++) if (taken[i]) n += snprintf(b + n, sizeof b - n, " %d:%llu", i, (unsigned long long)taken[i]);
+        MLOG("[mfx] camera from vertex uniform slot (slot:frames)%s; frames where another block also passed %llu", b, (unsigned long long)also);
     }
 }
 
@@ -10657,6 +10692,7 @@ frz_plain:;
     if (pr && nan_trace_match(pr->sh[1]) && !pr->sh[1]->writes_depth) nan_trace_bind(en);   // diagnostic TOTK_NAN_TRACE
     g_nt_pass_draws++;
     g_stat_draw++;
+    if (g_odyssey_scene.pending) odyssey_mfx_after_draw();
     { static int tg; if (!tg) { tg = 1; const char *e = getenv("DM_TEST_GHOST"); float v[8];   // 测试开关 DM_TEST_GHOST=px,py,gx,gy,gw,gh,cx,cy（归一化；按下点、格网、跟手图中心）：不经前端直接开跟手图（Mac 宿主截图验证用） | Test switch DM_TEST_GHOST=px,py,gx,gy,gw,gh,cx,cy (normalized; press point, grid, center of the drag-follow image): turns on the drag-follow image directly without going through the front end (for Mac host screenshot verification)
         if (e && sscanf(e, "%f,%f,%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) == 8) mtl_ui_ghost(1, v[0], v[1], &v[2], v[6], v[7]); } }
     if (dw && atomic_load(&g_ghost_on)) ghost_note(dw);
@@ -12947,8 +12983,12 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
 static _Atomic int g_link_fallback; static _Atomic uint64_t g_link_fallback_at;
 static int link_fallback_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_PRESENT_LINK_FALLBACK"); on = e && !strcmp(e, "1"); } return on; }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link 与省电模式（运行中可改） | Called every frame by the game's present thread: aligns the display link object's state to g_dm_present_link and the power-saving mode (can change at run time)
-    static int applied, applied_hz; int hz = mtl_display_hz(), want = g_dm_present_link;
-    if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
+    /* requested: the last valid g_dm_present_link. An out-of-range value goes back to it, not to the applied mode, which
+       the overrides below change (power saving 3, fallback 0, 60+60's 2: the link stayed in the 120 Hz range after
+       interpolation was turned off). */
+    static int applied, applied_hz, requested; int hz = mtl_display_hz(), want = g_dm_present_link;
+    if (want < 0 || want > 2) { g_dm_present_link = requested; return; }
+    requested = want;
     if (want && atomic_load(&g_link_fallback)) {
         int visible = runtime_front_window_visible() != 0;   // unknown (-1) counts as visible
         if (visible && now_ns() - atomic_load(&g_link_fallback_at) > 10000000000ull) { atomic_store(&g_link_fallback, 0); MLOG("[present] display link tried again (window visible)"); }
@@ -12958,7 +12998,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     /* Odyssey 60+60: at DM_PRESENT_HZ=60 the link ticks at 60 Hz and every tick took the generated picture, so the real
        frames never reached the screen. A 120 Hz link gives each picture its own refresh; the game keeps its own 60 Hz
        clock meanwhile (hle_nvn.c, odyssey_mfx_clock), so the link's tick count does not pace it. */
-    if (want == 1 && mfx_enabled() == MFX_HALF) want = 2;
+    want = odyssey_link_mode(want, mfx_enabled());
     if (want == applied && hz == applied_hz) return;
     applied_hz = hz;
     g_link_mode = want;
@@ -13092,7 +13132,7 @@ static int mfx_present_frame_body(const tex_t *t, double period, int discard) {
             d.storageMode = MTLStorageModeShared; g_mfx_swap_prev = [g_dev newTextureWithDescriptor:d]; }
         if (sc && g_mfx_swap_prev) { mtl_finish_gpu(); id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder]; [b copyFromTexture:sc toTexture:g_mfx_swap_prev]; [b endEncoding]; cb_commit(cb); cb_wait(cb); }
     }
-    g_mfx.scene_done = g_mfx.ui_cleared = g_mfx.depth_done = g_mfx.want_cam = 0; g_odyssey_scene_ready = 0; BOTW_MFX_FRAME_RESET()
+    g_mfx.scene_done = g_mfx.ui_cleared = g_mfx.depth_done = g_mfx.want_cam = 0; odyssey_scene_frame(&g_odyssey_scene); BOTW_MFX_FRAME_RESET()
     if (++g_mfx.frames % 300 == 0) { char b[256]; mfx_stats(b, sizeof b); MLOG("[mfx] 至帧 %llu：%s", (unsigned long long)atomic_load(&g_cur_frame), b); }
     return slot;
 }
@@ -13101,7 +13141,7 @@ static int mfx_present_frame(const tex_t *t, double period, int discard) {
 }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     int discard = atomic_load(&g_present_discard), islot = mfx_enabled() && t ? mfx_present_frame(t, period, discard) : -1;
-    if (mfx_latch() && !mfx_enabled()) { g_mfx.scene_done = g_mfx.ui_cleared = g_mfx.depth_done = g_mfx.want_cam = 0; g_odyssey_scene_ready = 0; BOTW_MFX_FRAME_RESET() }   // key 2 / flag mfx_interp: the next frame is fully on or off
+    if (mfx_latch() && !mfx_enabled()) { g_mfx.scene_done = g_mfx.ui_cleared = g_mfx.depth_done = g_mfx.want_cam = 0; odyssey_scene_frame(&g_odyssey_scene); BOTW_MFX_FRAME_RESET() }   // key 2 / flag mfx_interp: the next frame is fully on or off
     if (t && !mfx_enabled() && uw_ratio()) uw_note_present(t);   // key 4: the canvas search (TOTK_MFX does it in mfx_present_frame)
     mtl_wb_eager();
     g_uw_ui = 0;

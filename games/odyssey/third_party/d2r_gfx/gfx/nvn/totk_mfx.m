@@ -232,8 +232,27 @@ static void mul4(const double a[16], const double b[16], double r[16]) {
     for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) { double s = 0; for (int k = 0; k < 4; k++) s += a[i * 4 + k] * b[k * 4 + j]; r[i * 4 + j] = s; }
 }
 // A camera jump (teleport, cutscene cut) or a turn of more than 25 degrees in one game frame is not interpolated.
+static int dcmp_mfx(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return (x > y) - (x < y); }
+/* Diagnostic (PR #568 review: the evidence for 800 cm): the camera's step and turn per game frame, p50 / p99 / max over
+   600 frames, and every cut found (the first 20), so the threshold can be set from play rather than assumed. */
+static void camera_step_note(int cut) {
+    enum { N = 600 };
+    static double step[N], turn[N]; static int n, cuts_said;
+    double x = g.cam[47] - g.prev_cam[47], y = g.cam[51] - g.prev_cam[51], z = g.cam[55] - g.prev_cam[55];
+    double f = g.cam[8] * g.prev_cam[8] + g.cam[9] * g.prev_cam[9] + g.cam[10] * g.prev_cam[10];
+    double d = sqrt(x * x + y * y + z * z), a = acos(f < -1 ? -1 : f > 1 ? 1 : f) * 180 / M_PI;
+    if (cut && cuts_said < 20) { cuts_said++; MLOG("camera cut at game frame %llu: step %.0f cm, turn %.1f deg", (unsigned long long)g.frames, d, a); }
+    if (!isfinite(d + a)) return;
+    step[n] = d; turn[n] = a;
+    if (++n < N) return;
+    n = 0; qsort(step, N, sizeof *step, dcmp_mfx); qsort(turn, N, sizeof *turn, dcmp_mfx);
+    MLOG("camera per game frame (last %d): step p50 %.1f / p99 %.1f / max %.1f cm; turn p50 %.2f / p99 %.2f / max %.2f deg",
+         N, step[N / 2], step[N * 99 / 100], step[N - 1], turn[N / 2], turn[N * 99 / 100], turn[N - 1]);
+}
 static int camera_cut(void) {
-    return odyssey_mfx_cut(g.cam, g.prev_cam);
+    int cut = odyssey_mfx_cut(g.cam, g.prev_cam);
+    camera_step_note(cut);
+    return cut;
 }
 
 int mfx_frame_prepare(double frame_s) {

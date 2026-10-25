@@ -2869,19 +2869,29 @@ void dm_nvn_probe_present_interval(void) {
       mtl_display_hz_force(0); g_paced_hz = paced; }
     /* Odyssey frame interpolation (key 2 / flag mfx_interp, taken over at the frame boundary): every request means 60+60,
        which runs only on a 120 Hz window screen with Metal 4 FX (odyssey_mfx.h). The game then keeps a 1/60 s period on
-       our own clock, whatever the configured rate; elsewhere the request stays off and the pacing above applies. */
-    extern void mfx_set(int mode); extern int mfx_latch(void);
+       our own clock, whatever the configured rate; elsewhere the request stays off and the pacing above applies. The
+       screen rate is forced (the probe has no window). Negative control 41: the 120 Hz screen is never forced. */
+    extern void mfx_set(int mode); extern int mfx_latch(void); extern void mtl_display_hz_force(int hz);
     int saved_paced = g_paced_hz, saved_mfx = mfx_enabled();
-    mfx_set(MFX_HALF); mfx_latch();
-    if (mfx_enabled() == MFX_HALF) {
+    mfx_set(MFX_HALF);
+    mtl_display_hz_force(60); mfx_latch();
+    for (int interval = -1; interval <= 3; interval++) {   // a 60 Hz screen keeps the request off: pacing as without it
+        win_t w = {.interval = interval}; g_paced_hz = g_hz = 60; g_display_mode = 0; g_uncapped = 0;
+        unsigned expected = interval <= 0 ? 1u : (unsigned)interval;
+        if (mfx_enabled() || odyssey_mfx_clock() || present_period(&w) != (uint64_t)expected * 1000000000ull / 60)
+            die("present interval probe: 60+60 must stay off on a 60 Hz screen");
+        checked++;
+    }
+    mtl_display_hz_force(neg && atoi(neg) == 41 ? 60 : 120); mfx_latch();
+    if (mfx_enabled() == MFX_HALF || (neg && atoi(neg) == 41)) {
         for (int uncapped = 0; uncapped < 2; uncapped++) for (int interval = -1; interval <= 3; interval++) {
             win_t w = {.interval = interval}; g_paced_hz = 60; g_hz = uncapped ? UNCAPPED_HZ : 60; g_display_mode = 0; g_uncapped = uncapped;
             if (present_period(&w) != odyssey_frame_period() || uncapped_now() || !odyssey_mfx_clock())
                 die("present interval probe: 60+60 must keep the 60 Hz game step on our own clock");
             checked++;
         }
-    } else LOG("[present-interval] 60+60 not active on this screen / GPU: its pacing cases skipped");
-    mfx_set(saved_mfx); mfx_latch();
+    } else LOG("[present-interval] 60+60 not supported by this GPU (Metal 4 FX): its pacing cases skipped");
+    mfx_set(saved_mfx); mfx_latch(); mtl_display_hz_force(0);
     g_hz = saved_hz; g_paced_hz = saved_paced; g_display_mode = saved_display; g_uncapped = saved_uncapped; g_hz_follows = saved_follows;
     atomic_store(&g_uncapped_interval, saved_flag);
     LOG("[present-interval] %d pacing cases passed", checked);

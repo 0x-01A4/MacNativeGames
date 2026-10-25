@@ -22,7 +22,9 @@ budget, or when macOS stops presenting an occluded window.
   Uniform slots vary with the material, so the host checks the bound blocks.
   It reads pending updates and derives FOV/aspect from the projection instead
   of assuming Zelda's 2368-byte camera layout or a placeholder FOV.
-- The final FXAA draw (`5345f3231650f0b7...`) identifies the tone-mapped canvas.
+- The final FXAA draw (`5345f3231650f0b7...`) identifies the tone-mapped canvas
+  once it is encoded: a draw skipped while its pipeline is missing or still
+  compiling leaves the frame without a scene, and the real picture is shown.
   The canvas is copied before subsequent HUD/text/tutorial-video draws, which
   are also written to a separate UI attachment. A frame without HUD is copied
   at the final canvas-to-swapchain draw and uses a transparent UI layer.
@@ -51,10 +53,22 @@ python -B -m unittest discover -s games/odyssey/tests -v
 ```
 
 The added probes exercise the production camera callback with a rotated
-projection, changing uniform bytes, a different slot and invalid input; cuts
-at Odyssey's scale; fixed 60 Hz periods; and the actual interpolator request/
-latch lifecycle across unsupported screens, 120 Hz, suspension and recovery.
-They do not execute guest code or encode GPU work.
+projection, changing uniform bytes, a different slot, a second block that also
+passes, and invalid input; cuts at Odyssey's scale; the display link mode while
+60+60 is on and after it; the scene canvas when the FXAA draw is skipped or
+encoded; and the actual interpolator request/latch lifecycle across unsupported
+screens, 120 Hz, suspension and recovery. They do not execute guest code or
+encode GPU work.
+
+The 60+60 pacing itself (a 1/60 s game period on the host clock, and no change
+on a 60 Hz screen) is checked by the present-interval probe in `probe-gfx`,
+which forces the screen rate because it has no window
+(`TOTK_PROBE_NEGATIVE=41` is its negative control). On a GPU without Metal 4 FX
+those cases are skipped and the probe says so.
+
+With `TOTK_MFX` on, the log reports which vertex uniform slots the camera came
+from, whether another block also passed (`[mfx] camera ...`), and where the
+final copy found the canvas (`[mfx] final copy ...`).
 
 For a short game check, use a separate test profile and cache, the pinned 1.3.0
 inputs and this directory's own runtime. Resume into a 3D scene, enable key 2,

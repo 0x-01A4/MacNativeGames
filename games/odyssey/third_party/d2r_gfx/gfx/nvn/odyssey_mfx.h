@@ -10,6 +10,23 @@ static inline int odyssey_mfx_mode(int requested, int hz) {
     return requested && hz == 120 ? MFX_HALF : MFX_OFF;
 }
 static inline uint64_t odyssey_frame_period(void) { return 1000000000ull / 60; }
+/* Display link mode (nvn_mtl.m link_sync): while 60+60 is on, the 60 Hz link (mode 1) gives way to the 120 Hz range
+   (mode 2), so the real and the generated picture each get a refresh. Only the effective mode changes: the request
+   (g_dm_present_link) is kept, so turning interpolation off returns to it. */
+static inline int odyssey_link_mode(int requested, int mfx) {
+    return requested == 1 && mfx == MFX_HALF ? 2 : requested;
+}
+
+/* The canvas counts as this frame's scene only once its FXAA draw was encoded. The draw is recognised before its
+   pipeline is fetched, and a draw without a pipeline is skipped (none yet, or still compiling in the background,
+   #503): then the canvas holds no FXAA, the frame has no scene input and shows the real picture. */
+typedef struct { uint64_t pending; int ready; } odyssey_scene;
+static inline void odyssey_scene_draw(odyssey_scene *s) { s->pending = 0; }   // a new draw: an earlier FXAA draw that was skipped does not count
+static inline void odyssey_scene_fxaa(odyssey_scene *s, uint64_t canvas) { s->pending = canvas; }
+static inline uint64_t odyssey_scene_drawn(odyssey_scene *s) {   // the draw was encoded: its canvas, or 0
+    uint64_t c = s->pending; s->pending = 0; if (c) s->ready = 1; return c;
+}
+static inline void odyssey_scene_frame(odyssey_scene *s) { s->pending = 0; s->ready = 0; }
 
 /* Vertex camera uniform: row-major view +0, inverse view +0x30, VP +0x60,
    near/far +0x160. Material shaders bind it at different uniform slots.
