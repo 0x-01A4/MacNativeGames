@@ -76,7 +76,7 @@ class BuildTests(unittest.TestCase):
 
     def test_input_links_follow_relocated_originals(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()   # macOS: the temporary folder is under /var, a link to /private/var
             inputs, work = root / 'originals', root / 'build'
             inputs.mkdir(); work.mkdir()
             original = inputs / 'base.nsp'
