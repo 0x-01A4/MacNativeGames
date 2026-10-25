@@ -13553,6 +13553,9 @@ static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计�
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
 // 有窗口时屏幕的最高刷新率（Hz）；无窗口返回 0。Mac 用 CoreGraphics 显示模式（线程安全的 C 接口，出图配置在游戏线程上读）
 // Maximum refresh rate (Hz) of the screen when there is a window; returns 0 without a window. Mac uses CoreGraphics display modes (thread-safe C interface; the present configuration is read on the game thread)
+#if !TARGET_OS_OSX
+int front_display_link_hz(void);   /* runtime/frontend_ios.m */
+#endif
 int mtl_display_hz(void) {
     if (!front_metal_layer()) return 0;
 #if TARGET_OS_OSX
@@ -13560,8 +13563,12 @@ int mtl_display_hz(void) {
     double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
     return (int)(hz + 0.5);
 #else
+    /* No more than the display link that signals the game's vsync (runtime/frontend_ios.m, 60): a ProMotion iPhone reports
+       120 here, and pacing at 120 drew frames the link never showed (only heat and battery) and held 30 as four ticks of a
+       60 Hz link (15 fps). */
     Class c = NSClassFromString(@"UIScreen"); id s = c ? [c valueForKey:@"mainScreen"] : nil;
-    return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;
+    int screen = s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0, link = front_display_link_hz();
+    return screen > 0 && link > 0 && screen > link ? link : screen;
 #endif
 }
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
