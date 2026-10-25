@@ -11980,9 +11980,17 @@ static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计�
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
 // 有窗口时屏幕的最高刷新率（Hz）；无窗口返回 0。Mac 用 CoreGraphics 显示模式（线程安全的 C 接口，出图配置在游戏线程上读）
 // Maximum refresh rate (Hz) of the screen when there is a window; returns 0 without a window. Mac uses CoreGraphics display modes (thread-safe C interface; the present configuration is read on the game thread)
+/* Probes only (gfx_probe.c has no window): a forced rate stands in for the window's screen, so the pacing that depends on
+   it can be checked headless. 0 = the real screen. */
+static _Atomic int g_display_hz_forced;
+void mtl_display_hz_force(int hz) { atomic_store(&g_display_hz_forced, hz); }
 int mtl_display_hz(void) {
+    int forced = atomic_load(&g_display_hz_forced); if (forced > 0) return forced;
     if (!front_metal_layer()) return 0;
 #if TARGET_OS_OSX
+    /* The window's screen as the frontend sampled it on the main thread (front_sync_drawable). It is 0 until the first
+       sample; the frontend takes one when the window opens, before the game's first present (logs: "window drawable"
+       always comes first), and present_cfg falls back to 60 Hz and catches up (present_follow_display) if it did not. */
     extern int runtime_front_display_hz(void) __attribute__((weak_import));
     return runtime_front_display_hz ? runtime_front_display_hz() : 0;
 #else

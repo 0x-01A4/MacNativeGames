@@ -23,6 +23,8 @@ static _Atomic uint64_t presentedFrames;
 static _Atomic int warmPending;
 static CVDisplayLinkRef displayLink;
 static _Atomic int focused;
+/* Refresh rate of the window's screen, sampled on the main thread by front_sync_drawable. 0 until its first call, which
+   runtime_front_run makes when the window opens, before the game can present; render threads read it (mtl_display_hz). */
 static _Atomic int frontDisplayHz;
 int runtime_front_display_hz(void){return atomic_load(&frontDisplayHz);}
 static pthread_mutex_t vsyncLock=PTHREAD_MUTEX_INITIALIZER;
@@ -317,6 +319,7 @@ void runtime_front_run(void(*callback)(void)){
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{note_occlusion(" 3 s after opening");});
   atomic_store(&focused,1);
   if(CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)||CVDisplayLinkSetOutputCallback(displayLink,vsync_callback,NULL)||CVDisplayLinkStart(displayLink))runtime_fail("native display link initialization");
+  front_sync_drawable();   /* the link exists now: point it at the window's screen (the call above came before it) */
   pthread_t guest;pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,8*1024*1024);int err=pthread_create(&guest,&attr,guest_main,(void *)callback);pthread_attr_destroy(&attr);if(err)runtime_fail("native game thread creation");
   [NSApp run];runtime_fail("native event loop returned unexpectedly");
  }
