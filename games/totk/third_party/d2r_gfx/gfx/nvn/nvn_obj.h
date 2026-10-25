@@ -231,6 +231,12 @@ int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -
 /* BOTW (nvn_mtl.m, after a re-upload): the range that tracked the texture can be gone by now (a neighbour pool destroyed,
    nvn_dirty.c); its protect then did nothing, and a kept "tracked" would let the replay's shortcut call it clean next time */
 #define BOTW_REUP_TRACKED(pk, t) (pk)->tracked = nvn_dirty_tracked((t)->mem, (t)->L.size);
+/* Water colours (end of nvn_mtl.m): tiny GPU renders the CPU reads without an invalidate are written into their memory
+   when the submission that rendered them completes. */
+void botw_tiny_note(const void *t, const void *o);
+#define BOTW_TINY_NOTE(t, o) botw_tiny_note((t), (__bridge const void *)(o));
+void botw_tiny_commit(void);
+#define BOTW_TINY_COMMIT() botw_tiny_commit();
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -252,12 +258,20 @@ int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -
 #define BOTW_DEAD_KEEP(k)
 #define BOTW_TEX_RELEASE_KEEP(k)
 #define BOTW_DEAD_FORGET(s, n)
-#define BOTW_WB_ENT_FIELDS
-#define BOTW_WB_NOTED(e, k)
+/* TOTK: targets the CPU polls without an invalidate (the grass cut map) are written back after the fence wait that
+   follows their rendering (mtl_wb_fence_done, nvn_mtl.m; upstream issue #49). */
+#define BOTW_WB_ENT_FIELDS uint64_t fence;
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1;
 #define BOTW_WB_STAGE_FREE(e)
 #define BOTW_WB_STAGE()
-#define WB_WAIT_GPU(list, nl) mtl_finish_gpu();
+int totk_wb_fence_on(void);
+/* TOTK_WB_FENCE=0 waits for all submitted GPU work, as before. Otherwise a write-back waits only for the submissions that
+   rendered the listed textures (the game waits for its own sync before invalidating), then for uploads to finish. */
+#define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
+    if (totk_wb_fence_on()) { if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); } else mtl_finish_gpu(); }
 #define BOTW_WB_FROM_STAGE(e, ok, layers)
+#define BOTW_TINY_NOTE(t, o)
+#define BOTW_TINY_COMMIT()
 #define UNCAPPED_INTERVAL_FROM_ENV(e) e && atoi(e)
 #define BOTW_RT_DUP_CLEARS()
 #define BOTW_RT_DUP_SKIP(i)
