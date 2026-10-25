@@ -10,6 +10,16 @@ Not an emulator: the game's own ARM64 code runs directly on Apple chips, and its
 **Breath of the Wild 1.6.0 and 1.9.0 are now officially supported on Mac!** 1.6.0 also runs on the iPhone (first played on an iPhone 14, October 23).
 **Tears of the Kingdom 1.0.0, 1.2.1 and 1.4.3 are now officially supported on Mac, iPhone and iPad!**
 
+| Game | Version | Platform | Status | Folder |
+|---|---|---|---|---|
+| The Legend of Zelda: Tears of the Kingdom | 1.0.0, 1.2.1, 1.4.3 (1.1.2 builds too) | Mac, iPhone, iPad | Supported | [`games/totk`](docs/install.md) |
+| The Legend of Zelda: Breath of the Wild | 1.6.0, 1.9.0 | Mac; 1.6.0 also on the iPhone | Supported | [`games/totk`](docs/install.md#breath-of-the-wild-160-and-190-early) (shared runtime), list in `games/botw` |
+| Super Smash Bros. Ultimate | 13.0.2 | Mac | Community port | [`games/ssbu`](games/ssbu/README.md) |
+| Super Mario Odyssey | 1.3.0 | Mac | Community port, early | [`games/odyssey`](games/odyssey/README.md) |
+| Bayonetta 3 | 1.2.0 | Mac | Community port, work in progress | [`games/by3`](games/by3/README.md) |
+
+Community ports keep their own runtime, graphics layer and scripts in their folder and are built with the steps there.
+
 > **Use your AI assistant to help you build the Mac app. We recommend Claude Code, Codex, or any other AI assistant you prefer.**
 
 [English](#english) | [中文](#chinese)
@@ -47,6 +57,7 @@ Update history:
 | Oct 23 | Mac | **Tears of the Kingdom** renders its 3D scene at the canvas resolution: internal 1920x1080 at 1080p (docked was only 1600x900), 2560x1440 on the 2K canvas |
 | Oct 21 | Mac | **Breath of the Wild 1.9.0**: shaders and render pipelines optimised |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |
+| Oct 20 | Mac | **Bayonetta 3 1.2.0** (community port, work in progress): title, menus and the story run with picture, sound, keyboard input and saves; own runtime in [`games/by3`](games/by3/README.md), which has the build steps |
 | Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`) |
 | Oct 20 | Mac | **Breath of the Wild 1.6.0** (early): a card image holding the base game, the update and the add-on content builds its own app with the same command; title, saves, the Great Plateau and DLC packs work |
 | Oct 19 | Mac | Key 4 switches to a true 21:9 ultrawide view and back (1.2.1, 1.4.3); the HUD keeps its shape in the middle 16:9 |
@@ -96,6 +107,16 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 **正式支持旷野之息 1.6.0 和 1.9.0 mac了！** 1.6.0 也能在 iPhone 上玩了（10 月 23 日在 iPhone 14 上首次实玩）。
 **正式支持王国之泪 1.0.0,1.2.1，1.4.3 Mac iPhone iPad了！**
 
+| 游戏 | 版本 | 平台 | 状态 | 目录 |
+|---|---|---|---|---|
+| 塞尔达传说 王国之泪 | 1.0.0、1.2.1、1.4.3（1.1.2 也能打包） | Mac、iPhone、iPad | 正式支持 | [`games/totk`](docs/install.zh-CN.md) |
+| 塞尔达传说 旷野之息 | 1.6.0、1.9.0 | Mac；1.6.0 也能在 iPhone 上玩 | 正式支持 | [`games/totk`](docs/install.zh-CN.md#旷野之息-160-和-190早期)（共用运行时），清单在 `games/botw` |
+| 任天堂明星大乱斗 特别版 | 13.0.2 | Mac | 社区移植 | [`games/ssbu`](games/ssbu/README.md) |
+| 超级马力欧 奥德赛 | 1.3.0 | Mac | 社区移植，早期 | [`games/odyssey`](games/odyssey/README.md) |
+| 猎天使魔女 3 | 1.2.0 | Mac | 社区移植，开发中 | [`games/by3`](games/by3/README.md) |
+
+社区移植的游戏各自在自己的目录里带一份运行时、图形层和脚本，按那里的步骤构建。
+
 > **请使用你的 AI 助理帮你完成 Mac App 的构建。推荐 Claude Code、Codex，或其他你喜欢的 AI 助理。**
 
 [英文说明](#english) | [中文说明](#chinese)
@@ -133,6 +154,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 | 10 月 23 日 | Mac | **王国之泪** 3D 画面按画布分辨率渲染：1080p 内部分辨率 1920x1080（原来底座模式只有 1600x900），2K 画布时 2560x1440|
 | 10 月 21 日 | Mac | **旷野之息 1.9.0** 优化了着色器和渲染管线 |
 | 10 月 21 日 | Mac、iPhone、iPad | **王国之泪** 提高90帧稳定性，提高完全没有着色器时帧数稳定 |
+| 10 月 20 日 | Mac | **猎天使魔女 3 1.2.0**（社区移植，开发中）：标题、菜单和剧情能跑，有画面、声音、键盘输入和存档；运行时独立放在 [`games/by3`](games/by3/README.md)，构建步骤见那里 |
 | 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`） |
 | 10 月 20 日 | Mac | **旷野之息 1.6.0**（早期）：本体 + 更新 + 追加内容合在一起的卡带镜像用同一条命令打成单独的 App；标题、存档、初始台地和 DLC 内容包都能用 |
 | 10 月 19 日 | Mac | 按 4 切换真正的 21:9 超宽画面（1.2.1、1.4.3），HUD 保持原比例、在中间 16:9 区域 |
