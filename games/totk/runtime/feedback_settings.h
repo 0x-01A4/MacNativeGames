@@ -4,8 +4,9 @@
      gyro.txt         on | off    the same as TOTK_GYRO
      rumble-gain.txt  a number in (0, 4], the same as TOTK_RUMBLE_GAIN (runtime/gamepad_feedback.m)
    The environment still decides first, and an agent's test session (TOTK_SLOT_OWNER claude / codex) still leaves rumble
-   and gyro off unless the environment turns them on, so a test does not read the player's files. A word the runtime does
-   not know keeps the default and is logged, as mouse.txt does: a file never stops the game.
+   and gyro off unless the environment turns them on: the player's rumble.txt and gyro.txt do not decide for a test.
+   rumble-gain.txt sets the strength whenever rumble is on, also in a test whose environment turned it on. A word the
+   runtime does not know keeps the default and is logged, as mouse.txt does: a file never stops the game.
    Plain C, shared by the runtime and tests/test_feedback_settings.c. */
 #pragma once
 #include <ctype.h>
