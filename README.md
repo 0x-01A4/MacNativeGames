@@ -51,6 +51,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 25 | Mac | **Super Mario Party Jamboree 2.3.0** (community port, experimental): independent [`games/jamboree`](games/jamboree/README.md) build, vertex-storage writes during rasterizer discard fix character deformation; tested scope and limitations documented |
 | Oct 24 | Mac | **Super Smash Bros. Ultimate 13.0.2** (community port): fights, World of Light with the Spirit Board, saves, movies with sound; 1080p or 2K; own runtime in [`games/ssbu`](games/ssbu/README.md), with its one-command build there |
 | Oct 23 | iPhone | **Breath of the Wild 1.6.0** on the iPhone: full screen, add-on content, saves copied from the Mac; both games render at 960x540 on the phone and use their own upscale to 1280x720 (no MetalFX) |
 | Oct 23 | Mac | **Super Mario Odyssey 1.3.0** (community port, early): Cap Kingdom and Bonneton playable at 60 fps on an M3, own runtime in [`games/odyssey`](games/odyssey/README.md), which has the build steps |
