@@ -107,6 +107,22 @@ int mtl_probe_writeback(void) {
             }
             if (scenario == 1 && backing[mask.L.size - 1] != 77) MDIE("mapped flush probe lost a later CPU write");
         }
+        if (!layout) {   /* a rendering is written back only into a live pool that holds all of it (wb_target_lock, #764) */
+            nvn_dirty_remove_range(backing); mtl_pool_del(backing);
+            mtl_pool_add(backing, mask.L.size / 2); nvn_dirty_add_range(backing, span);
+            dm_guest_write_prepare(backing, span); memset(backing, 0, span);
+            mtl_sub_begin(); op_hdr end = {OP_END, 8}; mtl_exec((const uint8_t *)&end);
+            MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+            rp.colorAttachments[0].texture = rendered; rp.colorAttachments[0].loadAction = MTLLoadActionClear;
+            rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+            rp.colorAttachments[0].clearColor = MTLClearColorMake(.25, 1, .75, 1);
+            rp.renderTargetWidth = rp.renderTargetHeight = side;
+            id<MTLRenderCommandEncoder> en = enc_r_begin(rp); enc_r_end(en);
+            wb_note(&mask); mtl_sub_commit();
+            flush((const NVNmemoryPool *)&cached, 1, 2);
+            for (size_t i = 0; i < mask.L.size; i++) if (backing[i]) MDIE("mapped flush probe wrote back a texture that runs past its pool (byte %zu)", i);
+            checked++;
+        }
         mtl_finish(); serial_del(mask.serial); defer_obj_release(rendered);
         nvn_dirty_remove_range(backing); mtl_pool_del(backing); munmap(backing, span);
     }

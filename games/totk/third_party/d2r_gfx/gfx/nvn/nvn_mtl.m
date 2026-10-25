@@ -2522,7 +2522,23 @@ static void wb_note(const tex_t *t) {
     nvn_hm_put(&g_wb, &k, e);
     pthread_mutex_unlock(&g_smu);
 }
-static int wb_level_back(const tex_t *t, id<MTLTexture> mt, unsigned level, unsigned layer) {
+/* A write-back lands in guest memory only while the whole texture lies in a live memory pool, and with g_mu held, which
+   mtl_pool_del (nvnMemoryPoolFinalize) takes too: the pool cannot be finalized and its bytes handed back to the game's heap
+   in the middle of the write. Freshness is decided before the GPU read-back, which waits for the GPU; another thread could
+   finalize the pool meanwhile (#764: after a warp, a sead heap block header and an NVN pool allocator node held pixel
+   bytes). Returns 1 with g_mu held; 0 (counted, logged) when the bytes are no longer a live pool's. */
+enum { WB_POOL_GONE = -2 };   // botw_wb_from_stage's -1 is "not staged"
+static uint64_t g_wb_pool_gone;
+static int wb_target_lock(const tex_t *t) {
+    pthread_mutex_lock(&g_mu);
+    if (pidx_find(&g_pools, (uintptr_t)t->mem, t->L.size)) return 1;
+    pthread_mutex_unlock(&g_mu);
+    if (++g_wb_pool_gone <= 8 || g_wb_pool_gone % 500 == 0)
+        MLOG("[writeback] skipped (its memory pool was finalized during the read-back, or the texture runs past its pool) ser=%llu %ux%u at %p size %#llx (%llu so far)",
+             (unsigned long long)t->serial, t->d.width, t->d.height, (void *)t->mem, (unsigned long long)t->L.size, (unsigned long long)g_wb_pool_gone);
+    return 0;
+}
+static int wb_level_back(const tex_t *t, id<MTLTexture> mt, unsigned level, unsigned layer) {   // 1 written, 0 failed, WB_POOL_GONE
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     uint32_t lw = MAX(t->d.width >> level, 1u), lh = MAX(t->d.height >> level, 1u);
     size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
@@ -2537,7 +2553,10 @@ static int wb_level_back(const tex_t *t, id<MTLTexture> mt, unsigned level, unsi
     [b copyFromTexture:mt sourceSlice:layer sourceLevel:level sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(lw, lh, 1)
               toBuffer:buf destinationOffset:0 destinationBytesPerRow:lp destinationBytesPerImage:lp * lr];
     enc_b_end(b); cb_commit(cb); cb_wait(cb);
-    if (nvn_swizzle(&t->d, level, layer, (const uint8_t *)buf.contents, lp, t->mem)) return 0;
+    if (!wb_target_lock(t)) return WB_POOL_GONE;
+    int bad = nvn_swizzle(&t->d, level, layer, (const uint8_t *)buf.contents, lp, t->mem);
+    pthread_mutex_unlock(&g_mu);
+    if (bad) return 0;
     g_wb_bytes += lp * lr;
     }
     return 1;
@@ -2679,8 +2698,8 @@ static void wb_write_list_body(wb_ent **list, int nl, int force) {
            with a neighbour counted as written, and the neighbour's own write-back was skipped as "CPU wrote since") */
         void *tok = nvn_dirty_tracked(t->mem, t->L.size) ? nvn_dirty_gpu_write_begin(t->mem, t->L.size) : NULL;
         if (!tok) dm_guest_write_prepare(t->mem, t->L.size);
-        unsigned layers = t->L.layers ? t->L.layers : 1, ok = 1; BOTW_WB_FROM_STAGE(e, ok, layers)
-        for (unsigned l = 0; l < t->d.levels && ok; l++) for (unsigned y = 0; y < layers && ok; y++) ok = wb_level_back(t, mt, l, y);
+        unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1; BOTW_WB_FROM_STAGE(e, ok, layers)
+        for (unsigned l = 0; l < t->d.levels && ok == 1; l++) for (unsigned y = 0; y < layers && ok == 1; y++) ok = wb_level_back(t, mt, l, y);
         nvn_dirty_gpu_write_end(tok);
         if (ok) { uint64_t d = ++g_wb_done; if (d <= 8 || d % 500 == 0) MLOG("[writeback] ser=%llu %ux%u nvnfmt=%#x lv%u：GPU 渲染结果写回内存（累计 %llu 张 / %llu MB，CPU 已改写而跳过 %llu 张）", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, t->d.levels, (unsigned long long)d, (unsigned long long)(g_wb_bytes >> 20), (unsigned long long)g_wb_skip_cpu); }
         else MLOG("【红】GPU 写回内存失败 ser=%llu 格式 %#x", (unsigned long long)t->serial, t->d.format);
@@ -2708,6 +2727,7 @@ static int bc_unpack(uint32_t nvn_fmt, uint32_t *pf, int *bpp) { return no_bc() 
    memory. Uploads transcode on the GPU (bc1astc kernel, tex/nvn_bc1astc_msl.h) after the deswizzle; CPU paths use the C
    transcoder (tex/nvn_bc1astc.c). 3D, 1D and multisample BC1 textures keep the decompressed path. TOTK_BC1_ASTC=0 turns
    it off. probe-bc1astc checks the transcoding through Metal's ASTC decoder. */
+        if (ok == WB_POOL_GONE) { wb_ent_free(e); continue; }   // counted and logged by wb_target_lock
 static int bc1_fmt(uint32_t f) { return f == 0x41 || f == 0x42 || f == 0x45 || f == 0x46; }
 static int bc1_rgba(uint32_t f) { return f == 0x42 || f == 0x46; }
 static MTLPixelFormat bc1_astc_pf(uint32_t f) { return (f == 0x45 || f == 0x46) ? MTLPixelFormatASTC_4x4_sRGB : MTLPixelFormatASTC_4x4_LDR; }
@@ -16002,3 +16022,5 @@ int botw_wb_from_stage(void *ev) {
 #include "nvn_sampler_border_probe.h"
 #include "nvn_texels_region_probe.h"
 #include "nvn_writeback_probe.h"
+    if (!wb_target_lock(t)) return WB_POOL_GONE;
+    pthread_mutex_unlock(&g_mu);
