@@ -150,7 +150,7 @@ The same script builds **The Legend of Zelda: Breath of the Wild 1.6.0** (`01007
 python3.14 build_app.py ~/Games/botw.xci -k ~/keys/prod.keys --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
 ```
 
-A separate base NSP or XCI and a **1.6.0 update NSP or NSZ** also work. This path builds the game without the expansion pass; DLC is not required. Common tickets must be included for rights-managed NSPs. Other update versions are rejected by the verified executable hashes.
+A separate base NSP or XCI and a **1.6.0 update NSP or NSZ** also work. DLC is not required: add each add-on content NSP with `--dlc`, as for 1.9.0 below, and the app holds only the packs you give. Common tickets must be included for rights-managed NSPs. Other update versions are rejected by the verified executable hashes.
 
 ```sh
 python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Games/botw-1.6.0.nsp --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
