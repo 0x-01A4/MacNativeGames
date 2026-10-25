@@ -13141,6 +13141,25 @@ int dm_gfx_fps_now(int *generated) {
     if (generated) *generated = gen > 0 ? gen : 0;
     return fps_overlay_value();
 }
+/* iPhone held sideways (2026-10-25, user: the FPS box was cut off): the notch and the rounded corners cover the screen's
+   sides, so the corner boxes keep out of its safe area, which the front end reports in drawable pixels (frontend_ios.m
+   runtime_ios_sync_drawable). Only the part of the inset the picture reaches counts: a 16:9 picture between bars needs
+   none. Nothing reports it on the Mac, where the boxes stay at the corners. */
+static _Atomic int g_hud_safe_w, g_hud_safe_h, g_hud_safe_side, g_hud_safe_bottom;
+void mtl_hud_safe_area(int w, int h, int side, int bottom) {
+    int was_side = atomic_exchange(&g_hud_safe_side, side), was_bottom = atomic_exchange(&g_hud_safe_bottom, bottom);
+    int changed = was_side != side || was_bottom != bottom;
+    atomic_store(&g_hud_safe_w, w); atomic_store(&g_hud_safe_h, h);
+    if (changed) MLOG("[hud] 安全区：两侧 %d 像素、底部 %d 像素（画布 %dx%d），角上的提示框避开它", side, bottom, w, h);
+}
+static double hud_inset_right(MTLViewport vp) {
+    int w = atomic_load(&g_hud_safe_w), s = atomic_load(&g_hud_safe_side); double gap = w - (vp.originX + vp.width);
+    return w > 0 && s > gap ? s - gap : 0;
+}
+static double hud_inset_bottom(MTLViewport vp) {
+    int h = atomic_load(&g_hud_safe_h), b = atomic_load(&g_hud_safe_bottom); double gap = h - (vp.originY + vp.height);
+    return h > 0 && b > gap ? b - gap : 0;
+}
 // TOTK: FPS, output resolution and (internal resolution) in the top-right corner of the game picture (pixels come from fps_overlay.c). Rasterises into
 // the slot's texture only when what is shown changes, and returns the viewport and source rectangle to draw.
 static int fps_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, float uv[8]) {
@@ -13165,7 +13184,7 @@ static int fps_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, float
     float bw = g_fps_box[slot][0], bh = g_fps_box[slot][1], W = FPS_OVERLAY_TEX_W, H = FPS_OVERLAY_TEX_H;
     pthread_mutex_unlock(&mu);
     double m = 3.0 * scale;
-    *ovp = (MTLViewport){vp.originX + vp.width - m - bw, vp.originY + m, bw, bh, 0, 1};   // top-right corner
+    *ovp = (MTLViewport){vp.originX + vp.width - m - bw - hud_inset_right(vp), vp.originY + m, bw, bh, 0, 1};   // top-right corner
     const float u[8] = {0, 0, bw / W, bh / H, 0.5f / W, 0.5f / H, (bw - 0.5f) / W, (bh - 0.5f) / H};
     memcpy(uv, u, sizeof u);
     return 1;
@@ -13207,7 +13226,7 @@ static int shader_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, fl
     double m = 3.0 * scale;
 #if TARGET_OS_IPHONE
     double below = fps_overlay_hints_enabled() && fps_overlay_enabled() ? g_fps_box[slot][1] + m : 0;   // under the FPS box (top-right)
-    *ovp = (MTLViewport){vp.originX + vp.width - m - bw, vp.originY + m + below, bw, bh, 0, 1};
+    *ovp = (MTLViewport){vp.originX + vp.width - m - bw - hud_inset_right(vp), vp.originY + m + below, bw, bh, 0, 1};
 #else
     *ovp = (MTLViewport){vp.originX + m, vp.originY + vp.height - m - bh, bw, bh, 0, 1};   // bottom-left corner
 #endif
@@ -13236,7 +13255,7 @@ static int load_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, floa
     float bw = g_load_box[slot][0], bh = g_load_box[slot][1], W = LOAD_OVERLAY_TEX_W, H = FPS_OVERLAY_TEX_H;
     pthread_mutex_unlock(&mu);
     double m = 3.0 * scale;
-    *ovp = (MTLViewport){vp.originX + vp.width - m - bw, vp.originY + vp.height - m - bh, bw, bh, 0, 1};   // bottom-right corner
+    *ovp = (MTLViewport){vp.originX + vp.width - m - bw - hud_inset_right(vp), vp.originY + vp.height - m - bh - hud_inset_bottom(vp), bw, bh, 0, 1};   // bottom-right corner
     const float u[8] = {0, 0, bw / W, bh / H, 0.5f / W, 0.5f / H, (bw - 0.5f) / W, (bh - 0.5f) / H};
     memcpy(uv, u, sizeof u);
     return 1;
