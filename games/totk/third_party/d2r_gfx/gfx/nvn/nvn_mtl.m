@@ -2602,11 +2602,15 @@ static void wb_drop_all(void) {
    has passed; here they stayed in the Metal texture, and every swing was decided from the zeros the pool held (no blades,
    no insects, grass not cut -- upstream issue #49). Render targets up to 64 KiB whose rendering has completed are written
    back after the game's fence waits (nvnSyncWait / nvnQueueFinish); wb_write_list still keeps newer CPU writes.
-   TOTK_WB_FENCE_SMALL=0 restores the invalidate-only behaviour. */
+   TOTK_WB_FENCE_SMALL=0 restores the invalidate-only behaviour. Breath of the Wild: off unless TOTK_WB_FENCE_SMALL=1. */
 enum { WB_FENCE_SMALL_MAX = 64 * 1024 };
 static int wb_fence_small_on(void) {
     int v = atomic_load(&g_wb_fence_small);
+#ifdef GAME_BOTW   /* not measured on Breath of the Wild, whose small targets go through the staged write-back: opt-in there (after PR #562) */
+    if (v < 0) { const char *e = getenv("TOTK_WB_FENCE_SMALL"); v = e && !strcmp(e, "1"); atomic_store(&g_wb_fence_small, v); }
+#else
     if (v < 0) { const char *e = getenv("TOTK_WB_FENCE_SMALL"); v = !(e && !strcmp(e, "0")); atomic_store(&g_wb_fence_small, v); }
+#endif
     return v;
 }
 void mtl_wb_fence_done(void) {
