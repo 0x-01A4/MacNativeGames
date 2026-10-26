@@ -16,7 +16,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
-| 4 | A picture, audio, input, saves | in progress: a new game plays the prologue; a movie that reaches its natural end can crash |
+| 4 | A picture, audio, input, saves | in progress: a new game reaches the first area (Artaria) with HUD and minimap |
 | 5 | Performance, shaders, packaging as an app | not started |
 
 ## Log
@@ -284,3 +284,34 @@ What is known of the game's side:
 
 Also seen: in two long runs the game stopped presenting frames for ~40 s with one thread at 100% after
 `prologue_09_10` / `prologue_11` opened (with and without the eager preemption); not investigated yet.
+
+### 2026-10-26: the first area
+
+The open items of the previous entry were scheduling and two host costs; each was found with a thread dump
+(`TOTK_INPUT_FILE` `threads`) and a host sample (`sample <pid>`) taken while the game was stuck.
+
+- **The natural-end movie leak** (`bf80dfe`). lldb breakpoints on the game's player (set from the runtime's own
+  `runtime_module_base("main")`; launch stopped, break on `h_configure`, then source the breakpoint file) showed the
+  sequence: link-all (state 5), 6, end, 10, close, 11, **unlink-all runs and its filter matches**, the unlink request is
+  queued, and the decoder is freed before the worker handles it. The waker had equal priority; on Horizon the woken
+  worker is runnable at once and is chosen over the main thread when the waker blocks; the host only counted it once
+  its host thread reached `core_take`. Every woken thread now reserves a core. With that alone the game stalled after the
+  movie: after the end-of-stream input the host still offered input, and two priority-30 movie threads fed end of
+  stream in a loop (5.5 million lock SVCs each), starving the main thread. No input is offered after end of stream.
+  6 title runs, 4 with a natural end: no crash, no stall.
+- **WriteTexels** (`dc7ebee`). At the area load the main thread spent tens of seconds in `write_texels`: each call on
+  mirrored storage deswizzled and reswizzled the whole level. `nvn_swizzle_region` writes only the region;
+  `tests/texel_region` (`make test`): 320 random regions identical to the old path, a broken copy fails.
+- **GPU paths.** The area hit `TOTK_GPU_MIDCLEAR`'s isolation stop (mid-pass depth-stencil clear). The TotK and
+  Bayonetta launchers enable `TOTK_GPU_WIDEN`, `BLOCKRT`, `MIDCLEAR` and a 5000 MB budget for normal play, and so does
+  this fork's launcher; test runs now use the launcher's GPU settings.
+- **Counter reads preempt** (`73e5a97`). Then the main thread held core 0 for 17 s polling the counter while a
+  higher-priority thread (0x1009, 32) waited for the core. The timer gate is now a preemption point.
+
+Verified: one 8.5-minute drive (title, file 01, prologue, A every 4 s) stays up, presents 19,200 frames, and screenshots
+show the in-engine opening scene (Samus close-up) and the first Artaria room with HUD (15/15 missiles, 99 energy),
+minimap and the first tutorial prompt ("While tilting L to run, press ZL to slide."). The first time through, the area's
+shaders are translated and compiled; the cache in `build/shader-cache` holds them for the next run.
+
+Not checked yet: walking around, sustained frame rate in the area, audio in the area, the rest of the prologue frames
+(only screenshots), long play.
