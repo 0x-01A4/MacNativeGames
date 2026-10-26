@@ -1,7 +1,5 @@
 # MacNativeGames
 
-<p align="center"><img src="docs/images/botw-ultrawide-mac.png" width="100%"></p>
-
 <p align="center"><b>Play your own Tears of the Kingdom and Breath of the Wild natively on Apple silicon Mac, iPhone and iPad.</b><br>
 Not an emulator: the game's own ARM64 code runs directly on Apple chips, and its NVN graphics are rebuilt on Metal.</p>
 
