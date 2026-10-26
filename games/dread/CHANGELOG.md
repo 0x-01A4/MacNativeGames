@@ -330,3 +330,23 @@ Not checked yet: walking around, sustained frame rate in the area, audio in the 
   steps, `--inspect`, refusals), a launcher without Bayonetta's settings, tests for both, and the Builder's own tests
   updated. `build_app.py <the XCI>` builds the app through the hand-off: 14 s with the work folder reused, 1 min 16 s
   from an empty work folder (main's rewrite byte-identical to the reference).
+
+### 2026-10-26: flat walls and a black Samus were empty reflection maps
+
+The user saw blurry or flat textures across the first area (the save station, for example). With the user's save loaded
+at the save station, a pass dump showed the G-buffer: Samus and the door panels had their detail, the walls and
+machinery were flat colour with no normal-map detail, and the lit picture had Samus as a black silhouette.
+
+- The wall materials' own textures were right. Texture 819 is one colour in Metal, and its guest memory decodes to the
+  same colour in every block (sRGB 74, 93, 106), with only alpha varying. No write was missed: `DM_NVN_DIRTYCHECK=1`
+  reported 0, and `DM_NVN_TILELOG=512x512` showed one first upload per texture.
+- Every material also binds two reflection cube maps (BC6H, 128 and 64 px, no packaged layout). Every face and level of
+  both was black in Metal, while their guest memory held data (15,420 of 18,432 words non-zero). They sit in the same
+  `CPU_NO_ACCESS | GPU_CACHED` pool as the packaged materials. `tex_mirrored` mirrors packaged textures and textures in
+  CPU-visible pools only, and left everything else in a GPU-only pool GPU-owned, so the cube maps were created empty.
+- **Fix:** a block-compressed texture in a GPU-only pool mirrors its pool bytes. It cannot be rendered into, so the pool
+  bytes are its contents. Render targets, depth, display and compressible textures there stay GPU-owned as before.
+
+Verified: same save, same room. Samus is lit in her suit colours, and walls and machinery have reflections and surface
+detail. No new errors in the log; memory 2,888 MB vs 2,883 MB before. Not checked: other areas, the title-screen visor
+(it looked blown out before this change).

@@ -3461,7 +3461,14 @@ static int tex_mirrored(const tex_t *t) {
     static int on = -1; if (on < 0) { const char *e = getenv("TOTK_TEX_MIRROR"); on = !e || atoi(e); }
     if (!on) return 0;
     const pool_t *p = t->pool;
-    if (!p || p->host || !(p->flags & (NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED | NVN_MEMORY_POOL_FLAGS_CPU_CACHED))) return 0;
+    if (!p || p->host) return 0;
+    /* Dread: a block-compressed texture cannot be rendered into, so in a GPU-only pool its contents are the pool's bytes
+       (the game loads its reflection cube maps, BC6H with no packaged layout, into the same CPU_NO_ACCESS pool as its
+       packaged materials). Left GPU-owned they stayed empty: black reflections, flat metal and a black Samus. */
+    int bw = 1, bh = 1;
+    int loaded = (p->flags & (NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED | NVN_MEMORY_POOL_FLAGS_CPU_CACHED)) ||
+                 ((p->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) && nvn_fmt_bpb(t->d.format, &bw, &bh) && (bw > 1 || bh > 1));
+    if (!loaded) return 0;
     if (t->d.flags & (NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_ADAPTIVE_ZCULL |
                       NVN_TEXTURE_FLAGS_DEPTH16_PREFER_FAST_CLEAR | NVN_TEXTURE_FLAGS_ZCULL_SUPPORT_STENCIL)) return 0;
     if (t->d.samples > 1 || t->d.target == 10) return 0;
