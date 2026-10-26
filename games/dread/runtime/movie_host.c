@@ -254,7 +254,9 @@ static int decode_one(Movie *m, Signals *s, const Pending *p) {
         push_ready(m, s, slot, FLAG_EOS, p->time, 0);
         LOG("end of stream after %llu frames (%.2f ms per frame, %llu errors)", (unsigned long long)m->frames, m->frames ? m->decode_ns / 1e6 / (double)m->frames : 0.0, (unsigned long long)m->errors);
     }
-    m->in_free[m->nin_free++] = p->index; note(m, s, EV_INPUT);
+    /* After the end-of-stream input no further input is offered until a flush or reset (MediaCodec): an "input
+       available" signal here made Metroid Dread's movie threads feed end of stream again in a busy loop. */
+    m->in_free[m->nin_free++] = p->index; if (!m->eos_in) note(m, s, EV_INPUT);
     return 1;
 }
 static void drain_pending(Movie *m, Signals *s) {
@@ -410,7 +412,7 @@ static int h_acquire_input(void *obj, int *index, int *remaining) {
     if (!index || !remaining) return ST_NULL;
     pthread_mutex_lock(&m->mu);
     *index = -1; *remaining = 0; int st = ST_NO_INPUT;
-    if (m->started && m->nin_free > 0) {
+    if (m->started && !m->eos_in && m->nin_free > 0) {
         *index = m->in_free[0]; memmove(m->in_free, m->in_free + 1, (size_t)--m->nin_free * sizeof m->in_free[0]);
         *remaining = m->nin_free; st = ST_OK;
     }
@@ -432,7 +434,7 @@ static int h_send_input(void *obj, int index, int offset, int size, int64_t time
     pthread_mutex_lock(&m->mu);
     if (!m->started) { pthread_mutex_unlock(&m->mu); return ST_ERROR; }
     Pending p = {index, offset, size, time, flags};
-    if (m->eos_in) { m->in_free[m->nin_free++] = index; note(m, &s, EV_INPUT); }   /* after end of stream: hand the buffer back */
+    if (m->eos_in) m->in_free[m->nin_free++] = index;   /* after end of stream: the buffer goes back, no new input is offered */
     else if (m->npending || !decode_one(m, &s, &p)) m->pending[m->npending++] = p;
     pthread_mutex_unlock(&m->mu); fire(&s);
     return ST_OK;

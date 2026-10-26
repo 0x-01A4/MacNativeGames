@@ -168,15 +168,19 @@ static void core_take(thr_t *t) {   // holding G; waits until a core in t's mask
 static void core_reserve_for(thr_t *w) {   // holding G
     static int lazy = -1; if (lazy < 0) lazy = getenv("DREAD_LAZY_PREEMPT") != NULL;   /* A/B: preempt only at the holder's next SVC */
     if (lazy || !cores_enabled() || w->cur_core >= 0) return;
-    for (int c = 0; c < NCORE; c++) if (core_allowed(w, c) && !g_core_owner[c] && !core_held_back(c, w)) return;   // a free core: no preemption
+    /* A woken thread is runnable at once on Horizon: it competes for a core from now on, not from when its host thread
+       reaches core_take. Reserve a core in its mask (a free one, its ideal core first; else the one held by the
+       lowest-priority thread) so that no thread of lower priority takes it first; preempt the holder only if its
+       priority is lower than the woken thread's. */
     int best = -1;
-    for (int c = 0; c < NCORE; c++) {
-        thr_t *o = g_core_owner[c];
-        if (!core_allowed(w, c) || !o || o->prio <= w->prio || core_held_back(c, w)) continue;
-        if (best < 0 || o->prio > g_core_owner[best]->prio) best = c;   // the lowest-priority holder gives way
-    }
+    if (w->core >= 0 && w->core < NCORE && core_allowed(w, w->core) && !g_core_owner[w->core]) best = w->core;
+    for (int c = 0; best < 0 && c < NCORE; c++) if (core_allowed(w, c) && !g_core_owner[c]) best = c;
+    for (int c = 0; best < 0 && c < NCORE; c++) if (core_allowed(w, c) && g_core_owner[c] && (best < 0 || g_core_owner[c]->prio > g_core_owner[best]->prio)) best = c;
+    for (int c = 0; c < NCORE; c++) if (core_allowed(w, c) && g_core_owner[c] && g_core_owner[c]->prio > g_core_owner[best]->prio && g_core_owner[best]) best = c;
     if (best < 0) return;
-    g_core_owner[best]->preempt = 1; g_core_reserved[best] = w;
+    if (g_core_reserved[best] && g_core_reserved[best]->prio <= w->prio) return;   // an equal or higher-priority thread is ahead
+    g_core_reserved[best] = w;
+    if (g_core_owner[best] && g_core_owner[best]->prio > w->prio) g_core_owner[best]->preempt = 1;
 }
 static thr_t *me_or_null(void) { return g_keythr ? pthread_getspecific(g_keythr) : NULL; }
 void runtime_thread_note_hle(unsigned i) { thr_t *t = me_or_null(); if (t) t->last_hle = (int)i + 1; }   // hle_stack.c, while tracing
