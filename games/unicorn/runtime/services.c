@@ -218,7 +218,7 @@ static const struct { int index; const char *path; uint64_t size; const char *sh
 static pthread_once_t addons_once = PTHREAD_ONCE_INIT;
 static void verify_addons(void) {
  /* 两个 DLC 只有零字节占位文件；原游戏通过编号解锁已在本体中的内容。 */
- for(size_t i=0;i<sizeof(addons)/sizeof(addons[0]);i++) {
+ for(int i=0;i<UNICORN_AOC_COUNT;i++) {
   FILE *f=fopen(addons[i].path,"rb");
   if(!f)runtime_fail("DLC image missing");
   unsigned char *data=malloc((size_t)addons[i].size),digest[32];char hex[65];
@@ -232,7 +232,7 @@ static void verify_addons(void) {
  }
 }
 static void host_aoc_init(void) { pthread_once(&addons_once,verify_addons); }
-static int host_aoc_count(void) { host_aoc_init();return (int)(sizeof(addons)/sizeof(addons[0])); }
+static int host_aoc_count(void) { host_aoc_init();return UNICORN_AOC_COUNT; }
 static int host_aoc_list(int *out,int offset,int count) {
  if(offset<0||count<0||(!out&&count))runtime_fail("invalid add-on content list range");
  int total=host_aoc_count();if(offset>=total)return 0;

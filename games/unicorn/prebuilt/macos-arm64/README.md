@@ -1,18 +1,16 @@
-Bayonetta 3's own copy of `games/totk/prebuilt/macos-arm64` (the shader translator), taken when PR #62 was merged; it is not
-updated with the Tears of the Kingdom one. Its notes, as they were:
+# Bundled shader translator
 
-# The shader translator, ready-made
+`totk_xlate` is this game's own unmodified copy of the NativeAOT arm64 macOS shader translator from
+MacNativeGames `games/by3/prebuilt/macos-arm64` at commit `30a1b93`. It is a regular file, not a symlink.
+The Makefile reads only this copy and checks `totk_xlate.sha256` before installing it in the work folder.
 
-`totk_xlate` is the program the game starts to translate its shaders (`totk_xlate --service`): the Ryujinx shader
-translator (`vendor/ryujinx`, MIT) with this project's patches (`games/totk/tools/totk_xlate/patches`) and the service
-(`games/totk/tools/totk_xlate/Service.cs`: Maxwell code -> SPIR-V -> SPIRV-Cross -> Metal Shading Language and its
-reflection file), compiled ahead of time with .NET NativeAOT for arm64 macOS. It is here so that building the app needs
-no .NET and the app needs no .NET runtime and no Python.
+SHA-256: `6dd53d6486c96e3a95ae5fd49fdc35f75f6e603ff8ededa3d7250fd2e4fe1220`.
 
-- Built with `games/totk/tools/totk_xlate/publish_native.sh` from the sources in this repository (.NET SDK 10.0.401).
-- `totk_xlate.sha256` is its SHA-256; `build_app.py` refuses to package a different file.
-- NativeAOT builds are not byte-for-byte reproducible across folders (paths end up in the binary), so a rebuild gets a
-  different hash; what matters is that it translates the same. Check a rebuild by replaying a shader cache through it
-  and comparing every MSL, SPIR-V and reflection file with the previous build (the development tree has
-  `scripts/diag/retranslate_cache.py --service <program> --compare <cache>` for that). The current build gives the same
-  output as the .NET translator with the Python service for all 7,570 shader variants of the development cache.
+It translates Maxwell shaders to SPIR-V using the Ryujinx shader library, with the MacNativeGames patches and
+service compiled in. The separately compiled, bundled SPIRV-Cross converts SPIR-V to Metal Shading Language.
+Building and running this port require no .NET installation and never read another game's translator.
+
+For provenance, the original translator source and publishing instructions are available in
+[MacNativeGames at the copied revision](https://github.com/ly05010419/MacNativeGames/tree/30a1b93/games/totk/tools/totk_xlate).
+This is a source reference, not a build dependency. Local license copies are listed in
+[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).

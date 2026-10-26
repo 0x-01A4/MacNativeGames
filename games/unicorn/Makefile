@@ -1,6 +1,6 @@
 # 圣兽之王的独立原生运行时；游戏数据和生成文件保存在工作目录。
 
-WORK ?= UNICORN_build-1.05
+WORK ?= $(HOME)/Games/Unicorn-build-1.05
 OUT := $(WORK)/build
 PY ?= python3
 NATIVE_OPT ?= -O2
@@ -35,31 +35,27 @@ $(OUT)/unicorn-native: $(RUNTIME_SRC) $(RUNTIME_HEADERS) $(GENERATED) $(GFX_OBJE
 
 runtime: $(OUT)/unicorn-native
 
-# The runtime shader translation the graphics layer starts on first use: <work>/build/shader-service/totk_xlate (the
-# repository's prebuilt NativeAOT translator, checked against its SHA-256) and <work>/build/spirv-cross/spirv-cross,
-# built like build_app.py does (same pinned commit, sources and flags as SPIRV-Cross's CMake Release build).
-SPIRV_CROSS_COMMIT := aa217aeb6c9f0ace7a0ab233b28807edf45eb165
+# 着色器工具使用本目录的翻译器和固定版本源码，构建不访问网络或其他游戏目录。
 SPIRV_CROSS_SOURCES := main.cpp spirv_cfg.cpp spirv_cpp.cpp spirv_cross.cpp spirv_cross_parsed_ir.cpp spirv_cross_util.cpp \
   spirv_glsl.cpp spirv_hlsl.cpp spirv_msl.cpp spirv_parser.cpp spirv_reflect.cpp
+SPIRV_CROSS_OBJECTS := $(addprefix $(OUT)/spirv-cross/obj/,$(addsuffix .o,$(SPIRV_CROSS_SOURCES)))
 .PHONY: shader-tools
 shader-tools: $(OUT)/shader-service/totk_xlate $(OUT)/spirv-cross/spirv-cross
 $(OUT)/shader-service/totk_xlate: prebuilt/macos-arm64/totk_xlate prebuilt/macos-arm64/totk_xlate.sha256
 	@mkdir -p "$(dir $@)"
 	test "$$(shasum -a 256 "$<" | cut -d' ' -f1)" = "$$(cut -d' ' -f1 "prebuilt/macos-arm64/totk_xlate.sha256")"
 	cp "$<" "$@" && chmod +x "$@"
-$(OUT)/spirv-cross/spirv-cross:
-	@mkdir -p "$(WORK)/src" "$(dir $@)obj"
-	test -d "$(WORK)/src/SPIRV-Cross" || git clone -q https://github.com/KhronosGroup/SPIRV-Cross.git "$(WORK)/src/SPIRV-Cross"
-	git -C "$(WORK)/src/SPIRV-Cross" checkout -q $(SPIRV_CROSS_COMMIT)
-	for f in $(SPIRV_CROSS_SOURCES); do xcrun clang++ -O3 -DNDEBUG -std=c++11 -arch arm64 -Wno-deprecated-declarations \
-	  -c "$(WORK)/src/SPIRV-Cross/$$f" -o "$(dir $@)obj/$$f.o" & done; wait
-	xcrun clang++ -arch arm64 $(addprefix $(dir $@)obj/,$(addsuffix .o,$(SPIRV_CROSS_SOURCES))) -o "$@"
+$(OUT)/spirv-cross/obj/%.cpp.o: third_party/spirv-cross/%.cpp $(wildcard third_party/spirv-cross/*.h third_party/spirv-cross/*.hpp) Makefile
+	@mkdir -p "$(dir $@)"
+	xcrun clang++ -O3 -DNDEBUG -std=c++11 -arch arm64 -Wno-deprecated-declarations -c "$<" -o "$@"
+$(OUT)/spirv-cross/spirv-cross: $(SPIRV_CROSS_OBJECTS)
+	xcrun clang++ -arch arm64 $(SPIRV_CROSS_OBJECTS) -o "$@"
 
 UNICORN_LOG ?= $(WORK)/boot.log
 boot: runtime shader-tools
 	cd "$(WORK)" && TOTK_GPU_ALLOW_SUBMIT=1 ./build/unicorn-native rewritten/v262144 boot > "$(abspath $(UNICORN_LOG))" 2>&1
 
-APP ?= ../../圣兽之王.app
+APP ?= $(WORK)/圣兽之王.app
 $(OUT)/launcher: app/launcher.m runtime/game_version.h
 	xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -fobjc-arc app/launcher.m -framework Cocoa -o "$@"
 

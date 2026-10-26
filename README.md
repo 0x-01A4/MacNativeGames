@@ -34,6 +34,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 26 | Mac | [Unicorn Overlord 1.05](games/unicorn/README.md): native ARM64 port of the Asian release from the player's own base and update; each DLC optional |
 | Oct 22 | Mac | The overlay box shows a render pipeline line under the shaders: "New render pipelines N / total M" (new to this profile this run / ready this run) |
 | Oct 21 | Mac | **Breath of the Wild 1.9.0** above 30 fps as 1.6.0: menus and the HUD at normal speed, physics steady, movies at their own 30 fps; docked play renders at native 1080p; keys 4 (21:9 ultrawide) and 5 (edge smoothing, MetalFX temporal) work on 1.9.0 |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |

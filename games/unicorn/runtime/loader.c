@@ -432,12 +432,18 @@ int main(int argc,char **argv) {
   int(*count)(void)=runtime_override("_ZN2nn3aoc17CountAddOnContentEv");
   int(*list)(int *,int,int)=runtime_override("_ZN2nn3aoc16ListAddOnContentEPiii");
   int n=count(),items[4]={-1,-1,-1,-1},tail=-1;
-  need(n==2,"expected two verified DLC packages");
+  need(n>=0&&n<=2,"unexpected DLC count");
   need(list(items+1,0,2)==n&&items[0]==-1&&items[3]==-1,"DLC listing wrote outside its output");
-  need(items[1]<items[2]&&list(&tail,1,1)==1&&tail==items[2],"DLC pagination differs from full listing");
-  need(list(&tail,n,1)==0&&tail==items[2],"DLC end-of-list changed output");
+  for(int i=0;i<n;i++) {
+   need(items[i+1]>=1&&items[i+1]<=2&&(i==0||items[i]<items[i+1]),"unexpected DLC index");
+   need(list(&tail,i,1)==1&&tail==items[i+1],"DLC pagination differs from full listing");
+  }
+  int last=tail;
+  need(list(&tail,n,1)==0&&tail==last,"DLC end-of-list changed output");
   need(list(NULL,0,0)==0,"empty DLC query returned content");
-  printf("{\"status\":\"pass\",\"addons\":[%d,%d],\"scope\":\"image hashes, output bounds, pagination, end-of-list and zero-capacity query\"}\n",items[1],items[2]);
+  printf("{\"status\":\"pass\",\"addons\":[");
+  for(int i=0;i<n;i++)printf("%s%d",i?",":"",items[i+1]);
+  printf("],\"scope\":\"image hashes, output bounds, pagination, end-of-list and zero-capacity query\"}\n");
   return 0;
  }
  /* One game or GPU probe at a time (memory, GPU time): wait for the slot before anything is loaded. */

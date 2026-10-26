@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验圣兽之王的两个 DLC 授权包，并提取其只读资源镜像。"""
+"""校验玩家提供的圣兽之王 DLC 授权包，并提取其只读资源镜像。"""
 import argparse
 import hashlib
 import json
@@ -13,7 +13,7 @@ from merge_romfs import Ctr, romfs_section, verify_ivfc
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('packages', nargs=2, type=Path)
+    parser.add_argument('packages', nargs='+', type=Path)
     parser.add_argument('--keys', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()

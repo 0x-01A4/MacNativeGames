@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""为已校验的圣兽之王 1.05 及两个 DLC 生成原生加载器表。
+"""为已校验的圣兽之王 1.05 及已安装的可选 DLC 生成原生加载器表。
 
 Writes <work>/build/runtime_tables.h (modules, symbols, relocations, gates), romfs_config.h and
 extracted/v262144/romfs/runtime-index.bin (the RomFS index the runtime reads), and shared_fonts_config.h.
@@ -183,19 +183,23 @@ def addons_config(work, out):
     rows = []
     for index, expected in EXPECTED['aoc'].items():
         folder = work / f'extracted/{VERSION}/aoc/{index}'
+        if not folder.exists():
+            continue
         report = json.loads((folder / 'index.json').read_text())
         image = folder / 'romfs.bin'
         assert report['status'] == 'pass' and report['title_id'] == expected['title_id']
         assert sha(Path(report['source'])) == expected['package_sha256'], 'Unverified DLC package'
         assert image.stat().st_size == expected['size'] and sha(image) == expected['sha256']
         rows.append('{' + f'{int(index)},{json.dumps(str(image.relative_to(work)))},{expected["size"]}ULL,{json.dumps(expected["sha256"])}' + '}')
-    (out / 'addons_config.h').write_text('#define UNICORN_AOC_ROWS ' + ','.join(rows) + '\n')
+    # 无 DLC 时仍生成一个合法的 C 初始化器；实际数量为零，运行层不会读取占位项。
+    (out / 'addons_config.h').write_text(f'#define UNICORN_AOC_COUNT {len(rows)}\n'
+                                        '#define UNICORN_AOC_ROWS ' + (','.join(rows) or '{0}') + '\n')
     return len(rows)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--work', type=Path, default=HERE / 'UNICORN_build-1.05')
+    parser.add_argument('--work', type=Path, default=Path.home() / 'Games/Unicorn-build-1.05')
     work = parser.parse_args().work.resolve()
     out = work / 'build'
     out.mkdir(parents=True, exist_ok=True)
