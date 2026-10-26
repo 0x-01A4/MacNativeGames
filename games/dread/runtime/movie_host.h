@@ -14,6 +14,7 @@ typedef struct {
     void (*buf_set_data)(void *buf, void *data, size_t capacity);
     void *(*buf_base)(const void *buf);
     size_t (*buf_capacity)(const void *buf);
+    void *(*buf_nvn_sync)(const void *buf);   /* texture mode: the NVNsync the game waits on */
     bool (*md_find_int32)(const void *md, const char *key, int *value);
     bool (*md_find_string)(const void *md, const char *key, const char **value);
     void (*md_set_int32)(void *md, const char *key, int value);
