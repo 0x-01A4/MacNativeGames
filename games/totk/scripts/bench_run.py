@@ -25,11 +25,17 @@ import time
 from pathlib import Path
 
 DATA = Path.home() / 'Library/Application Support/MacNativeGames/TOTK'
-CHAIN = 'rt-totk-native-v7-unverified'   # the shader cache folder of the translation chain (dmsh_chain.h)
-# The save the benchmark loads: the one the player's citron benchmark runs use (perf-parity/bench/ubench.sh installs it
-# as the only slot, slot_00, before every run), so the time of day and the world state match from run to run. It is
-# past the Great Sky Island tutorial; before it, leaving the island fades to white and the game pulls Link back.
-CITRON_BENCH_SAVE = Path.home() / 'Desktop/citron-macos-handoff/perf-parity/bench/totk-bench-slot_00'
+def _chain():
+    """The shader cache folder of the current translation chain: rt-<DMSH_CHAIN> (dmsh_chain.h), so a new chain needs no
+    change here."""
+    header = Path(__file__).resolve().parents[1] / 'third_party/d2r_gfx/gfx/nvn/dmsh_chain.h'
+    m = re.search(r'#define\s+DMSH_CHAIN\s+"([^"]+)"', header.read_text())
+    if not m: raise SystemExit(f'no DMSH_CHAIN in {header}')
+    return 'rt-' + m.group(1)
+CHAIN = _chain()
+# The save the benchmark loads (--save, or TOTK_BENCH_SAVE): one slot folder (progress.sav inside), installed as the only
+# slot, slot_00, before every run, so the time of day and the world state match from run to run. It must be past the
+# Great Sky Island tutorial; before it, leaving the island fades to white and the game pulls Link back.
 # Each scene's time of day as UltraCam sets it at the scene's start (its scene table, subsdk3 bench scene +0x2c).
 SCENE_HOUR = {'Kakariko': 12, 'Lookout Landing': 11, 'Great Sky Island': 20, 'Korok Forest': 3, 'Goron City': 20,
               'Depths': 20, 'Zora Domain': 15}
@@ -69,7 +75,7 @@ class Session:
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         shutil.copytree(DATA / 'profile', out / 'profile', symlinks=True)
-        if save:   # this session's profile copy gets that one slot as slot_00, every other slot removed (as ubench.sh)
+        if save:   # this session's profile copy gets that one slot as slot_00, every other slot removed (as for a citron run)
             for user in (out / 'profile/save').iterdir():
                 if user.is_dir() and any(user.glob('slot_*')):
                     for slot in user.glob('slot_*'):
@@ -153,10 +159,11 @@ def run(args):
     elif not args.scenes:
         scenes = scenes[:ALL_SCENES]
     out = Path(args.out).resolve()
-    save = Path(args.save) if args.save else CITRON_BENCH_SAVE
-    if args.save == 'own':
-        save = None
-    elif not (save / 'progress.sav').is_file():
+    chosen = args.save or os.environ.get('TOTK_BENCH_SAVE')
+    if not chosen:
+        raise SystemExit('which save? --save <slot folder with progress.sav> (or TOTK_BENCH_SAVE), or --save own for the player\'s own')
+    save = None if chosen == 'own' else Path(chosen).expanduser()
+    if save and not (save / 'progress.sav').is_file():
         raise SystemExit(f'no benchmark save at {save}: --save <slot folder with progress.sav> (or --save own for the player\'s own)')
     print('save:', save or "the player's own", flush=True)
     s = Session(args.app, args.binary, out, dict(e.split('=', 1) for e in args.env), save, args.cache)
@@ -293,7 +300,7 @@ def main():
     p.add_argument('--route-file', help='benchmark route (default: ultracam-bench-route.json in the work folder)')
     p.add_argument('--scenes', help='only these scenes, comma-separated parts of their names')
     p.add_argument('--flip', action='store_true', help='look the other way along the keyframes\' view vector')
-    p.add_argument('--save', help='save slot folder to benchmark with (progress.sav inside; default: the citron benchmark\'s totk-bench-slot_00; own = the player\'s)')
+    p.add_argument('--save', help='save slot folder to benchmark with (progress.sav inside; default: TOTK_BENCH_SAVE; own = the player\'s)')
     p.add_argument('--cmd', action='append', default=[], help='an input-file command sent once the player is in the world')
     p.add_argument('--start-delay', type=float, default=5, help='seconds from the player appearing to the first scene')
     p.add_argument('--cache', help='benchmark-only shader cache folder, used in place and kept (default: a copy of the player\'s)')

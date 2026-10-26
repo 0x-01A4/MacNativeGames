@@ -4,7 +4,7 @@
   bench_compare.py poses  --citron <citron run> --out poses.json          which camera frame each citron screenshot shows
   bench_compare.py report --citron <citron run> --recomp <bench_run out> --shots <bench_run --poses out> --out <dir>
 
-A citron run is a folder from the citron automation (cbench.sh, after perf-parity/bench/ubench.sh): FullBenchmark.json
+A citron run is a folder from a benchmark run in citron (the same save installed as slot_00): FullBenchmark.json
 (UltraCam's own result), ucon.log (UltraCam console replies, with Link's position every 0.25 s) and shots/<epoch>.png
 (window screenshots). UltraCam plays each scene the same way (reversed from subsdk3, see world_survey.c): Link is put
 5 m above the scene's start, the camera waits 10 s once he is no more than 2 m above it, then flies the scene's
