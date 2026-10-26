@@ -79,12 +79,14 @@ class IssueCollectionTests(unittest.TestCase):
             f'S\t{self.KEY_A}-0123456789ab_b\t0\tm',                  # shader libraries are not taken from contributions
             f'L\t{self.KEY_A}\tShader/x.bnsh\t0\t880\t100',            # nor locators
             'R\tabcd', 'R\tabcd', 'B\tabcd\t-\t3:7:0x1p-1,0x1p-1,0x1p-1,0x1p-1;',   # render pipelines are (a row once)
+            'T\tabcd\t5:3;7:1;', 'T\tabcd\t5:9;',                   # and tile reads (an attachment past 7 is none)
             'R\tnot hex', 'B\tabcd\t-\t-',
             'V\tnot-a-key\t{}', f'V\t{self.KEY_B}\t{{"local":[1]}}', f'V\t{self.KEY_B}\tnot json'])
         rows, dropped = contribution_rows(text)
         self.assertEqual(rows, {(self.KEY_A, '{"tex":{"10":"3d","9":"2d"}}'), (self.KEY_B, '{}')})
-        self.assertEqual(dropped, 7)
-        self.assertEqual(contribution_pipelines(text), [('R', 'abcd'), ('B', 'abcd', '-', '3:7:0x1p-1,0x1p-1,0x1p-1,0x1p-1;')])
+        self.assertEqual(dropped, 8)
+        self.assertEqual(contribution_pipelines(text), [('R', 'abcd'), ('B', 'abcd', '-', '3:7:0x1p-1,0x1p-1,0x1p-1,0x1p-1;'),
+                                                        ('T', 'abcd', '5:3;7:1;')])
 
     @staticmethod
     def pipeline(vs, fs):   # a pipeline key leads with two NUL-padded 80-byte names "<variant>_b"

@@ -7812,9 +7812,12 @@ static int pso_pend_state(const pso_key *k) {   // -1 not predicted, 0 compiling
 /* Render pipelines into the player's contribution file, collected with the shaders (user 2026-10-22): one the game builds
    in play that the app's warm-up lists (pso_title.tsv, pso_manifest.tsv, and on iOS pso_list.tsv) lack, with its border recipe, its shaders named
    as another player's build names them (totk_rt_portable_variant). On a serial background queue: the renaming takes the
-   translation lock and the file is appended to (a file write on the submit thread cost 10-30 ms). */
-static void pso_contribute(const pso_skey *sk, NSString *brec) {
-    static int on = -1; static dispatch_queue_t q; static NSSet<NSNumber *> *shipped;   // seen_key of the lists' R rows
+   translation lock and the file is appended to (a file write on the submit thread cost 10-30 ms).
+   Its B row (brec, border recipes) and T row (trec, tile reads) go in when the lists lack that row, also when they have
+   the plain R row: they were written only with a new R row, so the tile-reading variants of listed pipelines never
+   reached the list and every new install built them in play (58 of the 58 a 5-minute route built in the world, 2026-10-26). */
+static void pso_contribute(const pso_skey *sk, NSString *brec, NSString *trec) {
+    static int on = -1; static dispatch_queue_t q; static NSMutableSet<NSNumber *> *shipped;   // seen_key of the lists' R / B / T rows and those written
     if (on < 0) { on = totk_rt_contrib_on(); if (on) q = dispatch_queue_create("totk.pso-contrib", DISPATCH_QUEUE_SERIAL); }
     if (!on) return;
     pso_skey copy = *sk; NSString *dir = g_shmap_path.stringByDeletingLastPathComponent;
@@ -7826,6 +7829,7 @@ static void pso_contribute(const pso_skey *sk, NSString *brec) {
                 for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
                     NSArray *f = [line componentsSeparatedByString:@"\t"];
                     if (f.count >= 2 && [f[0] isEqual:@"R"]) [rows addObject:seen_key_str([@"R\t" stringByAppendingString:f[1]])];
+                    if ((f.count >= 4 && [f[0] isEqual:@"B"]) || (f.count >= 3 && [f[0] isEqual:@"T"])) [rows addObject:seen_key_str(line)];
                 }
             }
             shipped = rows;
@@ -7841,20 +7845,26 @@ static void pso_contribute(const pso_skey *sk, NSString *brec) {
             }
         }
         char hexs[sizeof key * 2 + 1]; pso_skey_hex(&key, hexs);
-        NSString *row = [NSString stringWithFormat:@"R\t%s", hexs];
-        if ([shipped containsObject:seen_key_str(row)] || [shipped containsObject:seen_key_str([NSString stringWithFormat:@"R\t%s", local])]) return;
-        totk_rt_contrib_line(row);
-        if (brec) totk_rt_contrib_line([NSString stringWithFormat:@"B\t%s\t%@", hexs, brec]);
+        NSString *rows[3] = {[NSString stringWithFormat:@"R\t%s", hexs], brec ? [NSString stringWithFormat:@"B\t%s\t%@", hexs, brec] : nil,
+                             trec ? [NSString stringWithFormat:@"T\t%s\t%@", hexs, trec] : nil};
+        NSString *locals[3] = {[NSString stringWithFormat:@"R\t%s", local], brec ? [NSString stringWithFormat:@"B\t%s\t%@", local, brec] : nil,
+                               trec ? [NSString stringWithFormat:@"T\t%s\t%@", local, trec] : nil};
+        for (int i = 0; i < 3; i++) {
+            if (!rows[i] || [shipped containsObject:seen_key_str(rows[i])] || [shipped containsObject:seen_key_str(locals[i])]) continue;
+            [shipped addObject:seen_key_str(rows[i])];
+            totk_rt_contrib_line(rows[i]);
+        }
     });
 }
 static void pso_adopt(const pso_key *k, NvShader *vs, NvShader *fs, int border, int merged, id<MTLRenderPipelineState> ps, uint64_t bt, int bg, NSString *brec) {
     pso_key rk = *k; rk.a2c &= ~PSO_VBORDER; if (border) rk.fsfn = NULL;   // the warm-up list records the plain pipeline: a border variant is built from the draw's samplers
     pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&rk, vs, fs, merged, merged ? &g_pso_fz : NULL, &sk); pso_skey_hex(&sk, shex);
-    if (survey_shader_log()) MLOG("[survey-shader] frame %llu render pipeline %s in %.2f ms%s", (unsigned long long)atomic_load(&g_cur_frame), shex, (bp_now() - bt) / 1e6, bg ? " (background, from queued to adopted)" : "");
+    if (survey_shader_log()) MLOG("[survey-shader] frame %llu render pipeline %s in %.2f ms%s%s%s%s", (unsigned long long)atomic_load(&g_cur_frame), shex, (bp_now() - bt) / 1e6, bg ? " (background, from queued to adopted)" : "",
+                                  (k->a2c & PSO_VBORDER) ? " [vertex border]" : "", border && k->fsfn && (__bridge id)k->fsfn == g_pso_fbfn ? " [tile read]" : border ? " [fragment border]" : "", brec ? " [recipe]" : "");
     pso_record("R\t%s\n", shex);
     pso_user_record("R\t%s\n", shex);
     if (brec) pso_user_record("B\t%s\t%s\n", shex, brec.UTF8String);   // its border recipe (border_parse): the warm-up builds this one too
-    pso_contribute(&sk, brec);
+    pso_contribute(&sk, brec, nil);
     hm_put_id(&g_pso, k, ps); g_pso_gen++;   // TOTK_PSO_MEMO: a put may replace (and release) a remembered pipeline
 }
 /* Async pipelines (async shaders): a draw that may be skipped (draw_may_skip) does not wait for a new pipeline. It is
@@ -7944,6 +7954,7 @@ static void *pso_get_p(NvProg *pr, MTLRenderPassDescriptor *unused) {
     if (fbread && g_pso_fbrec[0] && !(k.a2c & PSO_VBORDER)) {
         pso_key rk = k; rk.fsfn = NULL; pso_skey tsk; char thex[sizeof tsk * 2 + 1]; pso_skey_from(&rk, vs, fs, 0, NULL, &tsk); pso_skey_hex(&tsk, thex);
         pso_user_record("T\t%s\t%s\n", thex, g_pso_fbrec);
+        pso_contribute(&tsk, nil, @(g_pso_fbrec));
     }
     NSString *brec = !g_vmissing && bordered ? [NSString stringWithFormat:@"%@\t%@", (k.a2c & PSO_VBORDER) && vrec ? vrec : @"-", bfn && frec ? frec : @"-"] : nil;
     if (plain && !g_vmissing && bordered && apso_defer(&k, vs, fs, bfn, brec)) {   // the border pipeline is compiling: the plain one meanwhile
