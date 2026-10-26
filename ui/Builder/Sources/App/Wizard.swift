@@ -421,7 +421,9 @@ final class Wizard {
         let (output, send) = AsyncStream.makeStream(of: Output.self)
         // its own thread, not a task: a build blocks in waitpid for up to an hour
         Thread.detachNewThread {
-            let ended = Result { try runner.run(python, [script] + arguments, stdout: { send.yield(.line($0, stdout: true)) },
+            // no __pycache__ beside the scripts: a release's sources are sealed inside this app (make_dmg.sh)
+            let ended = Result { try runner.run(python, [script] + arguments, environment: ["PYTHONDONTWRITEBYTECODE": "1"],
+                                                stdout: { send.yield(.line($0, stdout: true)) },
                                                 stderr: { send.yield(.line($0, stdout: false)) }) }
             send.yield(.ended(ended))   // after every line: run() returns once both pipes are read to the end
             send.finish()

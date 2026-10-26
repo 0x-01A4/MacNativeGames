@@ -13,6 +13,7 @@ struct Preflight {
 
     var python: String?
     var repo: URL?
+    var release: Release?            // the repo is the sources a Builder release carries, not a git checkout
     var games: [Game] = []           // the checkout's games/*/game.json
     var missing: [Missing] = []
     var iosMissing: [Missing] = []   // only for an iPhone/iPad build (build_app.py ios_prerequisites)
@@ -21,6 +22,7 @@ struct Preflight {
     static func check(repo: URL?, fileManager: FileManager = .default) -> Preflight {
         var p = Preflight()
         p.repo = repo
+        p.release = Release.read(repo)
         p.games = Game.load(repo: repo, fileManager: fileManager)
         p.python = toolPaths.flatMap { dir in ["python3.14", "python3.15"].map { "\(dir)/\($0)" } }
             .first { fileManager.isExecutableFile(atPath: $0) }
@@ -72,9 +74,12 @@ struct Preflight {
         return missing
     }
 
-    /// The MacNativeGames checkout: the folder the user chose, or the one this app was built in (ui/Builder/build/...).
+    /// The MacNativeGames checkout: the folder the user chose, the sources a release carries (Contents/Resources/checkout,
+    /// make_dmg.sh), or the checkout this app was built in (ui/Builder/build/...).
     static func findRepo(chosen: String?, bundle: URL = Bundle.main.bundleURL) -> URL? {
         if let chosen, isRepo(URL(fileURLWithPath: chosen)) { return URL(fileURLWithPath: chosen) }
+        let carried = bundle.appendingPathComponent("Contents/Resources/checkout")
+        if isRepo(carried) { return carried }
         var dir = bundle.deletingLastPathComponent()
         while dir.path != "/" {
             if isRepo(dir) { return dir }
@@ -86,5 +91,21 @@ struct Preflight {
     static func isRepo(_ url: URL) -> Bool {
         let fm = FileManager.default
         return fm.fileExists(atPath: url.appendingPathComponent("build_app.py").path) && !Game.load(repo: url, fileManager: fm).isEmpty
+    }
+}
+
+/// release.json in the sources a Builder release carries (make_dmg.sh): their commit, which build_app.py records in each
+/// app it builds since there is no git, and the release's version.
+struct Release: Decodable, Equatable {
+    static let schema = 1
+
+    var schema: Int
+    var commit: String
+    var version: String
+
+    static func read(_ repo: URL?) -> Release? {
+        guard let repo, let data = try? Data(contentsOf: repo.appendingPathComponent("release.json")),
+              let release = try? JSONDecoder().decode(Release.self, from: data), release.schema == schema else { return nil }
+        return release
     }
 }

@@ -60,6 +60,17 @@ class BuildInfo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build_app, 'REPO', Path(tmp)):
             self.assertEqual(build_app.checkout_commit(), (None, None))
 
+    def test_release_commit(self):
+        # a Builder release's sources (ui/Builder/make_dmg.sh) name their commit in release.json; git is not asked
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build_app, 'REPO', Path(tmp)), \
+                mock.patch.object(build_app.subprocess, 'run', side_effect=AssertionError('git asked')):
+            release = Path(tmp) / 'release.json'
+            release.write_text('{"schema": 1, "commit": "%s", "version": "0.2"}' % ('b' * 40))
+            self.assertEqual(build_app.checkout_commit(), ('b' * 40, False))
+            for broken in ('{"commit": "main"}', '{"version": "0.2"}', '[]', 'not json'):
+                release.write_text(broken)
+                self.assertEqual(build_app.checkout_commit(), (None, None), broken)
+
 
 if __name__ == '__main__':
     unittest.main()

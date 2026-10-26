@@ -136,14 +136,19 @@ enum Disk {
 }
 
 /// Whether the checkout has changed what an app was built from: its game's sources (game.json), e.g. build_app.py and
-/// the game folders it builds from.
+/// the game folders it builds from. A release's sources have no git history to compare, only their commit.
 enum Freshness: Equatable {
     case current        // built from this commit, or nothing that goes into the app changed since
     case changed        // the checkout as it is now (local changes too) builds a different app
+    case otherRelease   // a release's Builder carries other sources than the ones the app was built from
     case unknown        // no build record, no commit in it, built with local changes, a game this checkout doesn't
                         // have, or a commit it lacks
 
-    static func of(_ info: BuildInfo?, repo: URL?, games: [Game]) -> Freshness {
+    static func of(_ info: BuildInfo?, repo: URL?, release: Release? = nil, games: [Game]) -> Freshness {
+        if let release {
+            guard let commit = info?.commit, info?.dirty != true else { return .unknown }
+            return commit == release.commit ? .current : .otherRelease
+        }
         guard let commit = info?.commit, info?.dirty != true,   // what the local changes were is not recorded
               let repo, let paths = games.named(info?.game)?.sources, !paths.isEmpty else { return .unknown }
         // against the working tree, not HEAD: an edit not committed yet changes the next build too

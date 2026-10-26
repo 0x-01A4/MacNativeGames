@@ -41,6 +41,23 @@ open "ui/Builder/build/MacNativeGames Builder.app"
 ```
 
 The app finds this checkout by walking up from its own location; if it can't, its first page asks for the folder.
+
+### A release (one DMG)
+
+```sh
+ui/Builder/make_dmg.sh [version]   # -> ui/Builder/build/MacNativeGames-Builder-<version>.dmg (default version 0.1-<commit>)
+```
+
+The app in the DMG carries the checkout's committed files at one commit (`Contents/Resources/checkout`, sealed with the
+app), so it needs no checkout: it finds its own sources unless a folder was chosen on the first page. Local changes
+stop the script, and `git archive` copies only committed files, so nothing ignored (keys, game files, work folders)
+can get into the image. The sources' `release.json` names the commit. A build records it in `build-info.json` in
+place of git, and the Library marks an app built from another commit as "Built with another Builder version". The
+Builder starts the build scripts with `PYTHONDONTWRITEBYTECODE=1`, so they write nothing beside themselves.
+
+Not in a release yet: Super Mario Odyssey, whose build compiles inside `games/odyssey`. The DMG is signed ad hoc and not
+notarized. On another Mac, the first start needs Open Anyway in System Settings > Privacy & Security. The player still
+installs the command line tools and the Homebrew packages, as the first page says.
 The build itself needs what `build_app.py` needs (`brew install opus libvpx python@3.14`); the first page lists what
 is missing and the command to install it.
 

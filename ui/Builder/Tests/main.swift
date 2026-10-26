@@ -135,6 +135,18 @@ do {
     expect(false, "the runner started python: \(error)")
 }
 
+// the environment the Builder adds reaches the script, next to this process's own
+do {
+    let got = Collected()
+    setenv("BUILDER_TEST_OWN", "kept", 1)
+    let status = try BuildRunner().run(python, ["-c", "import os, sys; print(os.environ['BUILDER_TEST_OWN'], sys.dont_write_bytecode)"],
+                                       environment: ["PYTHONDONTWRITEBYTECODE": "1"], stdout: { got.add($0, stdout: true) },
+                                       stderr: { got.add($0, stdout: false) })
+    expect(status == 0 && got.out == ["kept True"], "the added environment and this app's own (got \(got.out), \(got.err))")
+} catch {
+    expect(false, "the runner started python: \(error)")
+}
+
 // games: this checkout's games/*/game.json, and the versions from their assets
 let checkout = fixtures.appendingPathComponent("../../../..").standardizedFileURL
 let games = Game.load(repo: checkout)
@@ -268,6 +280,24 @@ _ = git("checkout", "-q", "--", ".")
 var dirty = record(second)
 dirty.dirty = true
 expect(Freshness.of(dirty, repo: repo, games: games) == .unknown, "built with local changes: unknown")
+
+// a release's sources (make_dmg.sh): no git to compare, only the commit in their release.json
+let release = Release(schema: Release.schema, commit: second, version: "0.2")
+expect(Freshness.of(record(second), repo: repo, release: release, games: games) == .current, "a release: built from its commit")
+expect(Freshness.of(record(first), repo: repo, release: release, games: games) == .otherRelease, "a release: built from another commit")
+expect(Freshness.of(dirty, repo: repo, release: release, games: games) == .unknown, "a release: built with local changes")
+expect(Freshness.of(built?.info, repo: repo, release: release, games: games) == .unknown, "a release: no commit in the record")
+write("{\"schema\": 1, \"commit\": \"\(second)\", \"version\": \"0.2\"}\n", "repo/release.json")
+expect(Release.read(repo) == release && Release.read(scratch) == nil && Release.read(nil) == nil, "release.json is read")
+write("{\"schema\": 2, \"commit\": \"\(second)\", \"version\": \"0.2\"}\n", "repo/release.json")
+expect(Release.read(repo) == nil, "a release.json of another schema is not")
+let carried = "Release.app/Contents/Resources/checkout"
+write("x\n", "\(carried)/build_app.py")
+write(try! String(contentsOf: checkout.appendingPathComponent("games/totk/game.json"), encoding: .utf8), "\(carried)/games/totk/game.json")
+let releaseApp = scratch.appendingPathComponent("Release.app")
+expect(Preflight.findRepo(chosen: nil, bundle: releaseApp)?.path == scratch.appendingPathComponent(carried).path,
+       "a release app's sources are found inside it")
+expect(Preflight.findRepo(chosen: checkout.path, bundle: releaseApp)?.path == checkout.path, "a chosen checkout comes first")
 
 let contrib = scratch.appendingPathComponent("TOTK/shader-list-contribution.txt")
 write("# rows\nV\ta\t{}\nV\ta\t{}\nR\tk\nB\tk\tv\tf\nnoise\n", "TOTK/shader-list-contribution.txt")

@@ -222,6 +222,13 @@ def prerequisites():
 
 
 def checkout_commit():
+    release = REPO / 'release.json'   # a Builder release's sources: no git (build_app.checkout_commit)
+    if release.is_file():
+        try:
+            commit = json.loads(release.read_text())['commit']
+        except (OSError, ValueError, KeyError, TypeError):
+            return None, None
+        return (commit, False) if isinstance(commit, str) and re.fullmatch(r'[0-9a-f]{40}', commit) else (None, None)
     try:
         commit = subprocess.run(['git', '-C', REPO, 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
         dirty = bool(subprocess.run(['git', '-C', REPO, 'status', '--porcelain', '--untracked-files=no'],

@@ -13,7 +13,8 @@ decisions; what is still open is listed at the end. How to build and run the Bui
 | Where it lives | In this repository, `ui/`. One Builder serves every game, and the game folders stay separate |
 | Game agnostic | The Builder names no game. Every game is a Switch or Switch 2 game the player owns, built from their dump and `prod.keys`. Each game folder has a `games/<name>/game.json`; what a game takes comes from `--inspect` (schema 2), and the step list from its progress events. `build_app.py` stays the entry point and hands a game with its own build script over to it (an NSP by its tickets, a card image after identification) |
 | Technology | Native SwiftUI, **not sandboxed**: the build starts cc, clang, codesign, git and hactool, which a sandboxed app can't |
-| How it's built | `ui/Builder/make_app.sh` with `swiftc` only (no Xcode project or SwiftPM), ad-hoc signed. Distribution is "build from source" until Phase 5 |
+| How it's built | `ui/Builder/make_app.sh` with `swiftc` only (no Xcode project or SwiftPM), ad-hoc signed |
+| Release | `ui/Builder/make_dmg.sh`: one DMG with the app, which carries a commit's tracked files (`Contents/Resources/checkout`) and names it in `release.json`. `build_app.py` records that commit in place of git, and the Library compares it instead of running `git diff`. Super Mario Odyssey is left out, because its build writes into its own folder. Ad-hoc signed until notarization (§6) |
 | Python 3.14 | Detected in the same places as `build_app.py` (`/opt/homebrew/bin`, `/usr/local/bin`). If it's missing, the first page shows the `brew install` command. It's not bundled, because the build needs Homebrew's opus/libvpx and the Xcode tools anyway |
 | UI ↔ script contract | `build_app.py --json-progress` (JSON lines, schema 1) and `--inspect`. Text output without the flags is unchanged |
 | Stage names | `build_app.py`'s four steps are authoritative: code, data (or update), shaders, app, plus a prepare step 0 |
@@ -97,4 +98,8 @@ Each phase is done when its tests pass and the change notes say what was built a
 - **Work folder on a read-only or external drive**: let the player pick `--work` in the Output step?
 - **How settings reach the game** (Phase 4): environment variables only work when the Launcher starts the game. The other route is a per-app settings file that the runtime reads, which also works from Finder.
 - **A CI job for the Builder**: `run_tests.sh` needs a Swift toolchain on the runner. The Python half is already in CI through `tests/`.
-- **Distribution** (Phase 5): a notarized DMG or Homebrew cask, and how the Builder learns that the checkout has a newer revision.
+- **Distribution** (Phase 5): the DMG exists (`make_dmg.sh`). Still open:
+  - notarization, which needs a Developer ID. The sources carry three prebuilt `totk_xlate` binaries that are checked by SHA-256, and re-signing them would change that hash;
+  - whether files from a downloaded DMG keep the quarantine mark when a build copies `totk_xlate` into a game app;
+  - how the Builder learns that a newer release exists;
+  - Super Mario Odyssey in a release.

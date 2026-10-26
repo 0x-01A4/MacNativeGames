@@ -9,9 +9,9 @@ final class BuildRunner: @unchecked Sendable {
     private var cancelRequested = false
 
     /// Blocks until the program ends and returns its exit status (128 + signal when a signal ended it). stdout and stderr
-    /// come line by line on background threads.
-    func run(_ executable: String, _ arguments: [String], stdout: @escaping (String) -> Void,
-             stderr: @escaping (String) -> Void) throws -> Int32 {
+    /// come line by line on background threads. `environment` is added to this app's own.
+    func run(_ executable: String, _ arguments: [String], environment: [String: String] = [:],
+             stdout: @escaping (String) -> Void, stderr: @escaping (String) -> Void) throws -> Int32 {
         var out: [Int32] = [0, 0], err: [Int32] = [0, 0]
         guard pipe(&out) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         guard pipe(&err) == 0 else {
@@ -32,10 +32,13 @@ final class BuildRunner: @unchecked Sendable {
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
         let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
+        let envp: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+            .map { strdup("\($0)=\($1)") } + [nil]
+        defer { envp.forEach { free($0) } }
 
         lock.lock()
         var child: pid_t = 0
-        let rc = cancelRequested ? ECANCELED : posix_spawn(&child, executable, &actions, &attr, argv, environ)
+        let rc = cancelRequested ? ECANCELED : posix_spawn(&child, executable, &actions, &attr, argv, envp)
         pid = rc == 0 ? child : 0
         lock.unlock()
         close(out[1]); close(err[1])

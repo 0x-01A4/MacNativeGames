@@ -87,12 +87,13 @@ struct LibraryView: View {
         loading = true
         let remembered = wizard.rememberedApps
         let repo = wizard.preflight.repo
+        let release = wizard.preflight.release
         let games = wizard.preflight.games
         let current = wizard.report?.work.map { (work: $0, game: wizard.report?.game) }
         let found = await Task.detached { () -> ([BuiltApp], [String: Freshness], [Contribution], [WorkFolder]) in
             let apps = BuiltApp.find(remembered: remembered, games: games)
             var fresh: [String: Freshness] = [:]
-            for app in apps { fresh[app.id] = Freshness.of(app.info, repo: repo, games: games) }
+            for app in apps { fresh[app.id] = Freshness.of(app.info, repo: repo, release: release, games: games) }
             return (apps, fresh, Contribution.all(games: games), WorkFolder.all(apps: apps, current: current, games: games))
         }.value
         (apps, freshness, contributions, works) = found
@@ -169,7 +170,7 @@ struct AppRow: View {
             HStack {
                 Button("Open") { NSWorkspace.shared.open(app.url) }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }
-                Button(freshness == .changed ? "Rebuild with This Checkout" : "Rebuild") { wizard.rebuild(app) }
+                Button(freshness == .changed ? "Rebuild with This Checkout" : freshness == .otherRelease ? "Rebuild with This Builder" : "Rebuild") { wizard.rebuild(app) }
                     .disabled(info == nil || !missing.isEmpty || wizard.running)
                     .help(wizard.running ? String(localized: "A build is running") : "")
                 if let data = dataFolder, FileManager.default.fileExists(atPath: data.path) {
@@ -202,6 +203,9 @@ struct AppRow: View {
         case .changed:
             Label("The checkout has changed since", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
                 .help(String(localized: "The files this game is built from changed after this app was built: a rebuild picks up the changes."))
+        case .otherRelease:
+            Label("Built with another Builder version", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
+                .help(String(localized: "This app was built from other sources than the ones this Builder carries: a rebuild builds it with this Builder's."))
         case .unknown:
             Label("Can't tell", systemImage: "questionmark.circle").foregroundStyle(.secondary)
                 .help(String(localized: "There is no build record with a commit of this checkout, or the app was built with local changes: a rebuild is the way to be sure."))

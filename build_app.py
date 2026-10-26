@@ -1431,7 +1431,16 @@ BUILD_INFO_SCHEMA = 1
 
 
 def checkout_commit():
-    """(commit, dirty) of the checkout this build runs from, or (None, None) outside a git checkout."""
+    """(commit, dirty) of the checkout this build runs from, or (None, None) outside a git checkout. A Builder release
+    carries its sources without git and names their commit in release.json (ui/Builder/make_dmg.sh); git is not asked
+    then, as a folder above the app may be another checkout."""
+    release = REPO / 'release.json'
+    if release.is_file():
+        try:
+            commit = json.loads(release.read_text())['commit']
+        except (OSError, ValueError, KeyError, TypeError):
+            return None, None
+        return (commit, False) if isinstance(commit, str) and re.fullmatch(r'[0-9a-f]{40}', commit) else (None, None)
     try:
         commit = subprocess.run(['git', '-C', REPO, 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=30)
         if commit.returncode:
