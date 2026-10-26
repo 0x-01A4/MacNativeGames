@@ -142,7 +142,7 @@ void runtime_gamepad_read(RuntimeGamepadState *out);
    independent of gameplay remaps. Main-thread only. Closing waits for release before gameplay resumes. */
 void runtime_gamepad_text_capture(int on);
 void runtime_gamepad_text_read(RuntimeGamepadState *out);
-/* macOS opts in; the physical L2 + R2 + left-stick click chord is latched independently of guest polling. */
+/* macOS opts in; the physical L2 + R2 + left-stick click chord, held for a second, is latched independently of guest polling. */
 void runtime_gamepad_settings_enable(int enabled);
 int runtime_gamepad_settings_requested(void);
 /* Forget held buttons and sticks: macOS stops delivering controller events (including releases) while the app is in

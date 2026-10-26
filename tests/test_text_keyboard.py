@@ -1,5 +1,5 @@
-"""Mac controller text entry (runtime/text_keyboard.h) and Command-Q while it is open: games/totk/tests/text_keyboard and
-command_q, which compile the real AppKit view and gamepad code. No game content."""
+"""Mac controller text entry (runtime/text_keyboard.h), the settings panel with a controller, and Command-Q while they are open:
+games/totk/tests/text_keyboard, settings_controller and command_q, which compile the real AppKit views and gamepad code. No game content."""
 import shutil
 import subprocess
 import sys
@@ -17,6 +17,9 @@ class TextKeyboardTests(unittest.TestCase):
 
     def test_text_keyboard(self):
         self.run_script(TESTS / 'text_keyboard/test.py')
+
+    def test_settings_controller(self):
+        self.run_script(TESTS / 'settings_controller/test.py')
 
     def test_command_q(self):
         self.run_script(TESTS / 'command_q/test.py')

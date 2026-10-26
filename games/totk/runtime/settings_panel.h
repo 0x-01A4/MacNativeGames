@@ -276,7 +276,7 @@ enum { SETTINGS_W = 520, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 5
  BOOL ps=type==GAMEPAD_TYPE_PLAYSTATION,sw=type==GAMEPAD_TYPE_SWITCH;
  NSString *select=ps?@"×":@"A",*cancel=ps?@"○":@"B";
  NSString *chord=ps?@"L2 + R2 + L3":sw?@"ZL + ZR + L stick":@"LT + RT + LS";
- self.hint.stringValue=[NSString stringWithFormat:settings_text("↑↓ 选择 · ←→ 调整 · %@ 确定 · %@ 关闭\n%@：打开 / 关闭 · 1 / Esc", "↑↓ Navigate · ←→ Change · %@ Select · %@ Close\n%@: open / close · 1 / Esc"),select,cancel,chord];
+ self.hint.stringValue=[NSString stringWithFormat:settings_text("↑↓ 选择 · ←→ 调整 · %@ 确定 · %@ 关闭\n按住 %@ 1 秒：打开 / 关闭 · 1 / Esc", "↑↓ Navigate · ←→ Change · %@ Select · %@ Close\nHold %@ for 1 s: open / close · 1 / Esc"),select,cancel,chord];
 }
 -(void)controllerMove:(int)step{
  NSInteger count=self.controllerTargets.count;

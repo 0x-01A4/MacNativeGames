@@ -27,6 +27,12 @@ static _Atomic int textCapture;       /* gamepadLock: 1 UI owns input, 2 wait fo
 static BOOL started;
 static _Atomic int settingsShortcutEnabled;
 static int settingsShortcutDown, settingsShortcutPending;
+/* The chord opens the settings panel only once it has been held for a second (user 2026-10-27): L2 + R2 + L3 is also
+   ZL + ZR + L3 in the game, pressed together for a moment while sneaking with the bow. Held still, the controller sends
+   no events, so the panel's 60 Hz timer (runtime_gamepad_settings_requested) decides when the second is up. */
+#define SETTINGS_HOLD_NS 1000000000ULL
+static uint64_t settingsChordSince;
+static int settingsChordFired;
 #define SETTINGS_CHORD ((1ull << 8) | (1ull << 9) | (1ull << 4))
 static uint16_t controllerMap[CONTROLLER_BUTTONS];
 static uint8_t controllerModes[CONTROLLER_BUTTONS];
@@ -507,10 +513,7 @@ static void refresh_gamepads(void) {
     next.buttons |= controller_map_apply(controllerMap, held) | synthetic;
     pthread_mutex_lock(&gamepadLock);
     int chord = settingsShortcutEnabled && (physical & SETTINGS_CHORD) == SETTINGS_CHORD;
-    if (chord && !settingsShortcutDown) {
-        settingsShortcutPending = 1;
-        if (!textCapture) textCapture = 2; /* suppress the chord before the UI timer gets its turn */
-    }
+    if (chord && !settingsShortcutDown) { settingsChordSince = now; settingsChordFired = 0; }   /* the game keeps it until the second is up */
     settingsShortcutDown = chord;
     textEdges |= (physical & 0x1ffffu) & ~textPad.buttons;
     textPad = next; textPad.buttons = physical & 0x1ffffu;
@@ -618,11 +621,17 @@ void runtime_gamepad_settings_enable(int enabled) {
     settingsShortcutEnabled = !!enabled;
     settingsShortcutPending = 0;
     settingsShortcutDown = (textPad.buttons & SETTINGS_CHORD) == SETTINGS_CHORD;
+    settingsChordSince = runtime_now_ns(); settingsChordFired = 0;   /* a chord held through this counts from now */
     pthread_mutex_unlock(&gamepadLock);
 }
 int runtime_gamepad_settings_requested(void) {
     pthread_mutex_lock(&gamepadLock);
     int requested = settingsShortcutPending; settingsShortcutPending = 0;
+    uint64_t now = runtime_now_ns();
+    if (settingsShortcutEnabled && settingsShortcutDown && !settingsChordFired && now >= settingsChordSince && now - settingsChordSince >= SETTINGS_HOLD_NS) {
+        settingsChordFired = requested = 1;
+        if (!textCapture) textCapture = 2;   /* from here the game no longer gets the chord, until it is released */
+    }
     pthread_mutex_unlock(&gamepadLock);
     return requested;
 }
