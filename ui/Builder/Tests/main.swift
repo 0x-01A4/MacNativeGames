@@ -151,7 +151,9 @@ do {
 let checkout = fixtures.appendingPathComponent("../../../..").standardizedFileURL
 let games = Game.load(repo: checkout)
 expect(Preflight.isRepo(checkout), "the checkout is found by build_app.py and its game manifests")
-expect(Set(games.map(\.id)) == ["totk", "botw", "by3", "odyssey"], "every game folder with a game.json (got \(games.map(\.id)))")
+expect(Set(games.map(\.id)) == ["totk", "botw", "by3", "odyssey", "dread"], "every game folder with a game.json (got \(games.map(\.id)))")
+let dread = games.named("dread")
+expect(dread?.versions == ["1.0.0"] && dread?.files.game == ["xci", "nsp"] && dread?.files.update == [] && dread?.build == "games/dread/build.py", "a game with one base file and its own build")
 let odyssey = games.named("odyssey")
 expect(odyssey?.versions == ["1.3.0"] && odyssey?.dataBesideApp == "Odyssey Data" && odyssey?.dataFolder == nil, "versions and data from the manifest")
 expect(odyssey?.files.update == [] && games.updateExtensions == ["nsp", "nsz"], "a game whose one file holds its update")
@@ -179,7 +181,7 @@ let other = Game.load(repo: kinds)
 expect(other.map(\.id) == ["next", "planned"], "a manifest that doesn't parse is left out (got \(other.map(\.id)))")
 expect(other.named("next")?.files.update == nil && other.named("planned")?.files.game == ["xci", "nsp"], "file types, and the default")
 let mixed = games + other
-expect(Set(mixed.accepting(URL(fileURLWithPath: "/g/x.XCI")).map(\.id)) == ["botw", "totk", "odyssey", "next"], "by3 takes NSPs only; a game without its build script yet is not offered")
+expect(Set(mixed.accepting(URL(fileURLWithPath: "/g/x.XCI")).map(\.id)) == ["botw", "totk", "odyssey", "dread", "next"], "by3 takes NSPs only; a game without its build script yet is not offered")
 expect(mixed.script(for: URL(fileURLWithPath: "/g/x.xci")) == "build_app.py", "several builds take an XCI: build_app.py hands it on")
 try? FileManager.default.removeItem(at: kinds)
 

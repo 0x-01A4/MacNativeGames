@@ -2,17 +2,11 @@
    The app is a small bundle; the game's data stay in the work folder (Dread_build) named by Info.plist's DreadWorkFolder,
    so nothing large is copied. Settings are saved at every change (org.macnativegames.dread) and shown again next time.
    What each setting does in the runtime:
-   - Frame rate: 30 = the game's own pacing (30 / 60 by scene); 60 = the 60 fps patch; 120 = the 60 fps patch on a 120 Hz
-     present base (experimental: correct only if the game advances by real time, not by frames).
-   - Internal resolution: dynamic (the game's own, up to 1600x900) or fixed 900p (patches/res-1600x900, else the
-     community "Force Scaling 900p" patch). Larger internal sizes do not start yet (the game's texture heaps).
    - Monitor (DREAD_DISPLAY), window or full screen (DREAD_FULLSCREEN), window size (TOTK_WINDOW_SIZE), the full-screen
      output resolution (TOTK_DRAWABLE_SCALE relative to the monitor's pixels) and the scaler (MetalFX spatial upscaling of
      the game's picture to the output, TOTK_MFX_UPSCALE / TOTK_MFX_OUTPUT, or plain linear scaling).
-   - Extras: improved LOD (off in every preset: it breaks the geometry here), no film grain (patches); the RomFS
-     interface mod; the FPS / resolution HUD.
-   Patches come from <work>/patches (scripts/prepare_patches.py, make_res_patch.py); a missing one is left out and the
-   window says so. */
+   - The RomFS interface mod; the FPS / resolution HUD.
+   The game runs at its own frame rate on a 60 Hz present base, as on the console; it has no game-code patches. */
 #import <Cocoa/Cocoa.h>
 #include <errno.h>
 #include <string.h>
@@ -22,16 +16,13 @@ static BOOL spanish(void) { return [NSLocale.preferredLanguages.firstObject hasP
 #define T(es, en) (spanish() ? @es : @en)
 
 /* output: 0 = the monitor's native pixels, else the height of a 16:9 output (2160, 1440, 1080, 900). */
-typedef struct { const char *name_es, *name_en; int fps, fixed900, fullscreen, metalfx, output, lod, nograin, size; } Preset;
+typedef struct { const char *name_es, *name_en; int fullscreen, metalfx, output, size; } Preset;
 static const Preset presets[] = {
-    {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2},
-    {"Recomendado (60 fps, ventana)", "Recommended (60 fps, window)", 60, 0, 0, 1, 0, 0, 0, 2},
-    {"Rendimiento (60 fps, 900p fija)", "Performance (60 fps, fixed 900p)", 60, 1, 0, 1, 0, 0, 0, 2},
-    {"Calidad (60 fps, pantalla completa, MetalFX nativo, sin grano)", "Quality (60 fps, full screen, native MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2},
-    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2},
+    {"Recomendado (ventana, MetalFX)", "Recommended (window, MetalFX)", 0, 1, 0, 2},
+    {"Pantalla completa (MetalFX nativo)", "Full screen (native MetalFX)", 1, 1, 0, 2},
+    {"Ligero (ventana, escalado normal)", "Light (window, plain scaling)", 0, 0, 0, 2},
 };
 enum { NPRESETS = sizeof presets / sizeof *presets };
-static const int fps_values[] = {30, 60, 120};
 static const int sizes[][2] = {{1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}};
 static const int outputs[] = {0, 2160, 1440, 1080, 900};
 
@@ -39,10 +30,6 @@ static NSString *work_folder(void) {
     const char *e = getenv("DREAD_WORK");
     return e && *e ? @(e) : [NSBundle.mainBundle objectForInfoDictionaryKey:@"DreadWorkFolder"];
 }
-static BOOL have_patch(NSString *slug) {
-    return [NSFileManager.defaultManager fileExistsAtPath:[work_folder() stringByAppendingFormat:@"/patches/%@.tsv", slug]];
-}
-static NSString *fixed900_patch(void) { return have_patch(@"res-1600x900") ? @"res-1600x900" : have_patch(@"force-scaling-900p-v3") ? @"force-scaling-900p-v3" : nil; }
 /* RomFS mods: <work>/../mods/<name>/romfs with a manifest.tsv (make mods). */
 static NSString *mods_folder(void) { return [[work_folder() stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"mods"]; }
 static NSArray<NSString *> *romfs_mods(void) {
@@ -56,9 +43,9 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 
 @interface Launcher : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @property NSWindow *window;
-@property NSPopUpButton *preset, *size, *internal, *monitor, *output, *mod;
-@property NSSegmentedControl *fps, *display, *scaler;
-@property NSButton *lod, *grain, *hud, *play; @property NSTextField *note;
+@property NSPopUpButton *preset, *size, *monitor, *output, *mod;
+@property NSSegmentedControl *display, *scaler;
+@property NSButton *hud, *play; @property NSTextField *note;
 @property NSArray<NSString *> *mods; @property BOOL applying, launch;
 @end
 
@@ -75,8 +62,6 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     for (int i = 0; i < NPRESETS; i++) [self.preset addItemWithTitle:spanish() ? @(presets[i].name_es) : @(presets[i].name_en)];
     [self.preset addItemWithTitle:T("Personalizado", "Custom")];
     self.preset.target = self; self.preset.action = @selector(presetChanged:);
-    self.fps = [self segments:@[@"30", @"60", T("120 (experimental)", "120 (experimental)")]];
-    self.internal = [self popup:@[T("Dinámica (la del juego, hasta 900p)", "Dynamic (the game's own, up to 900p)"), T("900p fija", "Fixed 900p")]];
     self.monitor = [NSPopUpButton new]; self.monitor.target = self; self.monitor.action = @selector(monitorChanged:);
     for (NSScreen *s in NSScreen.screens) {
         NSSize px = screen_pixels(s);
@@ -88,8 +73,6 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     self.size = [self popup:sizeTitles];
     self.output = [NSPopUpButton new]; self.output.target = self; self.output.action = @selector(changed:);
     self.scaler = [self segments:@[T("MetalFX (más nítido)", "MetalFX (sharper)"), T("Normal", "Plain")]];
-    self.lod = [NSButton checkboxWithTitle:T("LOD mejorado (más detalle a distancia)", "Improved LOD (more distant detail)") target:self action:@selector(changed:)];
-    self.grain = [NSButton checkboxWithTitle:T("Quitar el grano de película", "Remove film grain") target:self action:@selector(changed:)];
     self.mod = [self popup:@[T("Ninguno", "None")]]; self.mods = romfs_mods(); [self.mod addItemsWithTitles:self.mods];
     self.hud = [NSButton checkboxWithTitle:T("Mostrar FPS y resolución (tecla 1 lo oculta)", "Show FPS and resolution (key 1 hides it)") target:self action:@selector(changed:)];
     self.note = [NSTextField wrappingLabelWithString:@""]; self.note.textColor = NSColor.secondaryLabelColor; self.note.font = [NSFont systemFontOfSize:11];
@@ -98,15 +81,11 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 
     NSGridView *grid = [NSGridView gridViewWithViews:@[
         @[[self label:T("Preset", "Preset")], self.preset],
-        @[[self label:T("Fotogramas por segundo", "Frame rate")], self.fps],
-        @[[self label:T("Resolución interna", "Internal resolution")], self.internal],
         @[[self label:T("Monitor", "Monitor")], self.monitor],
         @[[self label:T("Pantalla", "Display")], self.display],
         @[[self label:T("Tamaño de la ventana", "Window size")], self.size],
         @[[self label:T("Resolución de salida", "Output resolution")], self.output],
         @[[self label:T("Escalado", "Scaling")], self.scaler],
-        @[[self label:T("Mejoras", "Extras")], self.lod],
-        @[NSGridCell.emptyContentView, self.grain],
         @[[self label:T("Mod de interfaz", "Interface mod")], self.mod],
         @[[self label:T("Información", "Info")], self.hud],
     ]];
@@ -115,13 +94,13 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     NSStackView *stack = [NSStackView stackViewWithViews:@[grid, self.note, buttons]];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeTrailing; stack.spacing = 16;
     stack.edgeInsets = NSEdgeInsetsMake(20, 20, 20, 20);
-    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 480) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 360) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                                                 backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"Metroid Dread"; self.window.contentView = stack; self.window.delegate = self;
     [self.note.widthAnchor constraintEqualToConstant:600].active = YES;
 
     [self loadCommon:d];
-    NSInteger p = [d objectForKey:@"preset"] ? [d integerForKey:@"preset"] : 1;
+    NSInteger p = [d objectForKey:@"preset"] ? [d integerForKey:@"preset"] : 0;
     if (p >= 0 && p < NPRESETS) [self applyPreset:(int)p]; else { [self.preset selectItemAtIndex:NPRESETS]; [self load:d]; }
     [self refresh];
     [self.window center]; [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
@@ -149,19 +128,15 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     [self.mod selectItemAtIndex:i == NSNotFound ? 0 : (NSInteger)i + 1];
 }
 - (void)load:(NSUserDefaults *)d {
-    int fps = (int)[d integerForKey:@"fps"]; self.fps.selectedSegment = fps == 120 ? 2 : fps == 30 ? 0 : 1;
-    [self.internal selectItemAtIndex:[d boolForKey:@"fixed900"]]; self.display.selectedSegment = [d boolForKey:@"fullscreen"];
+    self.display.selectedSegment = [d boolForKey:@"fullscreen"];
     NSInteger s = [d objectForKey:@"size"] ? [d integerForKey:@"size"] : 2; [self.size selectItemAtIndex:s >= 0 && s < 4 ? s : 2];
     self.scaler.selectedSegment = [d objectForKey:@"metalfx"] && ![d boolForKey:@"metalfx"] ? 1 : 0;
     [self fillOutputs:(int)[d integerForKey:@"output"]];
-    self.lod.state = [d boolForKey:@"lod"]; self.grain.state = [d boolForKey:@"nograin"];
 }
 - (void)applyPreset:(int)i {
     const Preset *p = &presets[i]; self.applying = YES;
-    [self.preset selectItemAtIndex:i]; self.fps.selectedSegment = p->fps == 30 ? 0 : p->fps == 60 ? 1 : 2;
-    [self.internal selectItemAtIndex:p->fixed900]; self.display.selectedSegment = p->fullscreen; [self.size selectItemAtIndex:p->size];
-    self.scaler.selectedSegment = p->metalfx ? 0 : 1; [self fillOutputs:p->output];
-    self.lod.state = p->lod; self.grain.state = p->nograin; self.applying = NO;
+    [self.preset selectItemAtIndex:i]; self.display.selectedSegment = p->fullscreen; [self.size selectItemAtIndex:p->size];
+    self.scaler.selectedSegment = p->metalfx ? 0 : 1; [self fillOutputs:p->output]; self.applying = NO;
 }
 /* Every change is saved at once (and written to disk), so the next start shows the same choices. */
 - (void)presetChanged:(id)sender { (void)sender; NSInteger i = self.preset.indexOfSelectedItem; if (i < NPRESETS) [self applyPreset:(int)i]; [self refresh]; [self save]; }
@@ -173,21 +148,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 - (void)refresh {
     BOOL full = self.display.selectedSegment == 1;
     self.size.enabled = !full; self.output.enabled = full;
-    NSMutableArray *missing = [NSMutableArray array];
-    if (self.fps.selectedSegment > 0 && !have_patch(@"60fps")) [missing addObject:@"60fps"];
-    if (self.internal.indexOfSelectedItem == 1 && !fixed900_patch()) [missing addObject:@"res-1600x900 / Force Scaling 900p"];
-    if (self.lod.state && !have_patch(@"improved-lod-v2")) [missing addObject:@"Improved LOD v2"];
-    if (self.grain.state && !have_patch(@"remove-film-grain")) [missing addObject:@"Remove Film Grain"];
     NSMutableString *s = [NSMutableString string];
-    if (self.fps.selectedSegment == 2) {
-        [s appendString:T("120 fps es experimental: si el juego se ve acelerado, vuelve a 60. ", "120 fps is experimental: if the game looks sped up, go back to 60. ")];
-        if (self.chosenScreen.maximumFramesPerSecond < 120) [s appendString:T("Este monitor no llega a 120 Hz. ", "This monitor does not reach 120 Hz. ")];
-    }
-    if (self.lod.state)   // tried 2026-10-19: with the patch the scenery breaks into blocks and smears, characters turn ghostly
-        [s appendString:T("Mejor LOD rompe la geometría en este port (bloques, personajes fantasma): mejor apagado. ", "Improved LOD breaks the geometry in this port (blocks, ghostly characters): best left off. ")];
-    if (missing.count)
-        [s appendFormat:T("Faltan estos parches y se omitirán: %@ (make patches). ", "These patches are missing and will be left out: %@ (make patches). "),
-                          [missing componentsJoinedByString:@", "]];
     self.play.enabled = YES;
     if (!work_folder() || ![NSFileManager.defaultManager isExecutableFileAtPath:[work_folder() stringByAppendingPathComponent:@"build/dread-native"]]) {
         [s appendFormat:T("No encuentro el juego en %@.", "The game is not in %@."), work_folder() ?: @"?"]; self.play.enabled = NO;
@@ -197,11 +158,10 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 - (void)save {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     [d setInteger:self.preset.indexOfSelectedItem forKey:@"preset"];
-    [d setInteger:fps_values[self.fps.selectedSegment] forKey:@"fps"]; [d setBool:self.internal.indexOfSelectedItem == 1 forKey:@"fixed900"];
     [d setBool:self.display.selectedSegment == 1 forKey:@"fullscreen"]; [d setInteger:self.size.indexOfSelectedItem forKey:@"size"];
     [d setInteger:self.output.selectedItem.tag forKey:@"output"]; [d setBool:self.scaler.selectedSegment == 0 forKey:@"metalfx"];
     [d setObject:screen_name(self.chosenScreen) forKey:@"monitor"];
-    [d setBool:self.lod.state forKey:@"lod"]; [d setBool:self.grain.state forKey:@"nograin"]; [d setBool:self.hud.state forKey:@"hud"];
+    [d setBool:self.hud.state forKey:@"hud"];
     if (self.mod.indexOfSelectedItem > 0) [d setObject:self.mods[self.mod.indexOfSelectedItem - 1] forKey:@"mod"]; else [d removeObjectForKey:@"mod"];
     CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);   // the launcher then replaces itself with the game (exec)
 }
@@ -231,13 +191,7 @@ int main(int argc, char **argv) {
         if (!make_dir(profile) || !make_dir(slot) || !make_dir(logs)) { fail([NSString stringWithFormat:@"%@", data]); return 1; }
         if (chdir(work.fileSystemRepresentation)) { fail(work); return 1; }   // the runtime reads extracted/ and rewritten/ relative to it
 
-        int fps = (int)[d integerForKey:@"fps"]; NSMutableArray *patches = [NSMutableArray array];
-        if (fps >= 60 && have_patch(@"60fps")) [patches addObject:@"60fps"];
-        if ([d boolForKey:@"fixed900"] && fixed900_patch()) [patches addObject:fixed900_patch()];
-        if ([d boolForKey:@"lod"] && have_patch(@"improved-lod-v2")) [patches addObject:@"improved-lod-v2"];
-        if ([d boolForKey:@"nograin"] && have_patch(@"remove-film-grain")) [patches addObject:@"remove-film-grain"];
-        setenv("DREAD_PATCHES", [patches componentsJoinedByString:@","].UTF8String, 1);
-        setenv("DM_PRESENT_HZ", fps == 120 ? "120" : "60", 1);
+        setenv("DM_PRESENT_HZ", "60", 1);   // the game's own pacing on a 60 Hz base, as on the console
 
         NSArray<NSScreen *> *all = NSScreen.screens; NSUInteger mi = [all indexOfObject:NSScreen.mainScreen];
         if (mi == NSNotFound) mi = 0;
@@ -272,8 +226,8 @@ int main(int argc, char **argv) {
         NSString *log = [logs stringByAppendingPathComponent:@"dread.log"], *prev = [logs stringByAppendingPathComponent:@"dread.previous.log"];
         [NSFileManager.defaultManager removeItemAtPath:prev error:nil]; [NSFileManager.defaultManager moveItemAtPath:log toPath:prev error:nil];
         FILE *lf = fopen(log.fileSystemRepresentation, "w"); if (lf) { dup2(fileno(lf), STDOUT_FILENO); dup2(fileno(lf), STDERR_FILENO); fclose(lf); }
-        fprintf(stderr, "[launcher] work %s, patches %s, present %s Hz, display %s, fullscreen %s, window %s, drawable scale %s, MetalFX %s, mod %s\n",
-                work.UTF8String, getenv("DREAD_PATCHES"), getenv("DM_PRESENT_HZ"), getenv("DREAD_DISPLAY"), full ? "yes" : "no", getenv("TOTK_WINDOW_SIZE"),
+        fprintf(stderr, "[launcher] work %s, present %s Hz, display %s, fullscreen %s, window %s, drawable scale %s, MetalFX %s, mod %s\n",
+                work.UTF8String, getenv("DM_PRESENT_HZ"), getenv("DREAD_DISPLAY"), full ? "yes" : "no", getenv("TOTK_WINDOW_SIZE"),
                 getenv("TOTK_DRAWABLE_SCALE") ?: "1", getenv("TOTK_MFX_OUTPUT") ? "on" : "off", getenv("TOTK_ROMFS_MODS"));
         NSString *binary = [work stringByAppendingPathComponent:@"build/dread-native"];
         char *const args[] = {(char *)binary.fileSystemRepresentation, "rewritten/v100", "boot", NULL};
