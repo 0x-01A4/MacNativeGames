@@ -245,13 +245,22 @@ static const char *rom_path(const char *path) {
  return romfs_path_relative(mount_name,path);
 }
 static uint64_t lower(const char *name) {uint64_t lo=0,hi=file_count;while(lo<hi){uint64_t m=lo+(hi-lo)/2;if(strcmp(entry_name(entry(m)),name)<0)lo=m+1;else hi=m;}return lo;}
+static void fs_log(const char *what,const char *path);
 static unsigned mount_rom(const char *name,void *cache,uint64_t size) {
  (void)cache;(void)size;runtime_fs_init();if(!name||!path_ok(name)||strlen(name)>=sizeof(mount_name)||strchr(name,'/')||strchr(name,':'))return INVALID;
- if(*mount_name&&strcmp(name,mount_name))runtime_fail("second RomFS mount not implemented");strcpy(mount_name,name);return 0;
+ if(*mount_name&&strcmp(name,mount_name))runtime_fail("second RomFS mount not implemented");strcpy(mount_name,name);fs_log("mount",name);return 0;
 }
 static unsigned mount_rom_name(const char *name) {return mount_rom(name,NULL,0);}   /* SDK 13 MountRom without a cache buffer (Bayonetta 3) */
-static unsigned cache_size(uint64_t *out) {if(!out)return INVALID;*out=0;return 0;}
-/* TOTK_FS_LOG=1: log every RomFS open with the time since start (shows how far the game gets without a picture). */
+/* QueryMountRomCacheSize: what the SDK computes for this RomFS, its four metadata tables (directory and file hash
+   tables, directory and file entries; header fields 2, 4, 6, 8 of the verified image). The host does not use the cache,
+   but the size matters: Metroid Dread allocates a buffer of it and mounts the RomFS only when that allocation is not
+   null, which an answer of 0 made it. */
+static unsigned cache_size(uint64_t *out) {
+ if(!out)return INVALID;runtime_fs_init();uint64_t h[10];
+ need(src_pread(image_fd,h,sizeof h,0)==(ssize_t)sizeof h&&h[0]==sizeof h,"RomFS header");
+ *out=h[2]+h[4]+h[6]+h[8];return 0;
+}
+/* TOTK_FS_LOG=1: log every RomFS open with the time since start (2: every read as well, runtime_romfs_read) (shows how far the game gets without a picture). */
 static void fs_log(const char *what,const char *path){static int on=-1;static uint64_t t0;if(on<0){on=getenv("TOTK_FS_LOG")!=NULL;t0=runtime_now_ns();}if(on)fprintf(stderr,"[totk-fs] %8.3f %s %s\n",(runtime_now_ns()-t0)/1e9,what,path);}
 void runtime_fs_log(const char *what,const char *path){fs_log(what,path);}
 unsigned runtime_romfs_open(uint64_t *out,const char *path,int mode) {
@@ -282,6 +291,8 @@ unsigned runtime_romfs_read(uint64_t *out,uint64_t h,int64_t offset,void *buffer
   if(now-last>1000000000ULL&&atomic_compare_exchange_strong(&read_report_ns,&last,now))
    fprintf(stderr,"[totk-fs] read window t=%.3f calls=%llu bytes=%llu wall_ms=%.3f prepare_ms=%.3f\n",now/1e9,
     (unsigned long long)atomic_exchange(&read_calls,0),(unsigned long long)atomic_exchange(&read_bytes,0),atomic_exchange(&read_ns,0)/1e6,atomic_exchange(&read_prepare_ns,0)/1e6);}
+ {static int reads=-1;if(reads<0){const char *v=getenv("TOTK_FS_LOG");reads=v&&!strcmp(v,"2");}   /* TOTK_FS_LOG=2: every read too */
+  if(reads)fprintf(stderr,"[totk-fs] read h=%#llx at=%#llx off=%#llx size=%#llx -> %#llx\n",(unsigned long long)h,(unsigned long long)e.offset,(unsigned long long)offset,(unsigned long long)size,(unsigned long long)done);}
  *out=done;return 0;
 }
 unsigned runtime_romfs_size(int64_t *out,uint64_t h) {Entry e;if(!out||!handle_entry(h,&e))return INVALID;int fd;uint64_t base,size;handle_source(h,&e,&fd,&base,&size);*out=(int64_t)size;return 0;}
