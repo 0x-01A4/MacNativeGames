@@ -47,6 +47,7 @@ static NSString *seed_unpack(NSString *base, NSString *dest, void (^progress)(ui
     NSString *tmp = [dest stringByAppendingString:@".tmp"]; [fm removeItemAtPath:tmp error:nil];
     if (![fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil]) { if (f) fclose(f); return @"cannot make the folder"; }
     char magic[9]; NSString *why = nil; size_t cap = 1 << 20; uint8_t *buf = malloc(cap); uint64_t files = 0, last = 0;
+    if (!buf) { if (f) fclose(f); [fm removeItemAtPath:tmp error:nil]; return @"not enough memory to unpack"; }
     if (!take(magic, 9) || memcmp(magic, "TOTKPACK1", 9)) why = @"not a shader pack";
     while (!why) {
         uint16_t nl; if (!take(&nl, 2)) { why = @"truncated"; break; }
@@ -57,7 +58,9 @@ static NSString *seed_unpack(NSString *base, NSString *dest, void (^progress)(ui
         if (strchr(name, '/') || !strcmp(name, ".") || !strcmp(name, "..") || !take(&size, 8)) { why = @"bad entry"; break; }
         FILE *o = fopen([tmp stringByAppendingPathComponent:@(name)].fileSystemRepresentation, "wb"); if (!o) { why = @"cannot write"; break; }
         while (size && !why) { size_t n = size < cap ? (size_t)size : cap; if (!take(buf, n) || fwrite(buf, 1, n, o) != n) why = @"truncated or disk full"; size -= n; }
-        fclose(o); files++;
+        // Buffered writes can report success until fclose flushes the final bytes (for example, ENOSPC).
+        if (fclose(o) != 0 && !why) why = @"cannot finish writing the shader file";
+        files++;
         if (progress && done - last > (32u << 20)) { last = done; progress(done, total); }
     }
     free(buf); if (f) fclose(f);
