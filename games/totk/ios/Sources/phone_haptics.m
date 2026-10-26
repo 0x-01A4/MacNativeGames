@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "runtime.h"
+#include "phone_settings.h"
 
 #if TARGET_OS_IOS
 
@@ -196,10 +197,9 @@ static void update_active(void) {
 void totk_phone_haptics_start(void) {
     if (started) return;
     started = YES;
-    const char *e = getenv("TOTK_PHONE_HAPTICS");
-    enabled = !(e && !strcmp(e, "0")) && runtime_rumble_enabled();
+    enabled = totk_phone_setting_enabled(@"TOTK_PHONE_HAPTICS") && runtime_rumble_enabled();
     if (!enabled) {
-        fprintf(stderr, "[phone-haptics] off (TOTK_PHONE_HAPTICS=0 or TOTK_RUMBLE=0)\n");
+        fprintf(stderr, "[phone-haptics] off (phone setting or rumble disabled)\n");
         return;
     }
     const char *g = getenv("TOTK_PHONE_HAPTICS_GAIN");

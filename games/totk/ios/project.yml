@@ -12,7 +12,7 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - Settings.bundle   # the Settings app pane (game language picker); stored in NSUserDefaults, applied in main.m
+      - Settings.bundle   # the Settings app pane; options stored in NSUserDefaults
       - path: ../runtime
         excludes:
           - frontend.m

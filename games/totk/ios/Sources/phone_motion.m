@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "runtime.h"
+#include "phone_settings.h"
 
 #if TARGET_OS_IOS
 
@@ -148,10 +149,9 @@ static void orientation_changed(void) {
 void totk_phone_motion_start(void) {
     if (started) return;
     started = YES;
-    const char *e = getenv("TOTK_PHONE_GYRO");
-    enabled = !(e && !strcmp(e, "0")) && runtime_gyro_enabled();
+    enabled = totk_phone_setting_enabled(@"TOTK_PHONE_GYRO") && runtime_gyro_enabled();
     if (!enabled) {
-        fprintf(stderr, "[phone-gyro] off (TOTK_PHONE_GYRO=0 or TOTK_GYRO=0)\n");
+        fprintf(stderr, "[phone-gyro] off (phone setting or gyro disabled)\n");
         return;
     }
     queue = [[NSOperationQueue alloc] init];
