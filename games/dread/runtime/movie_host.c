@@ -74,6 +74,7 @@ typedef struct {
     Ready decoded[OUT_BUFS]; int ndecoded;   /* paced: decoded, not due yet */
     uint64_t t0; int64_t pts0;               /* paced: host time and presentation time of the first frame handed over */
     uint64_t frames, decode_ns, errors, dropped;
+    int start_pending;                   /* Start's first "input available", delivered at the next present */
     _Atomic uint64_t epoch;              /* bumped (under g_signal) by Stop, Reset, RegisterClientEvents and destruction */
     pthread_mutex_t mu;
 } Movie;
@@ -211,7 +212,10 @@ void movie_host_tick(void) {   /* lock order g_lock -> Movie.mu, as in destroy; 
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_MOVIES; i++) {
         Movie *m = g_movies[i]; if (!m) continue;
-        pthread_mutex_lock(&m->mu); if (m->started) release_due(m, &s, g_clock()); pthread_mutex_unlock(&m->mu);
+        pthread_mutex_lock(&m->mu);
+        if (m->started && m->start_pending) { m->start_pending = 0; note(m, &s, EV_INPUT); }
+        if (m->started) release_due(m, &s, g_clock());
+        pthread_mutex_unlock(&m->mu);
     }
     pthread_mutex_unlock(&g_lock);
     fire(&s);
@@ -261,7 +265,7 @@ static void release_codec(Movie *m) {
     for (int i = 0; i < IN_BUFS; i++) { free(m->in[i]); m->in[i] = NULL; }
     for (int i = 0; i < OUT_BUFS; i++) { free(m->out[i]); m->out[i] = NULL; }
     free(m->rgba); m->rgba = NULL;
-    m->configured = m->started = 0; m->nin_free = m->npending = m->nready = m->ndecoded = 0; m->t0 = 0;
+    m->configured = m->started = m->start_pending = 0; m->nin_free = m->npending = m->nready = m->ndecoded = 0; m->t0 = 0;
 }
 static void reset_queues(Movie *m) {
     m->nin_free = 0; for (int i = 0; i < IN_BUFS; i++) m->in_free[m->nin_free++] = i;
@@ -351,7 +355,10 @@ static int h_start(void *obj) {
     Signals s = {0};
     pthread_mutex_lock(&m->mu);
     if (!m->configured) { pthread_mutex_unlock(&m->mu); return ST_NOT_CONFIGURED; }
-    m->started = 1; note(m, &s, EV_INPUT);
+    /* The library signals the first "input available" later, from its own thread. Metroid Dread links the new decoder's
+       wait holders on another thread after Start returns; a signal from inside Start reached a holder not linked yet
+       (nn::os::SignalEvent, null multi-wait). It is delivered at the next present (movie_host_tick) instead. */
+    m->started = 1; m->start_pending = 1;
     pthread_mutex_unlock(&m->mu); fire(&s);
     return ST_OK;
 }
