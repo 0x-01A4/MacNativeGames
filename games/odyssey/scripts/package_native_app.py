@@ -12,6 +12,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 
 GAME = Path(__file__).resolve().parents[1]
 BUILD = Path(os.environ.get("ODYSSEY_WORK", GAME / "Odyssey_build")).resolve()   # ODYSSEY_WORK: another build folder (scripts/build_odyssey.py)
@@ -77,6 +78,16 @@ def main():
         clone(BUILD / "extracted/local/romfs" / name, game / "romfs" / name)
     for font in sorted((BUILD / "extracted/firmware/shared-fonts").glob("*.bfttf")):
         clone(font, game / "fonts" / font.name)
+    # Key 7's render sizes (odyssey_gfx.h): the game's quality table for each, made from this dump's RomFS
+    # (scripts/make_resolution_overlay.py); the launcher passes the chosen one as TOTK_ROMFS_PATCHES with ODYSSEY_RENDER_RES.
+    for size in ("1920x1080", "2240x1260"):
+        out = BUILD / "romfs-res" / size
+        if not (out / "manifest.tsv").is_file():
+            subprocess.run([sys.executable, str(GAME / "scripts/make_resolution_overlay.py"), size, "--work", str(BUILD), "--output", str(out)],
+                           check=True, stdout=subprocess.DEVNULL)
+        for item in sorted(out.rglob("*")):
+            if item.is_file():
+                clone(item, game / "romfs-res" / size / item.relative_to(out))
     slot = BUILD / "analysis/game-slot"
     if slot.is_dir():
         (game / "slot-dir.txt").write_text(str(slot) + "\n")

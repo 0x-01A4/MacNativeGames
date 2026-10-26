@@ -119,6 +119,22 @@ int main(void) {
        "Odyssey Data/windowed" exists. */
     char windowed[PATH_MAX]; join(windowed, data, "windowed");
     if (stat(windowed, &st)) setenv("BY3_FULLSCREEN", "1", 0);
+    /* Graphics settings, keys 3-7 (third_party/d2r_gfx/gfx/nvn/odyssey_gfx.h), kept in "Odyssey Data/graphics.txt". The
+       render size (key 7) applies here, at launch: the code patch (ODYSSEY_RENDER_RES) together with that size's quality
+       table in the bundle (romfs-res/<w>x<h>, scripts/package_native_app.py); a size without its table stays 1600x900. */
+    char gfx_path[PATH_MAX]; join(gfx_path, data, "graphics.txt"); setenv("ODYSSEY_GFX_SETTINGS", gfx_path, 0);
+    FILE *gf = fopen(gfx_path, "r");
+    if (gf) {
+        char line[128], res_dir[PATH_MAX], manifest[PATH_MAX];
+        while (fgets(line, sizeof line, gf)) {
+            unsigned w, h;
+            if (sscanf(line, "resolution=%ux%u", &w, &h) != 2 || (w == 1600 && h == 900)) continue;
+            snprintf(line, sizeof line, "romfs-res/%ux%u", w, h); join(res_dir, game, line); join(manifest, res_dir, "manifest.tsv");
+            if (stat(manifest, &st)) continue;
+            snprintf(line, sizeof line, "%ux%u", w, h); setenv("ODYSSEY_RENDER_RES", line, 0); setenv("TOTK_ROMFS_PATCHES", res_dir, 0);
+        }
+        fclose(gf);
+    }
     for (const char *const *v = (const char *const[]){"TOTK_ASSUME_FOCUS", "TOTK_VERIFY_STARTUP", "TOTK_HEADLESS", NULL}; *v; v++) unsetenv(*v);
     if (chdir(data)) return 1;
     char stamp[32]; time_t launched = time(NULL); strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&launched));

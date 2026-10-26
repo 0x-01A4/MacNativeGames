@@ -26,6 +26,7 @@
 #include "odyssey_mfx.h"
 #include "totk_mfx_up.h"
 #include "totk_sysload.h"
+#include "odyssey_gfx.h"   // Odyssey graphics settings, keys 3-7 (the present part: odyssey_gfx_present.inc)
 /* TOTK_MFX_UPSCALE: for the one compose draw that samples the smaller scene, the scene texture and its MetalFX upscale
    (mfxup_draw before the draw, encode_args swaps the binding). */
 static __strong id<MTLTexture> g_mfxup_src, g_mfxup_out; static __unsafe_unretained id g_mfxup_sh;
@@ -580,10 +581,12 @@ void mtl_init(void) {
     pad.maxTextureBindCount = 1; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
     g_bloomq_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_bloomq_args) MDIE("建立泛光 1/4 argument table 失败：%s", ate.localizedDescription.UTF8String);
+    MTL4ArgumentTableDescriptor *ppad = [MTL4ArgumentTableDescriptor new];   // the present
+    ppad.maxTextureBindCount = 1; ppad.maxSamplerStateBindCount = 1; ppad.maxBufferBindCount = 1;
     for (int i = 0; i < 3; i++) {
-        g_present_args[i] = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
+        g_present_args[i] = [g_dev newArgumentTableWithDescriptor:ppad error:&ate];
         if (!g_present_args[i]) MDIE("建立出图 argument table[%d] 失败：%s", i, ate.localizedDescription.UTF8String);
-        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
+        g_present_uv[i] = [g_dev newBufferWithLength:288 options:MTLResourceStorageModeShared];   // the final draw's constants at 0, the graphics passes' at 96 and 192 (odyssey_gfx_present.inc)
         if (!g_present_uv[i]) MDIE("建立出图 UV 缓冲[%d] 失败", i);
         res_add(g_present_uv[i]);
         if (g_present_probe) {
@@ -2476,6 +2479,7 @@ void dm_gfx_set_flag(const char *name, int v) {
     if (!strcmp(name, "render_stream")) { atomic_store(&g_rs_on, v != 0); MLOG("[flag] render_stream = %d (next render pass)", v != 0); return; }
     if (!strcmp(name, "cube_merge")) { atomic_store(&g_cg_on, v != 0); MLOG("[flag] cube_merge = %d", v != 0); return; }
     if (!strcmp(name, "skip_invisible")) { skv_set(v); return; }
+    if (!strncmp(name, "gfx_", 4)) { for (int w = 0; w < GX_N; w++) if (!strcmp(name + 4, gx_key[w])) { dm_gfx_opt_set(w, v); return; } }   // flag gfx_aa / gfx_cas / gfx_upscaler / gfx_textures / gfx_resolution <value>, -1 cycles (odyssey_gfx.h)
     if (!strcmp(name, "mfx_upscale")) { mfxup_set(v < 0 ? !mfxup_enabled() : v); return; }   // TOTK_MFX_UPSCALE at run time (manual key 3 picture mode)
     if (!strcmp(name, "mfx_interp")) { mfx_set(v); return; }
     if (!strcmp(name, "draw_log")) { extern _Atomic long g_draw_log; atomic_store(&g_draw_log, v); MLOG("[flag] draw_log: every draw and dispatch of the next %d frames", v); return; }
@@ -5982,6 +5986,10 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     }
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
     d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
+    {   // key 6 (odyssey_gfx.h): at least this much anisotropic filtering on the game's mipmapped, linearly filtered samplers
+        NSUInteger ga = (NSUInteger)gx_aniso();
+        if (ga > d.maxAnisotropy && d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.minFilter == MTLSamplerMinMagFilterLinear && !p.cmp_mode) d.maxAnisotropy = ga;
+    }
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     if (p.reduction > 2) die("sampler reduction filter %u unsupported", p.reduction);
@@ -5991,7 +5999,23 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     if (s) { g_sview[sid] = (void *)CFBridgingRetain(s); g_srid[sid] = s.gpuResourceID._impl; }
     return s;
 }
+/* Key 6: the cached samplers are rebuilt with the new filtering. The old ones stay alive until the flush after next (a
+   frame in flight may still name them); the caller holds g_rmu, the registry lock (the same lock, re-entered). */
+static void samp_flush_all(void) {
+    static void **old[2]; static int nold[2], gen;
+    registry_lock();
+    if (atomic_exchange(&g_samp_flush, 0)) {
+        int k = gen++ & 1;
+        for (int i = 0; i < nold[k]; i++) if (old[k][i]) CFRelease(old[k][i]);
+        free(old[k]); old[k] = calloc((size_t)g_nsreg + 1, sizeof **old); nold[k] = 0;
+        for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) { if (old[k]) old[k][nold[k]++] = g_sview[i]; else CFRelease(g_sview[i]); g_sview[i] = NULL; g_srid[i] = 0; }
+        g_reg_gen++;
+        MLOG("[gfx] texture filtering: %d samplers rebuilt at %dx", nold[k], gx_aniso());
+    }
+    registry_unlock();
+}
 static inline __attribute__((always_inline)) void *samp_fast(int sid) {
+    if (__builtin_expect(atomic_load_explicit(&g_samp_flush, memory_order_relaxed), 0)) samp_flush_all();
     if (sid > 0 && sid < g_nsreg && g_sreg_ok[sid] && g_sview[sid]) return g_sview[sid];
     return (__bridge void *)samp_by_id(sid);
 }
@@ -12391,6 +12415,7 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTex
     [en endEncoding];
     return 1;
 }
+#include "odyssey_gfx_present.inc"
 static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4], int uv_i) {
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
     if (crop && (crop[2] || crop[3])) {
@@ -12407,9 +12432,11 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
     if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01 || present_stretch()) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
-    id<MTLTexture> up = output_upscale(cb, src, cx, cy, cw, ch, vp, uv_i);   // TOTK 2K output: MetalFX to the viewport, drawn 1:1 below
-    id<MTLTexture> pic = up ? up : src;
-    if (up) { cx = 0; cy = 0; cw = up.width; ch = up.height; }
+    gx_stamp_begin(cb, uv_i);
+    NSUInteger r[4] = {cx, cy, cw, ch}; int final_fn = -1;
+    id<MTLTexture> pic = gx_picture(cb, src, r, vp, dst.pixelFormat, uv_i, &final_fn);   // keys 3-5: anti-aliasing, the upscale, CAS
+    cx = r[0]; cy = r[1]; cw = r[2]; ch = r[3];
+    id<MTLRenderPipelineState> final_pso = final_fn >= 0 ? gx_pso(final_fn, dst.pixelFormat) : nil;
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
     rp.colorAttachments[0].texture = dst;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;
@@ -12424,10 +12451,12 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     float *uv = g_present_uv[uv_i].contents;
     uv[0] = (float)cx / pic.width; uv[1] = (float)cy / pic.height; uv[2] = (float)cw / pic.width; uv[3] = (float)ch / pic.height;
     uv[4] = (cx + 0.5f) / pic.width; uv[5] = (cy + 0.5f) / pic.height; uv[6] = (cx + cw - 0.5f) / pic.width; uv[7] = (cy + ch - 0.5f) / pic.height;
+    if (final_pso) gx_consts(uv_i, 0, pic, r, (NSUInteger)vp.width, (NSUInteger)vp.height);   // the same Crop first, then the graphics constants
     [args setAddress:g_present_uv[uv_i].gpuAddress atIndex:0];
     [en setArgumentTable:args atStages:MTLRenderStageFragment];
-    [en setViewport:vp]; [en setRenderPipelineState:g_blit_pso];
+    [en setViewport:vp]; [en setRenderPipelineState:final_pso ? final_pso : g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    if (final_pso) [en setRenderPipelineState:g_blit_pso];   // the overlays below without the filter
     MTLViewport ovp; float fuv[8];
     if (fps_overlay_prepare(uv_i, vp, &ovp, fuv)) {   // argument-table bindings are captured per draw, so rebinding here leaves the game picture's draw intact
         memcpy(g_fps_uv[uv_i].contents, fuv, sizeof fuv);
@@ -12451,6 +12480,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
         [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     }
     m4_end(en);
+    gx_stamp_end(cb, uv_i);
     return 1;
 }
 static double g_link_it_tin;   // 节拍回调正在上屏的那一帧的入队时刻（只在节拍线程读写） | Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
@@ -12888,7 +12918,8 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     { int timed = alloc_i >= 0 && alloc_i < 3 && g_outup_timed[alloc_i], slot = alloc_i;
       [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
           sysload_note_gpu(f.GPUStartTime, f.GPUEndTime);   // the load line's game GPU share includes the present (and its MetalFX upscale)
-          if (timed && !f.error) outup_note_gpu(slot); }]; }
+          if (timed && !f.error) outup_note_gpu(slot);
+          if (!f.error) gx_note_gpu(slot); }]; }
     if (src_buf) { id<MTLBuffer> buf = src_buf; size_t w = src_w, h = src_h; NSString *path = grab_src;
         [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
             if (!f.error) { CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
