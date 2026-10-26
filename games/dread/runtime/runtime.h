@@ -53,6 +53,9 @@ uint8_t *runtime_module_base(const char *name);   /* runtime/loader.c: "main", "
 uint64_t runtime_module_permission(uint64_t address,uint64_t size,unsigned permission);
 uint64_t runtime_module_lock_permission(uint64_t address,uint64_t size,unsigned mask,unsigned attribute);
 int runtime_module_query(uint64_t address,uint64_t *base,uint64_t *size,unsigned *state,unsigned *permission,unsigned *attribute);
+/* A range wholly inside one module's data or .bss whose 4 KiB pages are all read-write and not locked (memory state
+   CodeData, which svcMapMemory accepts as a stack source). */
+int runtime_module_data_rw(uint64_t address,uint64_t size);
 void runtime_oe_push_message(uint32_t message);
 void hle_bind_system_event(void *event, int autoclear);
 uint64_t runtime_svc(unsigned num, uint64_t *regs, const char *module, uint64_t offset);

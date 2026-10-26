@@ -127,7 +127,7 @@ static void memory_init(void) {
  * The leading/trailing partial source pages cannot be isolated on this host.
  */
 static pthread_mutex_t memory_lock=PTHREAD_MUTEX_INITIALIZER;
-typedef struct{uint64_t dst,src,size;} StackMap;static StackMap stack_maps[4096];static unsigned nstack_maps;
+typedef struct{uint64_t dst,src,size;unsigned src_state;} StackMap;   /* src_state: 5 Normal (heap, alias) or 4 CodeData (module data) */static StackMap stack_maps[4096];static unsigned nstack_maps;
 static int overlaps(uint64_t a,uint64_t n,uint64_t b,uint64_t m){return a<b+m&&b<a+n;}
 static uint64_t stack_move(int unmap,uint64_t dst,uint64_t src,uint64_t size){
  if(!size||((dst|src|size)&4095))return 0xcc01;
@@ -135,7 +135,9 @@ static uint64_t stack_move(int unmap,uint64_t dst,uint64_t src,uint64_t size){
  int inHeap=src>=(uintptr_t)heap&&size<=heap_size&&src-(uintptr_t)heap<=heap_size-size;
  uint64_t aliasStart=ALIAS_START;
  int inAlias=src>=aliasStart&&size<=ALIAS_SIZE&&src-aliasStart<=ALIAS_SIZE-size;
- if(!inHeap&&!inAlias)return 0xdc01;
+ /* A module's data or .bss is a valid source too (CodeData; Metroid Dread keeps thread stacks in main's .bss). */
+ int inModule=!inHeap&&!inAlias&&runtime_module_data_rw(src,size);
+ if(!inHeap&&!inAlias&&!inModule)return 0xdc01;
  pthread_mutex_lock(&memory_lock);
  if(inAlias){unsigned first=(unsigned)((src-aliasStart)/4096);for(uint64_t i=0;i<size/4096;i++)if(!alias_pages[first+i]){pthread_mutex_unlock(&memory_lock);return 0xdc01;}}
 
@@ -153,7 +155,7 @@ static uint64_t stack_move(int unmap,uint64_t dst,uint64_t src,uint64_t size){
   for(unsigned i=0;i<nstack_maps;i++)if(overlaps(dst,size,stack_maps[i].dst,stack_maps[i].size)||overlaps(src,size,stack_maps[i].src,stack_maps[i].size)){pthread_mutex_unlock(&memory_lock);return 0xdc01;}
   if(mprotect((void *)lo,hi-lo,PROT_READ|PROT_WRITE))runtime_fail("commit moved stack");memcpy((void *)dst,(const void *)src,size);
   if(shi>slo&&mprotect((void *)slo,shi-slo,PROT_NONE))runtime_fail("protect moved stack source");
-  stack_maps[nstack_maps++]=(StackMap){dst,src,size};
+  stack_maps[nstack_maps++]=(StackMap){dst,src,size,inModule?4u:5u};
  }
  pthread_mutex_unlock(&memory_lock);return 0;
 }
@@ -341,7 +343,8 @@ uint64_t runtime_svc(unsigned num,uint64_t *r,const char *module,uint64_t offset
  case 0x2c:case 0x2d:{uint64_t a=r[0],n=r[1];r[0]=alias_map(num==0x2d,a,n);
   if(getenv("TOTK_MEM_LOG"))fprintf(stderr,"[totk-mem] %sMapPhysicalMemory %#llx+%#llx -> %#llx alias=%#llx remaining=%#llx\n",num==0x2d?"Un":"",(unsigned long long)a,(unsigned long long)n,(unsigned long long)r[0],(unsigned long long)alias_bytes,(unsigned long long)(APP_POOL-runtime_image_bytes()-heap_size-alias_bytes));
   if(r[0])fprintf(stderr,"[totk] %sMapPhysicalMemory %#llx+%#llx failed %#llx (alias %#llx used, heap %#llx)\n",num==0x2d?"Un":"",(unsigned long long)a,(unsigned long long)n,(unsigned long long)r[0],(unsigned long long)alias_bytes,(unsigned long long)heap_size);return r[0];}
- case 0x04:case 0x05:r[0]=stack_move(num==5,r[0],r[1],r[2]);return r[0];
+ case 0x04:case 0x05:{uint64_t dst=r[0],src=r[1],n=r[2];r[0]=stack_move(num==5,dst,src,n);
+  if(getenv("TOTK_MEM_LOG"))fprintf(stderr,"[totk-mem] %sMapMemory %#llx <- %#llx +%#llx -> %#llx\n",num==5?"Un":"",(unsigned long long)dst,(unsigned long long)src,(unsigned long long)n,(unsigned long long)r[0]);return r[0];}
  case 0x06: {
   uint64_t addr=r[2],base=addr&~0xfffULL,size=0x1000;unsigned state=0,perm=0,attr=0;
   uintptr_t top=(uintptr_t)pthread_get_stackaddr_np(pthread_self());size_t stack=pthread_get_stacksize_np(pthread_self());
@@ -361,9 +364,9 @@ uint64_t runtime_svc(unsigned num,uint64_t *r,const char *module,uint64_t offset
   for(unsigned i=0;i<nstack_maps;i++){
    StackMap *m=&stack_maps[i];uint64_t end=m->dst+m->size,send=m->src+m->size;
    if(addr>=m->dst&&addr<end){base=m->dst;size=m->size;state=0xb;perm=3;break;}
-   if(addr>=m->src&&addr<send){base=m->src;size=m->size;state=5;perm=0;attr=4;break;}
+   if(addr>=m->src&&addr<send){base=m->src;size=m->size;state=m->src_state;perm=0;attr=4;break;}
    if(state==0){uint64_t oldEnd=base+size;if(end<=addr&&end>base)base=end;if(m->dst>addr&&m->dst<oldEnd)oldEnd=m->dst;size=oldEnd-base;}
-   else if(state==5){uint64_t oldEnd=base+size;if(send<=addr&&send>base)base=send;if(m->src>addr&&m->src<oldEnd)oldEnd=m->src;size=oldEnd-base;}
+   else if(state==m->src_state){uint64_t oldEnd=base+size;if(send<=addr&&send>base)base=send;if(m->src>addr&&m->src<oldEnd)oldEnd=m->src;size=oldEnd-base;}
   }pthread_mutex_unlock(&memory_lock);
   struct {uint64_t base,size;uint32_t state,attr,perm,ipc,device,pad;} info={base,size,state,attr,perm,0,0,0};
   if(r[0])memcpy((void *)(uintptr_t)r[0],&info,sizeof(info));r[0]=0;r[1]=0;return 0;

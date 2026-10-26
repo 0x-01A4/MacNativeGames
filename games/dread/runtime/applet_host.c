@@ -29,6 +29,9 @@ static int64_t total_active_time(void) { return (int64_t)(runtime_now_ns() - sta
 static void inactivity_extended(unsigned char on) { (void)on; }
 /* No system startup logo is drawn on the host, so there is nothing to dismiss. */
 static void finish_startup_logo(void) { fprintf(stderr, "[totk] game finished startup logo\n"); }
+/* The host never sends an exit request (closing the window ends the process), so a section that holds exit requests
+   back changes nothing (Metroid Dread enters one at start). */
+static void exit_request_section(void) {}
 /* The single native executable was launched directly; it has no predecessor
  * in an applet ExecuteProgram chain. -1 keeps the game's normal user-open path. */
 static int previous_program_index(void) { return -1; }
@@ -82,6 +85,8 @@ void *runtime_applet_override(const char *name) {
         {"_ZN2nn2oe44SetUserInactivityDetectionTimeExtendedUnsafeEb", inactivity_extended},
         {"_ZN2nn2oe17FinishStartupLogoEv", finish_startup_logo}, {"_ZN2nn2oe25TryPopNotificationMessageEPj", try_pop},
         {"_ZN2nn2oe22PopNotificationMessageEv", pop},
+        {"_ZN2nn2oe31EnterExitRequestHandlingSectionEv", exit_request_section},
+        {"_ZN2nn2oe31LeaveExitRequestHandlingSectionEv", exit_request_section},
         {"_ZN2nn5prepo10PlayReport4SaveEv", report_save}, {"_ZN2nn5prepo10PlayReport4SaveERKNS_7account3UidE", report_save_uid},
         {"_ZN2nn5prepo28RequestImmediateTransmissionEv", immediate_transmission},
         {"_ZN2nn5prepo27AddInternetConnectionStatusEPNS0_10PlayReportEPKcS4_S4_", connection_status},
@@ -96,6 +101,19 @@ void *runtime_applet_override(const char *name) {
         {"_ZN2nn3nfp14StartDetectionERKNS0_12DeviceHandleE", nfp_no_device}, {"_ZN2nn3nfp13StopDetectionERKNS0_12DeviceHandleE", nfp_no_device},
         {"_ZN2nn3nfp10GetTagInfoEPNS0_7TagInfoERKNS0_12DeviceHandleE", nfp_no_device},
         {"_ZN2nn3nfp12GetModelInfoEPNS0_9ModelInfoERKNS0_12DeviceHandleE", nfp_no_device},
+        /* Metroid Dread: the rest of its nfp calls (data, amiibo settings applets) also need a device. */
+        {"_ZN2nn3nfp13GetCommonInfoEPNS0_10CommonInfoERKNS0_12DeviceHandleE", nfp_no_device},
+        {"_ZN2nn3nfp13StartRestorerEPNS0_12DeviceHandleERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", nfp_no_device},
+        {"_ZN2nn3nfp15GetRegisterInfoEPNS0_12RegisterInfoERKNS0_12DeviceHandleE", nfp_no_device},
+        {"_ZN2nn3nfp18GetApplicationAreaEPvPmRKNS0_12DeviceHandleEm", nfp_no_device},
+        {"_ZN2nn3nfp18SetApplicationAreaERKNS0_12DeviceHandleEPKvm", nfp_no_device},
+        {"_ZN2nn3nfp19OpenApplicationAreaERKNS0_12DeviceHandleEj", nfp_no_device},
+        {"_ZN2nn3nfp19StartGameDataEraserEPNS0_12DeviceHandleERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", nfp_no_device},
+        {"_ZN2nn3nfp21CreateApplicationAreaERKNS0_12DeviceHandleERKNS0_25ApplicationAreaCreateInfoE", nfp_no_device},
+        {"_ZN2nn3nfp29StartNicknameAndOwnerSettingsEPNS0_12DeviceHandleEPbPNS0_12RegisterInfoERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE", nfp_no_device},
+        {"_ZN2nn3nfp5FlushERKNS0_12DeviceHandleE", nfp_no_device},
+        {"_ZN2nn3nfp7RestoreERKNS0_12DeviceHandleE", nfp_no_device},
+        {"_ZN2nn3nfp7UnmountERKNS0_12DeviceHandleE", nfp_no_device},
         {"_ZN2nn3err9ShowErrorENS_6ResultE", show_error},
     };
     for (size_t i = 0; i < sizeof map / sizeof *map; i++) if (!strcmp(name, map[i].name)) return map[i].fn;

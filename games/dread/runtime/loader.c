@@ -104,6 +104,17 @@ uint64_t runtime_module_lock_permission(uint64_t address,uint64_t size,unsigned 
  }
  return 0xd401;
 }
+int runtime_module_data_rw(uint64_t address,uint64_t size){
+ for(unsigned i=0;i<NM;i++){
+  Module *m=&modules[i];uint64_t start=(uintptr_t)m->base;
+  if(address<start||address-start<m->data_off||size>m->key_off||address-start>m->key_off-size)continue;
+  uint64_t off=address-start;int ok=1;
+  pthread_mutex_lock(&module_permission_lock);
+  for(uint64_t p=off&~4095ULL;p<off+size;p+=4096)if(module_page_permission(i,p)!=3)ok=0;
+  pthread_mutex_unlock(&module_permission_lock);return ok;
+ }
+ return 0;
+}
 int runtime_module_query(uint64_t address,uint64_t *base,uint64_t *size,unsigned *state,unsigned *permission,unsigned *attribute){
  for(unsigned i=0;i<NM;i++){
   Module *m=&modules[i];uint64_t start=(uintptr_t)m->base;

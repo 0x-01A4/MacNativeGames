@@ -284,6 +284,7 @@ static unsigned entry_type(int *out, const char *path) {
 typedef struct { char name[769]; uint8_t pad0[3]; int8_t type; uint8_t pad1[3]; int64_t size; } DirectoryEntry;
 _Static_assert(sizeof(DirectoryEntry) == 0x310, "nn::fs::DirectoryEntry");
 static unsigned create_directory(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; return mkdir(p, 0700) ? errno_result() : 0; }
+static unsigned delete_directory(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; return rmdir(p) ? errno_result() : 0; }   /* empty folders only, as Horizon */
 static unsigned delete_recursive(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; struct stat st; if (stat(p, &st)) return R_PATH_NOT_FOUND; return remove_tree(p) ? R_INVALID_ARGUMENT : 0; }
 struct RomEntry { char name[769]; int is_dir; int64_t size; };
 typedef struct { struct RomEntry *list; int64_t n, cap; } RomList;
@@ -340,6 +341,9 @@ static void close_directory(uint64_t h) {
 }
 /* The fs priority only orders I/O inside the system fs process; host I/O is unordered. */
 static void set_priority(int priority) { (void)priority; }
+/* SetAllocator (Metroid Dread calls it first thing): the allocator of the SDK's own fs library. The host answers fs
+   itself and never allocates guest memory for it, so there is nothing to keep. */
+static void set_allocator(void *(*alloc)(uint64_t), void (*release)(void *, uint64_t)) { (void)alloc; (void)release; }
 
 /* make probe-save: the "save in progress" state the window close waits on, through the fs entry points the game uses
    (a fresh profile in build/probe-save-profile; no game). */
@@ -383,6 +387,7 @@ void *runtime_fs_host_override(const char *name) {
         {"_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", set_file_size}, {"_ZN2nn2fs9FlushFileENS0_10FileHandleE", flush_file},
         {"_ZN2nn2fs10CreateFileEPKcl", create_file}, {"_ZN2nn2fs10DeleteFileEPKc", delete_file}, {"_ZN2nn2fs10RenameFileEPKcS2_", rename_file},
         {"_ZN2nn2fs15CreateDirectoryEPKc", create_directory}, {"_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", delete_recursive},
+        {"_ZN2nn2fs15DeleteDirectoryEPKc", delete_directory}, {"_ZN2nn2fs12SetAllocatorEPFPvmEPFvS1_mE", set_allocator},   /* Metroid Dread */
         {"_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", open_directory},
         {"_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", read_directory},
         {"_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", close_directory},
