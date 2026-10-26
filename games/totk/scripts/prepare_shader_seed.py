@@ -30,7 +30,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shader_list import ShaderList   # noqa: E402
 
-CHAIN = 'totk-native-v7-unverified'
+CHAIN = 'totk-native-v8-unverified'
 MIN_SHADERS = 8000
 ZSTD = b'\x28\xb5\x2f\xfd'
 YAZ0 = b'Yaz0'
@@ -43,9 +43,9 @@ LIST = Path(__file__).resolve().parents[1]/'assets/shader_list.tsv'
 GAMES = {
     'totk': dict(folders=None, min_shaders=MIN_SHADERS, list=LIST, all_default=True),
     'botw': dict(folders=('Pack/', 'Effect/', 'Event/', 'System/'), min_shaders=2000,
-                 list=Path(__file__).resolve().parents[2]/'botw/assets/shader_list.tsv', all_default=False),
+                 list=Path(__file__).resolve().parents[2]/'botw/assets/shader_list.tsv', all_default=True),
 }
-DEFAULTS = dict(tex='2d', img={}, attr='float', fout='float')
+DEFAULTS = dict(tex='2d', img={})   # no vertex inputs or colour outputs: the pipeline gives each its bound format's type (nvn_mtl.m vs_vin, fn_retype_outputs)
 
 
 def suffix(answers):
@@ -57,12 +57,11 @@ SUFFIX = suffix(ANSWERS)
 
 def deps_match(deps, answers):
     """Whether a variant translated with deps serves these answers: totk_shader_rt.m deps_match, which the runtime picks
-    variants with. "*" / "*_depth": any texture kind, without / with a depth format; an unanswered vertex input is unbound."""
+    variants with. "*" / "*_depth": any texture kind, without / with a depth format. Vertex input and colour output types
+    are not compared: the pipeline redeclares them with their bound formats' types (nvn_mtl.m vs_vin, fn_retype_outputs)."""
     for kind, default in DEFAULTS.items():
         have = answers.get(kind, {})
         for slot, want in deps.get(kind, {}).items():
-            if slot not in have and kind == 'attr':
-                continue
             got = have.get(slot, default)
             if want in ('*', '*_depth'):
                 if not isinstance(got, str) or got.endswith('_depth') != (want == '*_depth'):
@@ -182,14 +181,17 @@ TRANSLATIONS_SCHEMA = 1
 
 def translation_request(variant, stage, control, code, answers, code_path):
     """What the translator is asked for a job (the guest code written to code_path). A cached translation depends on this
-    function's source (TranslationCache identity), not on the rest of this script: the variant name already names the
-    shader's control and code and the bind state, and a change elsewhere here re-translated all 31,000 jobs (5 min)."""
+    function's source and early_fragment_tests's (TranslationCache identity), not on the rest of this script: the variant
+    name already names the shader's control and code and the bind state, and a change elsewhere here re-translated all
+    31,000 jobs (5 min)."""
     c1, length = struct.unpack_from('<II', control, 0x700)
     code_path.write_bytes(code[0 if stage == 'cs' else 0x30:length])
     request = dict(variant=variant, stage=stage, code=str(code_path.resolve()), c1=code[c1:length].hex(),
                    depth_minus_w=True, **answers)
     if stage == 'cs':
         request['local'] = list(struct.unpack_from('<III', control, 0x748))
+    if early_fragment_tests(stage, control):
+        request['early_fragment_tests'] = True
     return request
 
 
@@ -327,6 +329,14 @@ def control_key_len(control):
     shader's), never more than 0x880."""
     size = struct.unpack_from('<I', control, 0x20)[0] if len(control) >= 0x24 else 0
     return size if 0x7cc <= size < 0x880 else 0x880
+
+
+def early_fragment_tests(stage, control):
+    """Whether a fragment shader asks for early fragment tests: control byte +0x718 of the 0x880-byte sections, which the
+    NVN driver reads as a fragment flag (the Switch then tests depth before the shader runs; the translator declares
+    [[early_fragment_tests]]). Breath of the Wild's shorter sections (control_key_len below 0x880) are not read. Same
+    rule as totk_shader_rt.m variant_request."""
+    return stage == 'ps' and control_key_len(control) == 0x880 and len(control) > 0x718 and bool(control[0x718] & 1)
 
 
 def bound_control(control, game='totk', embedded=True):
@@ -710,7 +720,8 @@ def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, m
     _, shaders, startup, archives = cached_inventory(romfs, modules, game, output.with_name(output.name+'.inventory'), scanned)
     translations = dict(schema=TRANSLATIONS_SCHEMA, chain=CHAIN, translator_sha256=identity['translator_sha256'],
                         spirv_cross_sha256=identity['spirv_cross_sha256'],
-                        request_sha256=digest(inspect.getsource(translation_request).encode()))
+                        request_sha256=digest((inspect.getsource(translation_request) +
+                                               inspect.getsource(early_fragment_tests)).encode()))
     folder, common = translations_folder(output.with_name(output.name+'.translations'), translations)
     cache = TranslationCache(folder, translations, shared=common)
     extra = located({where for where in shared.locators if where[0] not in shaders}, source_reader(romfs, modules, game), game)

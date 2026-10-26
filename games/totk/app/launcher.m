@@ -1,7 +1,7 @@
 // The launcher inside the packaged app (build_app.py compiles it as Contents/MacOS/TOTK).
 // The game itself is Contents/Resources/totk/build/totk-native; everything it writes goes to the player's own folders:
 //   ~/Library/Application Support/MacNativeGames/TOTK/   profile (account, saves), shader cache, game slot, RomFS proof (BotW/ for Breath of the Wild)
-//   ~/Library/Logs/MacNativeGames/totk.log             this run (totk.previous.log: the one before; botw.log for Breath of the Wild)
+//   ~/Library/Logs/MacNativeGames/totk.log             this run, only with the debug log on (totk.previous.log: the one before; botw.log for Breath of the Wild)
 // If the game is already running, the launcher only brings it to the front.
 #import <AppKit/AppKit.h>
 #include <errno.h>
@@ -18,6 +18,7 @@
 #include "controller_map.h"
 #include "include/totk_ui_lang.h"
 #include "totk_shader_contrib.h"   // the shared shader list contribution and its reminder
+#include "contrib_submit.h"        // its "Submit automatically" (gh), shared with the settings panel
 
 static void show_error(NSString *detail) {
     NSAlert *alert = [NSAlert new];
@@ -63,56 +64,6 @@ static pid_t running_game(NSString *slot) {
     return pid > 0 && pid_start(pid) == (uint64_t)[h[@"game_start"] longLongValue] ? pid : 0;
 }
 
-/* A tool's standard output and exit status (input, if any, goes to its standard input); nil if it did not start. */
-static NSString *run_tool(NSString *exe, NSArray<NSString *> *args, NSString *input, int *status) {
-    NSTask *task = [NSTask new];
-    task.executableURL = [NSURL fileURLWithPath:exe]; task.arguments = args;
-    NSPipe *out = [NSPipe pipe], *in = [NSPipe pipe];
-    task.standardOutput = out; task.standardInput = in; task.standardError = [NSFileHandle fileHandleWithNullDevice];
-    *status = -1;
-    if (![task launchAndReturnError:nil]) return nil;
-    if (input) [in.fileHandleForWriting writeData:[input dataUsingEncoding:NSUTF8StringEncoding]];
-    [in.fileHandleForWriting closeFile];
-    NSData *data = [out.fileHandleForReading readDataToEndOfFile];
-    [task waitUntilExit]; *status = task.terminationStatus;
-    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-}
-
-/* The GitHub CLI when it is installed and signed in, else nil (an app started from Finder has no Homebrew in its PATH). */
-static NSString *gh_path(void) {
-    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    for (NSString *dir in [NSProcessInfo.processInfo.environment[@"PATH"] componentsSeparatedByString:@":"])
-        if (dir.length) [candidates addObject:[dir stringByAppendingPathComponent:@"gh"]];
-    [candidates addObjectsFromArray:@[@"/opt/homebrew/bin/gh", @"/usr/local/bin/gh"]];
-    for (NSString *exe in candidates) {
-        if (![NSFileManager.defaultManager isExecutableFileAtPath:exe]) continue;
-        int status; run_tool(exe, @[@"auth", @"status"], nil, &status);
-        return status == 0 ? exe : nil;
-    }
-    return nil;
-}
-
-/* "Submit automatically": a secret gist with the file, then an issue in the shader-list form's layout linking its raw
-   file (scripts/collect_shader_issues.py finds it by its title; GitHub drops labels set by people without write access).
-   The issue's link, or nil. */
-static NSString *contrib_submit(NSString *gh, NSString *path, NSUInteger rows) {
-    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (!text) return nil;
-    int status;
-    NSString *gist = run_tool(gh, @[@"gist", @"create", @"--filename", @"shader-list-contribution.txt", @"--desc", @"MacNativeGames shader list contribution", @"-"], text, &status);
-    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"https://gist\\.github\\.com/([\\w-]+)/([0-9a-f]+)" options:0 error:nil];
-    NSTextCheckingResult *m = status == 0 && gist ? [re firstMatchInString:gist options:0 range:NSMakeRange(0, gist.length)] : nil;
-    if (!m) return nil;
-    NSString *link = [NSString stringWithFormat:@"https://gist.githubusercontent.com/%@/%@/raw/shader-list-contribution.txt",
-                      [gist substringWithRange:[m rangeAtIndex:1]], [gist substringWithRange:[m rangeAtIndex:2]]];
-    NSString *body = [NSString stringWithFormat:@"### Game version / 游戏版本\n\n%s\n\n### Device / 设备\n\nMac\n\n### shader-list-contribution.txt\n\n%@\n\n"
-                      "### Where you played (optional) / 玩了哪些地方（可选）\n\n_No response_\n", TOTK_GAME_VERSION, link];
-    NSString *title = [NSString stringWithFormat:@GAME_CONTRIB_TITLE " %lu shaders from Mac (%@ %s)", (unsigned long)rows, @GAME_FOLDER, TOTK_GAME_VERSION];
-    NSString *issue = run_tool(gh, @[@"issue", @"create", @"--repo", @TOTK_CONTRIB_REPO, @"--title", title, @"--body", body], nil, &status);
-    NSRange r = status == 0 && issue ? [issue rangeOfString:@"https://github\\.com/\\S+/issues/[0-9]+" options:NSRegularExpressionSearch] : NSMakeRange(NSNotFound, 0);
-    return r.location == NSNotFound ? nil : [issue substringWithRange:r];
-}
-
 static void note(NSString *text) {
     NSAlert *alert = [NSAlert new];
     alert.messageText = text;
@@ -121,7 +72,8 @@ static void note(NSString *text) {
 
 /* Every TOTK_CONTRIB_STEP shaders and render pipelines the shared list does not have yet (totk_shader_contrib.h), before the game starts: ask
    the player to send the file in a GitHub issue. "Send" opens the issue form and shows the file in Finder to drag in.
-   With gh signed in, "Submit automatically" takes the place of "Remind me next time" and sends this file at once. */
+   With gh signed in, "Submit automatically" takes the place of "Remind me next time" and sends this file at once.
+   The star button only opens the project page (the player stars it there) and asks again next time. */
 static void contrib_reminder(NSString *path) {
     NSUInteger rows = totk_contrib_due(path);
     if (!rows) return;
@@ -140,7 +92,9 @@ static void contrib_reminder(NSString *path) {
     [alert addButtonWithTitle:@(TOTK_UI("发送", "Send"))];
     [alert addButtonWithTitle:gh ? @(TOTK_UI("自动提交", "Submit automatically")) : @(TOTK_UI("下次提醒", "Remind me next time"))];
     [alert addButtonWithTitle:@(TOTK_UI("不要提醒了", "Don't remind me again"))];
+    [alert addButtonWithTitle:@(TOTK_UI("⭐ 喜欢就点个 Star", "⭐ Like it? Star it on GitHub"))];
     NSModalResponse choice = [alert runModal];
+    if (choice == NSAlertThirdButtonReturn + 1) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_REPO_URL]];
     if (choice == NSAlertThirdButtonReturn) totk_contrib_never(path);
     if (choice == NSAlertSecondButtonReturn && gh) {
         NSString *issue = contrib_submit(gh, path, rows);
@@ -245,6 +199,8 @@ int main(int argc, char **argv) {
             if (line) { show_error([NSString stringWithFormat:@"%@, line %d: %s", controls, line, problem]); return 1; }
         }
         setenv("TOTK_CONTROLS", controls.fileSystemRepresentation, 1);
+        /* key 3's picture mode, kept between runs (runtime/game_patches_v143.c picture_mode_save / _restore) */
+        setenv("TOTK_PICTURE_MODE", env_or("TOTK_PICTURE_MODE", [data stringByAppendingPathComponent:@"picture-mode.txt"]).fileSystemRepresentation, 1);
         setenv("TOTK_PROFILE_DIR", profile.fileSystemRepresentation, 1);
         setenv("TOTK_SHADER_CACHE", cache.fileSystemRepresentation, 1);
         setenv("TOTK_GAME_SLOT_DIR", slot.fileSystemRepresentation, 1);
@@ -267,6 +223,9 @@ int main(int argc, char **argv) {
           setenv("TOTK_GPU_BUDGET_MB", budget, 0); }
         setenv("TOTK_SLOT_OWNER", "user", 0);
         setenv("TOTK_SLOT_PURPOSE", "player", 0);
+        /* The commit the app was built from (build_app.py MNGSourceCommit): the HUD box shows it (runtime/frontend.m). */
+        NSString *commit = [NSBundle.mainBundle objectForInfoDictionaryKey:@"MNGSourceCommit"];
+        if ([commit isKindOfClass:NSString.class] && commit.length) setenv("TOTK_SOURCE_COMMIT", commit.UTF8String, 1);
         NSString *contrib = env_or("TOTK_SHADER_CONTRIB", contrib_file(data));
         setenv("TOTK_SHADER_CONTRIB", contrib.fileSystemRepresentation, 1);
         contrib_reminder(contrib);
@@ -276,10 +235,17 @@ int main(int argc, char **argv) {
           FILE *cf = fopen(cmds.fileSystemRepresentation, "w"); if (cf) fclose(cf);
           setenv("TOTK_INPUT_FILE", cmds.fileSystemRepresentation, 1); }
 
+        /* The log is written only with debug on, as on the iPhone: defaults write org.macnativegames.totk TOTK_DEBUG_LOG
+           -bool YES (org.macnativegames.botw for Breath of the Wild), or TOTK_DEBUG_LOG=1 in the environment, which wins
+           (the test tools pass it). Off, the game's output goes to /dev/null and the logs of earlier runs are removed. */
+        const char *debugEnv = getenv("TOTK_DEBUG_LOG");
+        BOOL debugLog = debugEnv ? (*debugEnv && strcmp(debugEnv, "0")) : [NSUserDefaults.standardUserDefaults boolForKey:@"TOTK_DEBUG_LOG"];
         NSString *log = [logs stringByAppendingPathComponent:@GAME_LOG ".log"];
-        [NSFileManager.defaultManager removeItemAtPath:[logs stringByAppendingPathComponent:@GAME_LOG ".previous.log"] error:nil];
-        [NSFileManager.defaultManager moveItemAtPath:log toPath:[logs stringByAppendingPathComponent:@GAME_LOG ".previous.log"] error:nil];
-        FILE *lf = fopen(log.fileSystemRepresentation, "w");
+        NSString *previous = [logs stringByAppendingPathComponent:@GAME_LOG ".previous.log"];
+        [NSFileManager.defaultManager removeItemAtPath:previous error:nil];
+        if (debugLog) [NSFileManager.defaultManager moveItemAtPath:log toPath:previous error:nil];
+        else [NSFileManager.defaultManager removeItemAtPath:log error:nil];
+        FILE *lf = fopen(debugLog ? log.fileSystemRepresentation : "/dev/null", "w");
         if (lf) {
             dup2(fileno(lf), STDOUT_FILENO);
             dup2(fileno(lf), STDERR_FILENO);
@@ -287,8 +253,9 @@ int main(int argc, char **argv) {
         }
         char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
         execv(arguments[0], arguments);
-        fprintf(stderr, "[launcher] execv failed: %s\n", strerror(errno));
-        show_error([NSString stringWithFormat:@"Starting the game failed. See %@.", log]);
+        int failed = errno;
+        fprintf(stderr, "[launcher] execv failed: %s\n", strerror(failed));
+        show_error([NSString stringWithFormat:@"Starting the game failed: %s.", strerror(failed)]);
         return 1;
     }
 }

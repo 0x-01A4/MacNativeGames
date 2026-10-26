@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef TOTK_CONTRIB_STEP   /* runtime/game_version.h keeps Breath of the Wild's at 500 */
+#ifndef TOTK_CONTRIB_STEP
 #define TOTK_CONTRIB_STEP 100   // rows of both kinds (user 2026-10-22; 500 shaders only before)
 #endif
 #ifndef GAME_CONTRIB_TEMPLATE   /* the issue form, label and title prefix of this game's list (runtime/game_version.h sets Breath of the Wild's) */
@@ -26,6 +26,7 @@
 #endif
 #define TOTK_CONTRIB_REPO "ly05010419/MacNativeGames"   // the Mac reminder's "Submit automatically" (gh issue create)
 #define TOTK_CONTRIB_ISSUE_URL "https://github.com/ly05010419/MacNativeGames/issues/new?template=" GAME_CONTRIB_TEMPLATE
+#define TOTK_REPO_URL "https://github.com/" TOTK_CONTRIB_REPO   // the Mac reminder's star button: the page, where the player stars it
 
 /* Nothing is written without the seed (TOTK_SHADER_SEED=off, a test of a first run): every variant is translated in play
    then, so each would look new to the list (one such session wrote 1,670 false rows and set off the reminder). */

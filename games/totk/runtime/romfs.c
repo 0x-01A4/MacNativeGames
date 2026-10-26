@@ -1,7 +1,7 @@
 /* Read-only game RomFS, backed by the player's fully IVFC-verified image. */
 #include "runtime.h"
 #include "totk_ui_lang.h"
-#include "romfs_config.h"
+#include "game_data.h"
 #include "game_version.h"
 #include "fs_host.h"
 #include "romfs_path.h"
@@ -20,6 +20,12 @@
 #define UNSUPPORTED 0x6402u
 #define INVALID 0xe402u
 #define NH 65536
+/* The image's size and SHA-256 and the index's SHA-256 from the player's verified extraction: romfs-config.txt in the game
+   data folder (game_data.h, scripts/prepare_romfs_backend.py), read when the RomFS is opened. */
+static uint64_t romfs_image_size;static const char *romfs_image_sha256,*romfs_index_sha256;
+#define ROMFS_IMAGE_SIZE romfs_image_size
+#define ROMFS_IMAGE_SHA256 romfs_image_sha256
+#define ROMFS_INDEX_SHA256 romfs_index_sha256
 static uint8_t *index_bytes;
 static size_t index_size;
 static uint64_t file_count,strings_offset;
@@ -227,7 +233,13 @@ static uint32_t overlay_slot(uint64_t i) {size_t lo=0,hi=noverlay;while(lo<hi){s
 static void overlay_init(void) {
  const char *dir=getenv("TOTK_ROMFS_PATCHES");if(!dir||strcmp(dir,"0"))overlay_load(dir?dir:"extracted/" TOTK_GAME_DIR "/romfs-patches",0,0);
  /* A scene bigger than 1600x900 (TOTK_RENDER_RES, 1.4.3) grows the same heaps: its overlay is <w>x<h>-scene-<sw>x<sh>. */
- unsigned w=1920,h=1080,sw,sh;if(runtime_output_res_extra_bytes()){runtime_output_res(&w,&h);const char *out=getenv("TOTK_ROMFS_PATCHES_OUT");char d[4096],scene[64]="";
+ /* Breath of the Wild has no HeapDef: its heaps are patched in the code (game_patches_botw.c patch_output_res). */
+#ifdef GAME_BOTW
+ unsigned w=1920,h=1080,sw,sh;if(0){
+#else
+ unsigned w=1920,h=1080,sw,sh;if(runtime_output_res_extra_bytes()){
+#endif
+  runtime_output_res(&w,&h);const char *out=getenv("TOTK_ROMFS_PATCHES_OUT");char d[4096],scene[64]="";
   if(runtime_render_res(&sw,&sh)&&(double)sw*sh>1600.0*900.0)snprintf(scene,sizeof(scene),"-scene-%ux%u",sw,sh);
   need(snprintf(d,sizeof(d),"%s/%ux%u%s",out?out:"extracted/" TOTK_GAME_DIR "/romfs-patches-out",w,h,scene)<(int)sizeof(d),"RomFS output overlay path");
   /* build_app.py makes the 2560x1440 canvas and, for 1.4.3, the 1920x1080 / 2560x1440 scenes on either canvas; other sizes are one command. */
@@ -244,6 +256,8 @@ static void overlay_init(void) {
 }
 void runtime_fs_init(void) {
  if(image_fd>=0)return;
+ romfs_image_size=runtime_game_number("romfs-config.txt","ROMFS_IMAGE_SIZE");romfs_image_sha256=runtime_game_sha256("romfs-config.txt","ROMFS_IMAGE_SHA256");
+ romfs_index_sha256=runtime_game_sha256("romfs-config.txt","ROMFS_INDEX_SHA256");
  const char *dir=getenv("TOTK_ROMFS");if(!dir)dir="extracted/" TOTK_GAME_DIR "/romfs";char path[4096];
  need(snprintf(path,sizeof(path),"%s/runtime-index.bin",dir)<(int)sizeof(path),"RomFS path");int fd=open(path,O_RDONLY);need(fd>=0,"RomFS index missing");
  struct stat st;need(fstat(fd,&st)==0&&st.st_size>=24&&st.st_size<128*1024*1024,"RomFS index size");runtime_boot_progress(TOTK_UI("读取资源索引","Reading the data index"),0,0);sha_fd(fd,ROMFS_INDEX_SHA256,0,NULL);

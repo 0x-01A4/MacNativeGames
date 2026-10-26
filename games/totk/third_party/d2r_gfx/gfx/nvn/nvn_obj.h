@@ -5,6 +5,12 @@
 // Objects are stored in place in the NVN object memory allocated by the game, with size not exceeding the reserved size in nvn.h (FITS static assertion).
 // State objects (Blend / Color / ... 4–0x18 bytes) are small structs the game copies by value; their layout is packed in place with bit-fields.
 #pragma once
+/* 1 in a Breath of the Wild build: defaults measured on Tears of the Kingdom only stay off there (#750). */
+#ifdef GAME_BOTW
+#define TOTK_BOTW_BUILD 1
+#else
+#define TOTK_BOTW_BUILD 0
+#endif
 #include <stdint.h>
 #include <string.h>
 #include "nvn.h"
@@ -175,17 +181,15 @@ int botw_dead_keep(uint64_t serial);
 void botw_dead_forget(const uint64_t *serials, size_t n);
 #define BOTW_DEAD_FORGET(s, n) botw_dead_forget((s), (n));
 /* Key 3 (MetalFX 2K): Breath of the Wild's own upscale of the finished 1600x900 picture into the 1920x1080 canvas is the
-   fragment shader 0af88d51 (a 3-vertex triangle: five texel reads around the fragment's own coordinates, an edge-directed
+   fragment shader bd7ffdd4 (a 3-vertex triangle: texel reads around the fragment's own coordinates, an edge-directed
    sharpening of the sampled colour; no dynamic resolution, so the valid region is the whole source). MetalFX replaces the
    whole draw (mfxup_dock; botw.md). */
 void botw_mfx_scene_ready(void);   /* the upscale draw happened (or MetalFX replaced it): the canvas holds the scene */
-/* 1.9.0's upscale draw is bd7ffdd4 (nine texel reads; same canvas, source, mask and full-canvas draw), found by its
-   1600x900 source and 1920x1080 target on the Kakariko route. */
-#ifdef GAME_BOTW190
+/* The same shader in 1.6.0 and 1.9.0. It was first recorded as 0af88d51, the key the runtime gave it before the control
+   section's own size went into the key (2026-10-20, botw.md); its code is byte for byte that of bd7ffdd4, the key since,
+   so 1.6.0 never matched the old one: no scene for key 2 (#177) and no MetalFX in place of the upscale for key 3
+   (2026-10-23). 1.9.0 found bd7ffdd4 by its 1600x900 source and 1920x1080 target on the Kakariko route. */
 #define BOTW_MFXUP_KEY "bd7ffdd435c6c3bc997653d5fb9a0cc7f2f411dd51ce88c3cafe6574c8624908-"
-#else
-#define BOTW_MFXUP_KEY "0af88d51bb12a2346b03bb2586d131def5a631271df192779b701efba6eb7f70-"
-#endif
 #define BOTW_MFXUP_DOCK_KEY(fs) int botw_ = !strncmp((fs)->key, BOTW_MFXUP_KEY, 65); if (botw_) botw_mfx_scene_ready();
 #define BOTW_AND_NOT_DOCK && !botw_
 #define BOTW_MFXUP_DOCK_REGION(cw, ch, src) if (botw_ && !why) { (cw) = (src).width; (ch) = (src).height; }
@@ -220,19 +224,53 @@ int botw_uw_scene_picture(void);   /* end of nvn_mtl.m */
    into a shared stage buffer at its end (botw_wb_stage_encode); the invalidate waits only for the fences of the listed
    renderings and swizzles a staged texture from its stage. fence: the submission that rendered it last; stage_fence:
    the submission whose end copied it into stage. */
-#define BOTW_WB_ENT_FIELDS uint64_t fence; void *stage; uint64_t stage_fence;
+#define BOTW_WB_ENT_FIELDS uint64_t fence; void *stage; uint64_t stage_fence; uint64_t late_fence;
 void botw_wb_sub_note(uint64_t serial);
-#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k);
-#define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); }
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k); (e)->late_fence = botw_late_note(&(e)->t, (e)->obj, (e)->stamp, (e)->fence); botw_render_note(&(e)->t, (e)->obj, (e)->stamp);
+#define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); } if (!((e)->late_fence && (e)->late_fence == (e)->fence)) botw_render_gone((e)->t.mem, (e)->obj);
 void botw_wb_stage_encode(void);
 #define BOTW_WB_STAGE() botw_wb_stage_encode();
 #define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) { if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
         if ((list)[i_]->stage_fence > need_) need_ = (list)[i_]->stage_fence; } if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); }
-int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -1 not staged */
-#define BOTW_WB_FROM_STAGE(e, ok, layers) { int s_ = botw_wb_from_stage(e); if (s_ >= 0) { (ok) = s_; (layers) = 0; } }
+int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, WB_POOL_GONE, -1 not staged */
+#define BOTW_WB_FROM_STAGE(e, ok, layers) { int s_ = botw_wb_from_stage(e); if (s_ != -1) { (ok) = s_; (layers) = 0; } }
 /* BOTW (nvn_mtl.m, after a re-upload): the range that tracked the texture can be gone by now (a neighbour pool destroyed,
    nvn_dirty.c); its protect then did nothing, and a kept "tracked" would let the replay's shortcut call it clean next time */
 #define BOTW_REUP_TRACKED(pk, t) (pk)->tracked = nvn_dirty_tracked((t)->mem, (t)->L.size);
+/* Water colours (end of nvn_mtl.m): tiny GPU renders the CPU reads without an invalidate are written into their memory
+   when the submission that rendered them completes. */
+void botw_tiny_note(const void *t, const void *o);
+#define BOTW_TINY_NOTE(t, o) botw_tiny_note((t), (__bridge const void *)(o));
+void botw_tiny_commit(void);
+/* Grass masks (end of nvn_mtl.m): a target the flush has waited for in many frames is written into its memory when its
+   submission completes, and the flush no longer waits for it. late_fence: the submission whose end copies it out. */
+uint64_t botw_late_note(const tex_t *t, void *obj, uint64_t stamp, uint64_t fence);
+void botw_late_commit(void);
+int botw_late_filter(void **list, int nl);
+void botw_late_drop(uintptr_t lo, uintptr_t hi);
+void botw_late_copy_drop(uintptr_t lo, uintptr_t hi);   /* a GPU copy into the memory (botw_gpu_copy_supersedes) */
+#define BOTW_TINY_COMMIT() botw_tiny_commit(); botw_late_commit();
+#define BOTW_LATE_FILTER(list, nl) (nl) = botw_late_filter((void **)(list), (nl));
+#define BOTW_LATE_DROP(lo, hi) botw_late_drop((lo), (hi));
+/* Sinking legs (end of nvn_mtl.m): a write-back puts a GPU rendering into memory that other texture objects sample from
+   copies uploaded earlier; their next use uploads the memory again, as their descriptors would read it on hardware. */
+void botw_wb_landed(const void *mem);
+uint64_t botw_wb_gen(void);
+int botw_wb_newer(const void *mem, uint64_t gen);
+#define BOTW_PKG_FIELDS uint64_t wb_gen;
+#define BOTW_WB_LANDED(t) botw_wb_landed((t)->mem);
+#define BOTW_PKG_WB_SEEN(pk) (pk)->wb_gen = botw_wb_gen();
+#define BOTW_PKG_WB_TAKE() uint64_t wbg_ = botw_wb_gen();
+#define BOTW_PKG_WB_SET(pk) (pk)->wb_gen = wbg_;
+#define BOTW_PKG_WB_STALE(pk, t, clean) if (clean && botw_wb_newer((t)->mem, (pk)->wb_gen)) clean = 0;
+/* ... and while a GPU rendering of the same memory and layout waits for its write-back (the CPU has not written there
+   since), a sampled copy reads that rendering, as its descriptor would on hardware. */
+void botw_render_note(const tex_t *t, void *obj, uint64_t stamp);
+void *botw_render_alias(const tex_t *t, const void *own);   /* the pending rendering's MTLTexture (not retained: its record holds it) or NULL */
+void botw_render_gone(const void *mem, const void *obj);   /* its write-back record was freed */
+extern _Thread_local int botw_bra_attach;   /* tex_mtl for a render target: its own copy, never the alias */
+#define BOTW_ATTACH_TEX_U(t) ((__bridge id<MTLTexture>)({ botw_bra_attach = 1; void *r_ = tex_mtl_p(t); botw_bra_attach = 0; r_; }))
+#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned && !botw_bra_attach) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return a_; }
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -254,12 +292,22 @@ int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -
 #define BOTW_DEAD_KEEP(k)
 #define BOTW_TEX_RELEASE_KEEP(k)
 #define BOTW_DEAD_FORGET(s, n)
-#define BOTW_WB_ENT_FIELDS
-#define BOTW_WB_NOTED(e, k)
+/* TOTK: targets the CPU polls without an invalidate (the grass cut map) are written back after the fence wait that
+   follows their rendering (mtl_wb_fence_done, nvn_mtl.m; upstream issue #49). */
+#define BOTW_WB_ENT_FIELDS uint64_t fence;
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1;
 #define BOTW_WB_STAGE_FREE(e)
 #define BOTW_WB_STAGE()
-#define WB_WAIT_GPU(list, nl) mtl_finish_gpu();
+int totk_wb_fence_on(void);
+/* TOTK_WB_FENCE=0 waits for all submitted GPU work, as before. Otherwise a write-back waits only for the submissions that
+   rendered the listed textures (the game waits for its own sync before invalidating), then for uploads to finish. */
+#define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
+    if (totk_wb_fence_on()) { if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); } else mtl_finish_gpu(); }
 #define BOTW_WB_FROM_STAGE(e, ok, layers)
+#define BOTW_TINY_NOTE(t, o)
+#define BOTW_TINY_COMMIT()
+#define BOTW_LATE_FILTER(list, nl)
+#define BOTW_LATE_DROP(lo, hi)
 #define UNCAPPED_INTERVAL_FROM_ENV(e) e && atoi(e)
 #define BOTW_RT_DUP_CLEARS()
 #define BOTW_RT_DUP_SKIP(i)
@@ -267,17 +315,26 @@ int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -
 #define BOTW_RT_DUP_CLEAR_TO_FIRST(c)
 #define BOTW_ASHOT_POLL(t, cur)
 #define BOTW_REUP_TRACKED(pk, t)
+#define BOTW_PKG_FIELDS
+#define BOTW_WB_LANDED(t)
+#define BOTW_PKG_WB_SEEN(pk)
+#define BOTW_PKG_WB_TAKE()
+#define BOTW_PKG_WB_SET(pk)
+#define BOTW_PKG_WB_STALE(pk, t, clean)
+#define BOTW_PKG_RENDER_ALIAS(pk, t)
+#define BOTW_ATTACH_TEX_U(t) tex_mtl(t)
 #endif
 /* Key 5 (MetalFX temporal anti-aliasing, totk_taa.m): the compose draw that samples the linear HDR scene at fragment
    texture slot 0 before tone mapping. TOTK: 0ac9a549 (tone mapping and bloom). Breath of the Wild 1.9.0: f7ee6fe1 (two
    texel reads: the 1600x900 R11G11B10F scene at slot 0, the 320x180 bloom at slot 1; it writes the 1600x900 RGB10A2
-   picture that the upscale draw bd7ffdd4 then reads), found by those textures on the Kakariko route. 1.6.0's draw is not
-   known yet (no 1.6.0 run on record): there key 5 changes nothing (no draw is replaced, so no frame is jittered). */
+   picture that the upscale draw bd7ffdd4 then reads), found by those textures on the Kakariko route. 1.6.0: d14b1c38,
+   from the same archive (uking_pass_shader.sharcb), the same 1280 bytes of code and 99.4 % of its instruction words
+   equal to 1.9.0's (the nearest of all 1.6.0 fragment shaders; the next is 57 %); f7ee6fe1 is not in 1.6.0 (#178). */
 #ifdef GAME_BOTW
 #ifdef GAME_BOTW190
 #define TAA_COMPOSE(fs) !strncmp(fs->key, "f7ee6fe10b925543e905dfc9437ce67dc21a118d465b03bb3c9eccafdf2e33c4-", 65)
 #else
-#define TAA_COMPOSE(fs) 0
+#define TAA_COMPOSE(fs) !strncmp(fs->key, "d14b1c38f70d2ed8355a18183099d088e798b831f919c8be4d1f797a3cdc2689-", 65)
 #endif
 #else
 #define TAA_COMPOSE(fs) !strncmp(fs->key, "0ac9a54938974396", 16)
