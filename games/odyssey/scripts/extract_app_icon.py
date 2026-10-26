@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the verified local Odyssey 1.3.0 Control icon for a local test app.
+"""Extract the verified local Odyssey 1.3.0 (or 1.4.1) Control icon for a local test app.
 
 The icon is game-derived. Write it only under ignored Odyssey_build; never commit it.
 """
@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from inspect_version import (
-    Ctr, common_tickets, container_entries, index_romfs, load_keys,
+    Ctr, UPDATE_VERSIONS, common_tickets, container_entries, index_romfs, load_keys,
     nca_ctr_key, nca_inventory, require, romfs_section, verify_ivfc,
 )
 
@@ -48,7 +48,7 @@ def main():
                 with image.open('rb') as data:
                     data.seek(nacp['offset'] + 0x3060)
                     version = data.read(16).split(b'\0', 1)[0].decode('ascii')
-                if version != '1.3.0':
+                if version not in UPDATE_VERSIONS:
                     continue
                 icons = [item for item in files if item['path'].startswith('icon_')]
                 require(icons, 'Update Control RomFS contains no title icon')
@@ -60,7 +60,7 @@ def main():
                         'Control icon is not a complete JPEG')
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_bytes(contents)
-                print(f'Verified local 1.3.0 title icon -> {args.output}')
+                print(f'Verified local {version} title icon -> {args.output}')
                 return
     raise SystemExit('Update Control icon not found')
 

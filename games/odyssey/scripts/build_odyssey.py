@@ -79,7 +79,9 @@ def preflight(args, py):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--game", type=Path, required=True, help="your Odyssey XCI or NSP holding the base game and update 1.3.0")
+    p.add_argument("--game", type=Path, required=True, help="your Odyssey XCI or NSP holding the base game and update 1.3.0 or 1.4.1")
+    p.add_argument("--update", type=Path, help="the update NSP, when --game is the base NSP alone: both are joined into "
+                   "<work>/input/odyssey.nsp first (scripts/merge_nsp.py)")
     p.add_argument("--keys", type=Path, required=True, help="prod.keys dumped from your own Switch")
     p.add_argument("--work", type=Path, default=GAME_DIR / "Odyssey_build", help="build folder (default Odyssey_build)")
     p.add_argument("--firmware", type=Path, help="unpacked firmware NCA directory, for the system fonts of an NSP build")
@@ -89,6 +91,15 @@ def main():
     args = p.parse_args()
     args.game, args.keys, args.work = args.game.resolve(), args.keys.resolve(), args.work.resolve()
     py = sys.executable
+    if args.update:
+        if not args.update.is_file():
+            raise SystemExit(f"cannot build:\n - {args.update} not found")
+        merged = args.work / "input/odyssey.nsp"
+        if not merged.is_file() or merged.stat().st_mtime < max(args.game.stat().st_mtime, args.update.stat().st_mtime):
+            t = step(0, "Join the base and update NSPs")
+            run([py, "scripts/merge_nsp.py", args.game, args.update.resolve(), "--output", merged])
+            done(t)
+        args.game = merged
     preflight(args, py)
     work, ext = args.work, args.work / "extracted"
     work.mkdir(parents=True, exist_ok=True)
