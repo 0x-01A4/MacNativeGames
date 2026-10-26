@@ -23,8 +23,9 @@ def main():
                         default=HERE / 'Odyssey_build/app-assets/OdysseyIcon.jpg')
     args = parser.parse_args()
     out = args.output.resolve()   # a *_build folder in games/odyssey: ignored by .gitignore, like Odyssey_build
-    require(any(parent.parent == HERE.resolve() and parent.name.endswith('_build') for parent in out.parents),
-            'Icon output must stay under an ignored *_build folder of games/odyssey')
+    outside = HERE.resolve().parents[1] not in out.parents   # or outside the repository (build_odyssey.py --work elsewhere)
+    require(outside or any(parent.parent == HERE.resolve() and parent.name.endswith('_build') for parent in out.parents),
+            'Icon output must stay outside the repository or under an ignored *_build folder of games/odyssey')
     keys = load_keys(args.keys)
     with args.game.open('rb') as source:
         _, entries = container_entries(source, args.game.stat().st_size)
