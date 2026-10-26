@@ -14,8 +14,8 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 |---|---|---|
 | 0 | Feasibility: does the game fit the TotK architecture? | done 2026-10-25 |
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
-| 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | loader probe passes; `nnMain` entered (2026-10-25) |
-| 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | next: `fsp-srv` |
+| 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
+| 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | in progress: headless boot reaches the VI display service |
 | 4 | A picture, audio, input, saves | not started |
 | 5 | Performance, shaders, packaging as an app | not started |
 
@@ -121,3 +121,38 @@ Not built or run: iOS, the launcher and `make app`, any picture.
 Open questions carried forward: why this SDK opens `fsp-srv` over IPC where TotK's and Bayonetta's are answered by
 function name; which of Bayonetta's offline services and graphics defaults Dread needs; whether the Atk audio path
 matches TotK's audio renderer; the system fonts (the card carries none).
+
+### 2026-10-25: stage 3 (in progress), from `nnMain` to the display
+
+Method as for Bayonetta 3: boot headless, read where the host stops, name the SDK frames (`scripts/symbolize.py`),
+fix the platform layer, repeat.
+
+- **`fsp-srv`** was not a missing service: main's first call is `nn::fs::SetAllocator`, which no other port's main
+  makes. The SDK's own fs library then checks its access log and opens `fsp-srv` over IPC. The host answers fs by
+  name and never allocates guest memory for it, so `SetAllocator` keeps nothing. `DeleteDirectory`, also imported, was
+  added (an empty save folder).
+- **`nn::oe::EnterExitRequestHandlingSection`** (a null applet object in the SDK's own version): the host never sends
+  an exit request, so entering or leaving the section is a no-op.
+- **An audit instead of one crash per boot**: main imports 261 SDK functions that no host override answers. Almost
+  all are library code on the SDK's own system calls (`nn::os` 53, `nn::util`, `nn::mem`, the `nn::audio` client
+  whose service `audren:u` the host answers over IPC, vibration players, play-report builders). Those that would reach
+  an unanswered service: the two `oe` sections above and 12 `nfp` calls, now "no device" like the existing ones (they
+  need a device handle the host never hands out). `hid::InitializeVibrationDevice` / `GetVibrationDeviceInfo` ran
+  without a stop (`[hid] the game initialized its vibration devices`).
+- **`nn::os::CreateThread` broke in the SDK** (`ThreadManager::CreateAliasStackUnsafe` failed 64 tries). With
+  `TOTK_MEM_LOG` (it now also logs `svcMapMemory`): the stack source was `main+0x1da7000`, in main's `.bss`; the host
+  accepted only heap and alias memory. On the console module data (CodeData) is a valid source. The host now accepts
+  a range inside one module's data or `.bss` whose pages are all read-write and unlocked
+  (`runtime_module_data_rw` in the loader); QueryMemory reports such a source as CodeData.
+
+Verified: the headless boot now runs past account, performance mode, keyboard, vibration devices, AudioOut, four audio
+renderers (REV8 update) and three thread creations with stacks from main's `.bss`, then stops at the VI display
+service, which needs the native window (`VI requires native macOS window`).
+
+A run with a window could not continue on 2026-10-25: the Mac's screen was locked and the display asleep
+(`CGSSessionScreenIsLocked = 1`, no active display), so `CVDisplayLinkCreateWithActiveCGDisplays` returned -6661 and
+the runtime stopped at `native display link initialization`. Not a defect of the port; the next run needs an unlocked,
+awake display.
+
+Commit: `7a8a428` feat(dread): answer the fs allocator, exit-request sections and nfp calls, and accept thread stacks
+in module data.
