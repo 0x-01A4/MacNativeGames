@@ -16,7 +16,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
-| 4 | A picture, audio, input, saves | in progress: title movies play with sound; leaving the title is not stable |
+| 4 | A picture, audio, input, saves | in progress: title movies with sound, save files created, the SAMUS FILES menu |
 | 5 | Performance, shaders, packaging as an app | not started |
 
 ## Log
@@ -225,13 +225,23 @@ unknown fs mount". `runtime_romfs_unmount` releases the name. Commit `6255ee6`.
 
 Open, not understood yet:
 
-- In some runs the game leaves the title loop early: the loop's decoder is stopped after 23 frames, a new one plays
-  141-189 frames, is stopped, and `nnMain` returns (the game exits; the runtime then stops at "module finalizers not
-  yet implemented"). In other runs the loop just repeats (end of stream at 234, 468, ... frames) for the whole run. A
-  Switch Pro Controller was connected during all runs; the log records only that some input arrived, not which. Next
-  step: runs with the controller disconnected, and `hletrace 2` around the moment the loop stops, to see which host
-  calls lead to the exit.
 - 1 of 11 runs crashed in `nn::os::LockMutex` on a garbage mutex as the title loop opened: the movie thread received a
   message (`main+0x22376c`, `TimedReceiveMessageQueue`) whose object at `+0x30` was `0x7fffffff00000000`, i.e. a
   message about the first movie's player outlived it. Its sender is outside the movie player's code range and has not
   been found.
+
+### 2026-10-25: the "quit after a button press" was the first save
+
+The user confirmed pressing buttons on a connected Switch Pro Controller in the runs that quit. A scripted press
+(`TOTK_INPUT_FILE` `key 38 150`, J = A) on the title loop reproduced it every time, and `hletrace 2` with the new
+save-side result log (`TOTK_FS_LOG`) showed the sequence: the game opens `savedata://userdata/` (an empty path
+component and a trailing separator), the host answered "invalid path" (`0x2ee602`) where Horizon normalizes the path
+and answers "not found", so the game never created the folder, `CreateFile savedata:/userdata/userdata.bmssv` failed
+(`0x202`), and the game shut down in order (`SetUserInactivityDetectionTimeExtended`, `time::Finalize`,
+`account::CloseUser`, `EnterExitRequestHandlingSection`, `Unmount`, return from `nnMain`). Save paths now collapse
+repeated and trailing separators; `.` and `..` stay invalid there because the result is a host path. Commit `b760a73`.
+
+Verified: with the scripted press the game creates `userdata/userdata.bmssv` and `profile0/{common,pkprfl,samus}.bmssv`
+and keeps running; a 70 s run without other input stays up and screenshots at 37, 47 and 59 s show the SAMUS FILES menu
+(file 01 from the user's earlier session: 15/15 missiles, 99 energy, 00:00:00; files 02 and 03 empty) with the animated
+background and the button prompts.
