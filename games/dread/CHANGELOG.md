@@ -16,7 +16,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
-| 4 | A picture, audio, input, saves | next: the title movie decoder (VP9, mode 2) |
+| 4 | A picture, audio, input, saves | in progress: title movies play with sound; leaving the title is not stable |
 | 5 | Performance, shaders, packaging as an app | not started |
 
 ## Log
@@ -188,3 +188,50 @@ frames into NVN memory and signals an NVN sync. That needs reading before the ho
 are WebM; main also uses `movie::Extractor`, which runs in the library (WebM parsing, no hardware).
 
 Commit: `f671685` fix(dread): QueryMountRomCacheSize answers the RomFS metadata size, so the game mounts its RomFS.
+
+### 2026-10-25: stage 4 (in progress), the title movies
+
+**Texture mode.** Dread's movie player (`main+0x220e24..0x2268dc`) builds `movie::Decoder` VP9 in mode 2 with
+output format 3. For each frame it calls `GetOutputBufferFormat`, then `GetOutputBuffer` with a `movie::Buffer` built
+by `SetNvnDev`, `SetNvnSync` and `SetDataAndCapacity(obj+0x18, 8)`; on success it does not release the index itself.
+The library's name for this is `DecoderImpl::CopyOutputBufferToClientTextureAndRelease`. The buffer's data was first
+read as a pointer to a texture; the logged value `0x100584554` has the low word `T E X 00`, the graphics layer's
+texture magic, so the data *is* the `NVNtexture` object, embedded in the game's structure. The texture is
+`RGBX8_SRGB` (0x37), 1280x720, from a pool of the game's textures matched by size (`main+0x224670`).
+`movie_host.c` now serves this mode: NV12 is converted with the matrix and range the stream declares (it declares
+none: BT.709 limited range, from 720 lines), written with the layer's own `nvnTextureWriteTexels`, the sync is fenced
+with `nvnQueueFenceSync`, and the index is released. Verified: `titlescreen_ini.webm` decodes 431 frames at 0.75 ms
+each with no errors, and screenshots (`TOTK_INPUT_FILE` `shot`) show the METROID and METROID DREAD title animation
+with the expected colours. Commit `4f4bbb1`.
+
+**Sound streams.** NintendoWare Atk opens `rom:/system/snd/../../sounds/streams/mainmenu_title_ini.dspadpcm.bfstm`.
+The host refused `.` and `..` components; Atk aborted on a result it has no message for (`main+0x11dfcec`; its
+table names only `fs::ResultPathNotFound`, `DataCorrupted`, `TargetLocked`). RomFS paths are now normalized as
+Horizon's fs does (separators collapsed, `.` dropped, `..` resolved, never above the root); 21 synthetic cases in
+`tests/test_dread_romfs_paths.c`. After this, audio plays: output level rms 0.10-0.14, no underruns. Commit `e4d6f00`.
+
+**Shader tools.** `make shader-tools` must run once per work folder (prebuilt `totk_xlate`, SPIRV-Cross at the pinned
+commit); without it the runtime fell back to a Python service that the work folder does not have.
+
+**Movie event ordering.** When the title loop started, the movie thread crashed in `nn::os::WaitAny` on a linked holder
+with a null vtable (finalized but still linked), in 2 of 3 runs, not always: a race. The host noted event signals under
+the decoder's lock and fired them after it, also from the present thread, so a signal could reach an event the game
+had just finalized when it stopped and destroyed the first decoder. Stop, Reset, RegisterClientEvents and the
+destructor now revoke a decoder's pending signals (an epoch per decoder, a read-write lock around firing), as the
+library guarantees. In 11 runs since, no `WaitAny` crash. Commit `6255ee6`.
+
+**RomFS unmount.** The game unmounts `rom`; `runtime_romfs_owns` expects a path, so the host stopped with "unmount of
+unknown fs mount". `runtime_romfs_unmount` releases the name. Commit `6255ee6`.
+
+Open, not understood yet:
+
+- In some runs the game leaves the title loop early: the loop's decoder is stopped after 23 frames, a new one plays
+  141-189 frames, is stopped, and `nnMain` returns (the game exits; the runtime then stops at "module finalizers not
+  yet implemented"). In other runs the loop just repeats (end of stream at 234, 468, ... frames) for the whole run. A
+  Switch Pro Controller was connected during all runs; the log records only that some input arrived, not which. Next
+  step: runs with the controller disconnected, and `hletrace 2` around the moment the loop stops, to see which host
+  calls lead to the exit.
+- 1 of 11 runs crashed in `nn::os::LockMutex` on a garbage mutex as the title loop opened: the movie thread received a
+  message (`main+0x22376c`, `TimedReceiveMessageQueue`) whose object at `+0x30` was `0x7fffffff00000000`, i.e. a
+  message about the first movie's player outlived it. Its sender is outside the movie player's code range and has not
+  been found.
