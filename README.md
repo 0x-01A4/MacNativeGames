@@ -72,6 +72,8 @@ See [docs/how-it-works.md](docs/how-it-works.md).
 
 Recorded performance experiments, remaining work and comparison methods: [Mac performance follow-ups](docs/performance-followups.md).
 
+Measuring by game state with the Metal performance tools of macOS 27 (`TOTK_STATE_REPORTING=1`, `metal_perf_report.py`): [Metal performance diagnostics](docs/metal-performance-diagnostics.md).
+
 ## Acknowledgements
 
 - **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** (MIT) developed this way of running Switch games natively (for Diablo II: Resurrected): the NSO rewriter, the Horizon host and the NVN-on-Metal layer here started as its generic parts.
@@ -154,6 +156,8 @@ Apple、Mac、iPhone、iPad、Apple Vision Pro 和 Metal 是 Apple Inc. 的商�
 见 [docs/how-it-works.md](docs/how-it-works.md)。
 
 已做的性能实验、待办与对比方法见 [Mac 性能待做](docs/performance-followups.md)。
+
+用 macOS 27 的 Metal 性能工具按游戏状态测量（`TOTK_STATE_REPORTING=1`、`metal_perf_report.py`）：见 [Metal 性能诊断](docs/metal-performance-diagnostics.md#macos-27-上的-metal-性能诊断)。
 
 ## 致谢
 

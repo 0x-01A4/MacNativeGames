@@ -26,12 +26,14 @@
 #include "totk_mfx_up.h"
 #include "totk_taa.h"
 #include "totk_sysload.h"
+#include "totk_state_report.h"   // TOTK_STATE_REPORTING: the game's states for Apple's performance tools (macOS 27)
 /* TOTK_MFX_UPSCALE: for the one compose draw that samples the smaller scene, the scene texture and its MetalFX upscale
    (mfxup_draw before the draw, encode_args swaps the binding). */
 static __strong id<MTLTexture> g_mfxup_src, g_mfxup_out; static __unsafe_unretained id g_mfxup_sh;
 static _Atomic uint64_t g_mfxup_last;   // game frame of the last MetalFX upscale (the FPS box shows " MFX" while recent)
 static _Atomic uint64_t g_mfxi_last;    // game frame of the last interpolated frame shown (the FPS box shows "+<generated>" while recent)
 static uint64_t g_gen_shown;            // interpolated frames handed to the screen (present threads)
+static _Atomic uint64_t g_taa_last;     // game frame of the last edge smoothing (TAA), kept only for the state reports
 #include "../tex/nvn_bcdec.h"
 
 #include "nvn_dirty.h"
@@ -2623,6 +2625,7 @@ void dm_gfx_set_flag(const char *name, int v) {
     if (!strcmp(name, "skip_invisible")) { skv_set(v); return; }
     if (!strcmp(name, "mfx_upscale")) { mfxup_set(v < 0 ? !mfxup_enabled() : v); return; }   // TOTK_MFX_UPSCALE at run time (manual key 3 picture mode)
     if (!strcmp(name, "mfx_interp")) { mfx_set(v); return; }
+    if (!strcmp(name, "state_reporting")) { totk_sr_set(v); return; }   // TOTK_STATE_REPORTING while playing (A/B in one session)
     if (!strcmp(name, "mfx_mv_dyn")) { mfx_set_mv_dyn(v); return; }
     if (!strcmp(name, "link_pause")) { void mtl_link_pause(int on); mtl_link_pause(v); MLOG("[flag] link_pause = %d (the display link stops calling back, as when the system stalls it)", v != 0); return; }   // tests the display-link rescue
     if (!strcmp(name, "draw_log")) { extern _Atomic long g_draw_log; atomic_store(&g_draw_log, v); MLOG("[flag] draw_log: every draw and dispatch of the next %d frames", v); return; }
@@ -8672,6 +8675,7 @@ static void warm_start(void) {
     NSMutableSet<NSString *> *eligible = [NSMutableSet set];
     warm_plan(paths,files,planned_keys,eligible,&total,&shader_total,&pipeline_total);
     if (runtime_warm_progress) runtime_warm_progress(0,total,0,shader_total,0,pipeline_total);
+    totk_sr_warmup(g_par_valid);   // TOTK_STATE_REPORTING: shaderWarmup, archive reused or rebuilt
     g_warm_t0 = bp_now();
     dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);   // 不是可有可无的后台活：它决定玩家进局前管线是否就绪 | Not optional background work: it decides whether the pipelines are ready before the player enters a run
     dispatch_queue_t q = dispatch_queue_create("dm.nvn.pso-warm", attr);
@@ -11971,6 +11975,7 @@ static int mfxup_draw(NvProg *pr) {
             taa_out = taa_encode(g_cb, src);
             if (taa_out) {
                 static int added; if (!added && taa_residency()) { [g_q4 addResidencySet:taa_residency()]; added = 1; }
+                if (totk_sr_on()) atomic_store(&g_taa_last, atomic_load(&g_cur_frame));
                 g_mfxup_src = src; g_mfxup_out = taa_out; g_mfxup_sh = fs;
             }
         }
@@ -14983,6 +14988,33 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     pthread_mutex_unlock(&g_pq_mu);
     return ring >= 0 ? 0 : tk;   // ticket 0: acquiring this image does not wait for the display (the copy is ordered before its next use)
 }
+#if TARGET_OS_OSX
+/* TOTK_STATE_REPORTING (totk_state_report.m): the configuration the renderer runs with, from what it reads every frame
+   (any thread), and the game frames on which a MetalFX upscale and edge smoothing last ran. */
+void mtl_sr_picture(totk_sr_gfx *s, uint64_t *upscaled_at, uint64_t *antialiased_at) {
+    s->out_w = (int)atomic_load(&g_out_w); s->out_h = (int)atomic_load(&g_out_h);
+    float a = runtime_aspect_now ? runtime_aspect_now() : 0;
+    s->aspect_milli = a > 0 && fabsf(a - 16.0f / 9.0f) > 0.01f ? (int)lroundf(a * 1000) : 0;
+    s->upscale = mfxup_enabled() ? 1 + mfxup_output_enabled() : 0;
+    s->taa = taa_enabled(); s->fi_mode = mfx_enabled();
+    s->present_path = __atomic_load_n(&g_rescue_mode, __ATOMIC_RELAXED) ? 2 : !__atomic_load_n(&g_dm_present_link, __ATOMIC_RELAXED);
+    *upscaled_at = atomic_load(&g_mfxup_last); *antialiased_at = atomic_load(&g_taa_last);
+}
+/* The game's counters for the state reports, read without any lock (a report may see a frame less): game presents (the
+   present queue's tickets, as the FPS box counts them), interpolated frames handed to the screen, game frames the display
+   link merged away, shader variants translated this run, Metal libraries and pipelines made on the submit thread (and
+   their time), Metal memory and the scene size. */
+void mtl_sr_counters(totk_sr_counters *c) {
+    c->game_frames = __atomic_load_n(&g_pq_in, __ATOMIC_RELAXED);
+    c->generated = __atomic_load_n(&g_gen_shown, __ATOMIC_RELAXED);
+    c->merged = __atomic_load_n(&g_link_dropped, __ATOMIC_RELAXED);
+    c->translations = totk_rt_new_variants();
+    c->libraries = __atomic_load_n(&g_bp_lib_n, __ATOMIC_RELAXED); c->pipelines = __atomic_load_n(&g_bp_pso_n, __ATOMIC_RELAXED);
+    uint64_t lib_ns, pso_ns; mtl_create_ns(&lib_ns, &pso_ns); c->create_ns = lib_ns + pso_ns;
+    c->metal_bytes = g_dev ? g_dev.currentAllocatedSize : 0;
+    c->scene_w = (int)atomic_load(&g_scene_w); c->scene_h = (int)atomic_load(&g_scene_h);
+}
+#endif
 // 丢弃期间不等：标志置上之后才入队的那一帧（出图线程正好走过了标志检查）没人取，等它就又卡住；它留给随后的 mtl_drain 清
 // 节拍模式下不无限等：见 STALL_NS 处的说明。只丢「还没被节拍取走」的帧，已在上屏途中的那张等它交给 GPU（同进后台的丢法）
 // Do not wait during discard: the frame enqueued only after the flag was set (the present thread had just passed the flag check) has nobody to take it, and waiting for it would stall again; it is left for the following mtl_drain to clear

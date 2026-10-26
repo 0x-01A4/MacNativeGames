@@ -40,11 +40,26 @@ static void *vsyncEvents[16];
 static unsigned vsyncCount;
 void hle_bind_system_event(void *,int);
 void hle_signal_system_event(void *);
+/* TOTK_STATE_REPORTING (gfx/nvn/totk_state_report.m; absent in tests): the game's states for Apple's performance tools on
+   macOS 27. Main-thread events only; each call stores a few values and returns. */
+extern void totk_sr_start(const char *game,const char *version) __attribute__((weak_import));
+extern void totk_sr_picture(int key,int visible) __attribute__((weak_import));
+extern void totk_sr_window(int key,int visible) __attribute__((weak_import));
+extern void totk_sr_view(int w,int h,int display_hz,int fullscreen) __attribute__((weak_import));
+extern void totk_sr_closing(void) __attribute__((weak_import));
+extern void totk_sr_settings(int open) __attribute__((weak_import));
+int runtime_front_window_visible(void);   /* below: 1 seen, 0 covered, -1 not known yet */
 void *front_metal_layer(void){return (__bridge void *)metalLayer;}
+/* The start-up screen goes once a frame was presented and the warm-up is done: the player sees the game from here on. */
+static void boot_overlay_hide(void){
+ if(!bootOverlay||bootOverlay.hidden)return;
+ bootOverlay.hidden=YES;
+ if(totk_sr_picture)totk_sr_picture(window.isKeyWindow,runtime_front_window_visible()!=0);
+}
 void front_frame_presented(void){
  if(atomic_fetch_add_explicit(&presentedFrames,1,memory_order_relaxed)==0){
   fprintf(stderr,"[totk-boot] %.3f first presented frame\n",(runtime_now_ns()-bootStartNS)/1e9);
-  dispatch_async(dispatch_get_main_queue(), ^{if(!atomic_load(&warmPending))bootOverlay.hidden=YES;});
+  dispatch_async(dispatch_get_main_queue(), ^{if(!atomic_load(&warmPending))boot_overlay_hide();});
  }
 }
 void runtime_boot_progress(const char *stage,uint64_t done,uint64_t total){
@@ -95,7 +110,7 @@ void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_
 }
 void runtime_warm_done(void){
  atomic_store(&warmPending,0);
- dispatch_async(dispatch_get_main_queue(), ^{if(atomic_load(&presentedFrames))bootOverlay.hidden=YES;});
+ dispatch_async(dispatch_get_main_queue(), ^{if(atomic_load(&presentedFrames))boot_overlay_hide();});
 }
 uint64_t front_game_res(int docked){(void)docked;return (720ULL<<32)|1280;}
 /* TOTK_ASSUME_FOCUS=1: unattended test runs. macOS refuses to activate an app launched from the background while the user is working in
@@ -253,11 +268,19 @@ static void front_menubar_fps(void){   // starts the refresh once the window exi
    scales it down for the screen. It lets a test exercise the 2K output path (a 2560x1440 picture) on a screen smaller than
    that (2026-10-17: the Mac reported a 1920x1080 display); the desktop launcher never sets it. */
 static CGFloat drawable_scale(void){static CGFloat f=-1;if(f<0){const char *e=getenv("TOTK_DRAWABLE_SCALE");f=e?atof(e):1;if(f<0.25||f>4)f=1;}return f;}
+/* TOTK_STATE_REPORTING: the drawable, the refresh rate of the screen the window is on, full screen. */
+static void front_sr_view(void){
+ if(!totk_sr_view||!window||!metalLayer)return;
+ CGSize px=metalLayer.drawableSize;
+ totk_sr_view((int)px.width,(int)px.height,window.screen?(int)window.screen.maximumFramesPerSecond:0,(window.styleMask&NSWindowStyleMaskFullScreen)!=0);
+}
+static void front_sr_window(void){if(totk_sr_window&&window)totk_sr_window(window.isKeyWindow,runtime_front_window_visible()!=0);}
 static void front_sync_drawable(void){
  NSView *v=window.contentView;if(!v||!metalLayer)return;
  CGFloat s=window.backingScaleFactor>0?window.backingScaleFactor:1,ts=drawable_scale();CGSize px=CGSizeMake(round(v.bounds.size.width*s*ts),round(v.bounds.size.height*s*ts));
  if(px.width<1||px.height<1||CGSizeEqualToSize(metalLayer.drawableSize,px))return;
  metalLayer.contentsScale=s;metalLayer.drawableSize=px;fprintf(stderr,"[totk] window drawable %.0fx%.0f (scale %.0f)\n",px.width,px.height,s);runtime_aspect_view(px.width,px.height);
+ front_sr_view();
 }
 /* BotW, the settings panel's aspect ratio: the window takes the selected camera ratio. Keep the chosen height across toggles, even when a wide
    window has to shrink to fit the display; a manual resize establishes a new height. AppKit stays on the main queue. */
@@ -285,11 +308,12 @@ void runtime_front_resize_aspect(double ratio){
 @interface TOTKWindowDelegate:NSObject<NSWindowDelegate>
 @end
 @implementation TOTKWindowDelegate
--(void)windowDidBecomeKey:(NSNotification *)n{(void)n;atomic_store(&focused,1);if(window.styleMask&NSWindowStyleMaskFullScreen)[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];runtime_oe_push_message(15);front_mouse_update();fprintf(stderr,"[totk] window gained focus\n");}
--(void)windowDidResignKey:(NSNotification *)n{(void)n;atomic_store(&focused,0);[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_mouse_update();runtime_input_clear();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");}
+-(void)windowDidBecomeKey:(NSNotification *)n{(void)n;atomic_store(&focused,1);if(window.styleMask&NSWindowStyleMaskFullScreen)[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];runtime_oe_push_message(15);front_mouse_update();fprintf(stderr,"[totk] window gained focus\n");front_sr_window();}
+-(void)windowDidResignKey:(NSNotification *)n{(void)n;atomic_store(&focused,0);[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_mouse_update();runtime_input_clear();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");front_sr_window();}
 /* The process ends with the window. Save writes go straight to the files (runtime/fs_host.c), so a close in the middle of a
    save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy). */
 -(void)windowWillClose:(NSNotification *)n{(void)n;
+ if(totk_sr_closing)totk_sr_closing();
  [(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];
  if(mouseHeld){mouseHeld=NO;CGAssociateMouseAndMouseCursorPosition(true);[NSCursor unhide];}
  if(!runtime_fs_save_busy()){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");_exit(0);}
@@ -299,14 +323,16 @@ void runtime_front_resize_aspect(double ratio){
   fprintf(stderr,"[totk] save %s after %.2f s; quitting\n",runtime_fs_save_busy()?"still in progress (gave up)":"done",(runtime_now_ns()-t0)/1e9);_exit(0);});
 }
 -(void)windowDidResize:(NSNotification *)n{(void)n;front_sync_drawable();}
--(void)windowDidEnterFullScreen:(NSNotification *)n{(void)n;[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:window.isKeyWindow];}
--(void)windowDidExitFullScreen:(NSNotification *)n{(void)n;[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];}
+-(void)windowDidEnterFullScreen:(NSNotification *)n{(void)n;[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:window.isKeyWindow];front_sr_view();}
+-(void)windowDidExitFullScreen:(NSNotification *)n{(void)n;[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_sr_view();}
+-(void)windowDidChangeScreen:(NSNotification *)n{(void)n;front_sr_view();}
 /* Whether any part of the window can be seen (TOTK, 2026-10-16 night): macOS stops the display link's callbacks for a
    fully covered window, so presents stop and per-picture measurements of that stretch are void; a test session's log
    says when (the user working in other apps covered the test windows of the frame interpolation tests). */
 static _Atomic int windowVisible=-1;   /* -1 not known yet; read by the present path's stall lines (runtime_front_window_visible) */
 static void note_occlusion(const char *when){int v=(window.occlusionState&NSWindowOcclusionStateVisible)!=0;atomic_store(&windowVisible,v);
- fprintf(stderr,"[totk] window %s%s (frame %llu)\n",v?"visible":"covered (or on another Space): no presents until it is visible again",when,(unsigned long long)dm_nvn_frame_count());}
+ fprintf(stderr,"[totk] window %s%s (frame %llu)\n",v?"visible":"covered (or on another Space): no presents until it is visible again",when,(unsigned long long)dm_nvn_frame_count());
+ front_sr_window();}
 -(void)windowDidChangeOcclusionState:(NSNotification *)n{(void)n;note_occlusion("");}
 -(void)windowDidChangeBackingProperties:(NSNotification *)n{(void)n;front_sync_drawable();}
 @end
@@ -326,6 +352,11 @@ void runtime_front_run(void(*callback)(void)){
  @autoreleasepool{
   bootStartNS=runtime_now_ns();
   {const char *commit=getenv("TOTK_SOURCE_COMMIT");fprintf(stderr,"[totk] built from commit %s\n",commit&&*commit?commit:"(not recorded)");}
+#ifdef GAME_BOTW
+  if(totk_sr_start)totk_sr_start("botw",TOTK_GAME_VERSION);   /* TOTK_STATE_REPORTING=1: starting */
+#else
+  if(totk_sr_start)totk_sr_start("totk",TOTK_GAME_VERSION);
+#endif
   [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   runtime_mouse_set_hook(front_mouse_update);
   runtime_gamepad_start();
@@ -364,6 +395,8 @@ void runtime_front_run(void(*callback)(void)){
    [window.contentView addSubview:box positioned:NSWindowBelow relativeTo:bootOverlay];[box position];hudBox=box;}
   [window makeFirstResponder:window.contentView];[window center];front_sync_drawable();
   if(assume_focus()){[window orderFrontRegardless];}else{[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];}   /* in front of other apps' windows, keyboard left alone */
+  front_sr_view();
+  [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){(void)n;front_sr_view();}];   /* a refresh rate changed on the same screen */
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{note_occlusion(" 3 s after opening");});
   atomic_store(&focused,1);
   if(CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)||CVDisplayLinkSetOutputCallback(displayLink,vsync_callback,NULL)||CVDisplayLinkStart(displayLink))runtime_fail("native display link initialization");

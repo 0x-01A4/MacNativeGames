@@ -295,5 +295,6 @@ static void settings_show(int open) {   /* main thread */
  settingsPanel.hidden=!open;
  front_mouse_update();
  fprintf(stderr,"[totk] settings panel %s\n",open?"open":"closed");
+ if(totk_sr_settings)totk_sr_settings(open);   /* TOTK_STATE_REPORTING: the game gets no input while it is open */
 }
 void runtime_settings_toggle(void){dispatch_async(dispatch_get_main_queue(), ^{settings_show(!settingsOpen);});}
