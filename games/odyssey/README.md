@@ -96,11 +96,39 @@ translated into Metal libraries ahead of time; then run the build command again 
 
 ## Playing
 
+- Opening Odyssey.app shows a settings window first, with the game's icon (made from your dump when the app is
+  packaged): render size, anti-aliasing, upscaler, texture filtering, sharpening, 60+60 at start, full screen or
+  window, the session limit and the controller's A/B/X/Y layout. **Play** saves them in `Odyssey Data` and starts the
+  game. Untick "Show this window at every launch" to go straight in; hold ⌥ Option while opening the app to see it again.
 - Keyboard: WASD move, J jump (A), K (B), U throw cap (Y), I (X), arrows camera, Return pause (+). Game controllers
   supported by macOS work too.
 - Full screen by default; ⌃⌘F or the green button leaves it. Create an empty file `windowed` in `Odyssey Data` to
   start in a window, or `no-metalfx` to turn off MetalFX upscaling.
 - The app is built from your own game files: do not share it.
+
+### Graphics keys
+
+The settings window's choices are kept in `Odyssey Data/graphics.txt`; in game the number keys change them, and the
+top-right overlay (key 1) lists each one with the GPU load and the GPU time of the picture work.
+
+| Key | Setting | Values |
+|---|---|---|
+| 3 | Anti-aliasing, at the game picture's size before the upscale | off / FXAA / SMAA 1x |
+| 4 | Sharpening (contrast-adaptive, after AMD FidelityFX CAS) | off / on |
+| 5 | Upscaler to the window | MetalFX / FSR 1 (EASU) / Lanczos-2 / bilinear |
+| 6 | Texture filtering of the game's mipmapped samplers | game / 4x / 8x / 16x anisotropic (live) |
+| 7 | Render size, at the next launch | 1600x900 (the game's) / 1920x1080 / 2240x1260 |
+
+Keys 3-5 act while 60+60 is on (key 2); with it off the picture is the default (MetalFX, no filter). The render size
+patches 1.3.0's framework, canvas and console viewport sizes and its render-target heaps (`runtime/game_patches.c`) and
+uses the game's own quality table rewritten for that size (`scripts/make_resolution_overlay.py`, run from your dump at
+packaging); 2400x1350 and 2560x1440 stop the game with an SDK Break, so 2240x1260 is the largest. SMAA uses the area and
+search tables from [iryoku/smaa](https://github.com/iryoku/smaa) (MIT, `third_party/smaa`).
+
+Measured on an M-series Mac with 8 GB (Seaside Kingdom, output 3024x1700; GPU time of the picture work per presented
+frame): MetalFX 1.81 ms, FSR 1 1.68 ms, Lanczos 1.89 ms, bilinear 0.26 ms; FXAA +0.03 ms, SMAA +0.18 ms, CAS +0.4 ms;
+16x texture filtering no measurable picture cost. 1920x1080 and 2240x1260 hold 16.7 ms frames; at 1920x1080 with 60+60,
+SMAA, CAS, FSR 1 and 16x the 120 Hz cadence held (p50 8.33 ms) with the GPU near its limit.
 
 ---
 
