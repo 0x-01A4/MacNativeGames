@@ -17093,7 +17093,9 @@ int botw_wb_from_stage(void *ev) {
    as a write. When the first composition ran before the height sources were loaded (most loads on a fast Mac), the
    sampled copy of a coarse level kept those zeros, every finer level composed from it kept them, and the feet sank
    0.77 m (the game's clamp under the physics hit). Each write-back now notes its memory; a sampled copy uploaded before
-   it is uploaded again at its next use. */
+   it is uploaded again at its next use. TOTK_BOTW_SAMPLED_COPY=0 turns this and the pending-rendering alias below off
+   (the sampled copies stay as first uploaded, as before). */
+static int bwb_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("TOTK_BOTW_SAMPLED_COPY"); on = !(e && !strcmp(e, "0")); } return on; }
 static nvn_hmap g_bwb_at = {.klen = 8};   /* storage address -> generation of the last write-back there (g_bwb_mu) */
 static pthread_mutex_t g_bwb_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic uint64_t g_bwb_gen;
@@ -17107,6 +17109,7 @@ static nvn_hmap g_bra = {.klen = 8};   /* storage address -> bra_ent * (g_bwb_mu
 static uint64_t g_bra_hits;
 static void bra_drop_locked(uint64_t k) { bra_ent *r = nvn_hm_get(&g_bra, &k); if (r) { nvn_hm_del(&g_bra, &k); defer_obj_release((__bridge id)r->obj); CFRelease(r->obj); free(r); } }
 void botw_render_note(const tex_t *t, void *obj, uint64_t stamp) {
+    if (!bwb_on()) return;
     uint64_t k = (uint64_t)(uintptr_t)t->mem; void *old = NULL;
     pthread_mutex_lock(&g_bwb_mu);
     bra_ent *r = nvn_hm_get(&g_bra, &k);
@@ -17138,6 +17141,7 @@ void botw_render_gone(const void *mem, const void *obj) {
     pthread_mutex_lock(&g_bwb_mu); bra_ent *r = g_bra.n ? nvn_hm_get(&g_bra, &k) : NULL; if (r && obj && r->obj == obj) bra_drop_locked(k); pthread_mutex_unlock(&g_bwb_mu);
 }
 void botw_wb_landed(const void *mem) {
+    if (!bwb_on()) return;
     uint64_t k = (uint64_t)(uintptr_t)mem, g = atomic_fetch_add(&g_bwb_gen, 1) + 1;
     pthread_mutex_lock(&g_bwb_mu); nvn_hm_put(&g_bwb_at, &k, (void *)(uintptr_t)g); bra_drop_locked(k); pthread_mutex_unlock(&g_bwb_mu);
 }
