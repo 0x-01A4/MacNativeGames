@@ -68,19 +68,7 @@ int runtime_triggers_available(void){return 0;}
 int runtime_triggers_locked(void){return 0;}
 int runtime_triggers_choice(void){return 0;}
 void runtime_triggers_choose(int on){(void)on;}
-
-/* Frontend settings references; this probe does not open that panel. */
-int runtime_feedback_choice(int g){(void)g;return 0;}
-int runtime_feedback_locked(int g){(void)g;return 0;}
-int runtime_feedback_present(int g){(void)g;return 0;}
-void runtime_feedback_choose(int g,int on){(void)g;(void)on;}
-float runtime_rumble_gain(void){return 1;}
-int runtime_rumble_gain_locked(void){return 0;}
-void runtime_rumble_gain_set(float gain){(void)gain;}
-int runtime_triggers_available(void){return 0;}
-int runtime_triggers_locked(void){return 0;}
-int runtime_triggers_choice(void){return 0;}
-void runtime_triggers_choose(int on){(void)on;}
+int fps_overlay_value(void){return 0;}   /* the HUD's FPS graph (PR #940) */
 
 static NSEvent *key(NSEventModifierFlags flags){
  return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:flags timestamp:0

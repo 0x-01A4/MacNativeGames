@@ -2,6 +2,7 @@
    Controller focus is separate: south selects / east cancels (reversed for Switch), west deletes, north inserts space,
    L3 changes case, R3 changes QWERTY/AZERTY, L1/R1 move the caret, L2 changes symbols and R2/menu confirm. No game data or renderer dependency. */
 #pragma once
+#include "totk_ui_lang.h"   /* totk_ui_zh: the host text's language */
 
 /* A shortcut badge belongs to its key, not to a separate legend the player has to memorise. */
 @interface TOTKKeyboardKey:NSButton
@@ -45,12 +46,13 @@
 -(void)startController;
 @end
 
+/* Chinese exactly when the rest of the host's text is (totk_ui_zh: TOTK_UI_LANG, else the first preferred language);
+   French where that is English but the language is French, since the layout and accents follow it too. */
 static NSString *text_keyboard_label(NSString *en,NSString *fr,NSString *zh){
+ if(totk_ui_zh())return zh;
  const char *override=getenv("TOTK_UI_LANG");
  NSString *language=override&&*override?([NSString stringWithUTF8String:override]?:@"en"):(NSLocale.preferredLanguages.firstObject?:@"en");
- if([language hasPrefix:@"fr"])return fr;
- if([language hasPrefix:@"zh"])return zh;
- return en;
+ return [language hasPrefix:@"fr"]?fr:en;
 }
 @implementation TOTKTextBar
 -(BOOL)allowed:(unichar)c{

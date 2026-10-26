@@ -53,7 +53,7 @@ The launcher checks the file at every start and names the first bad line in an a
 - **Rumble, Rumble strength (0.5× to 4×) and Gyro aiming:** see Rumble and Gyro aiming above.
 - Two buttons at the bottom: **Contribute shaders and pipelines** sends the ones your game met that the shared list lacks (with the GitHub CLI `gh` when it is signed in, in the background; otherwise the GitHub form opens and Finder shows the file to drag in), and **Star the project** opens the GitHub page.
 
-Keys 2–7 are no shortcuts any more. Text entry (naming a horse) uses the Mac keyboard. iPhone/iPad uses touch controls or a compatible game controller and has no settings panel. The touch layout follows a Switch controller: L and ZL at the top left, R and ZR at the top right, − and + between them, the d-pad on the left and A, B, X, Y on the right. The d-pad sits above the left stick and A, B, X, Y above the right stick, and L3 and R3 (stick presses) are in the bottom corners. Touch the left half away from the buttons and drag for the left stick, the right half for the camera (right stick); each stick is centred where your finger goes down. With a game controller connected the touch controls are hidden: touch the screen to show and use them, and they hide again 3 seconds after you lift your fingers.
+Keys 2–7 are no shortcuts any more. iPhone/iPad uses touch controls or a compatible game controller and has no settings panel. The touch layout follows a Switch controller: L and ZL at the top left, R and ZR at the top right, − and + between them, the d-pad on the left and A, B, X, Y on the right. The d-pad sits above the left stick and A, B, X, Y above the right stick, and L3 and R3 (stick presses) are in the bottom corners. Touch the left half away from the buttons and drag for the left stick, the right half for the camera (right stick); each stick is centred where your finger goes down. With a game controller connected the touch controls are hidden: touch the screen to show and use them, and they hide again 3 seconds after you lift your fingers.
 
 **Ultrawide layouts (optional, 1.4.3):** with a wide aspect ratio the HUD and menus stay in the middle 16:9. To put the HUD in the corners of a 21:9 or 32:9 display instead, make layouts for its shape from your own game files and start with them: `.venv/bin/python scripts/make_romfs_patches.py --version v143 --aspect 3440x1440` (writes `extracted/v143/romfs-patches-3440x1440`; `--hud center` keeps the HUD in the middle) and `scripts/make_output_res_overlay.py 3440x1440 --version v143`, then `TOTK_OUTPUT_RES=3440x1440 TOTK_ASPECT=3440x1440 TOTK_UI_SQUEEZE=0 TOTK_ROMFS_PATCHES=extracted/v143/romfs-patches-3440x1440` (in the work folder). The layouts are read at start, so such a session stays wide; the panel's aspect ratio is not meant for it. Every edited pane is found by name and checked against the value the game ships before it is written.
 
@@ -62,6 +62,31 @@ The menu bar shows the live frame rate as the game's own menu, on the left after
 Native 2K changes the game's composition canvas and UI to 2560×1440. The 3D scene still follows the game's separate render scaling; this does not force every internal render target to 1440p. The manual MetalFX mode also works in smaller windows and scales to the actual output size, including 4K.
 
 Language: the game and the launcher's own text (startup screen, shader warm-up progress, overlays, keyboard prompt) follow the Mac's language. The launcher text is Chinese on a Chinese Mac and English otherwise. Regional variants follow the console: English outside the Americas (en-GB, en-AU, ...) selects British English, which shows temperatures in Celsius (American English shows Fahrenheit), French in Canada selects Canadian French, Spanish in the Americas Latin American Spanish, and in a 1.4.3 build Brazilian Portuguese selects the game's official pt-BR text. Simplified and Traditional Chinese are told apart by the script (zh-Hans / zh-Hant) or, without one, by the region (Taiwan, Hong Kong and Macau are Traditional). To give only this game another language, choose it in System Settings › General › Language & Region › Applications, or set its preferred language, for example `defaults write org.macnativegames.totk AppleLanguages -array pt-BR` (`defaults delete org.macnativegames.totk AppleLanguages` removes it). To override, launch with `TOTK_LANG` for the game (for example `open --env TOTK_LANG=en-US "Tears of the Kingdom.app"`) or `TOTK_UI_LANG=zh` / `en` for the launcher text.
+
+## Text entry (Mac)
+
+When the game asks for text (naming a horse), the window dims and shows an on-screen keyboard above a text field. Both Tears of the Kingdom and Breath of the Wild use it; no game code is patched. Type on the Mac keyboard as usual (selection, paste and input methods work; Return confirms, Escape cancels), click the keys, or use a controller:
+
+| Action | PlayStation | Xbox | Switch |
+|---|---|---|---|
+| Move between keys | D-pad / left stick | D-pad / left stick | D-pad / left stick |
+| Type the selected key | × | A | A |
+| Cancel | ○ | B | B |
+| Delete | □ | X | Y |
+| Space | △ | Y | X |
+| Upper / lower case | L3 | left stick click | left stick click |
+| AZERTY / QWERTY | R3 | right stick click | right stick click |
+| Move the text cursor | L1 / R1 | LB / RB | L / R |
+| Letters / symbols | L2 | LT | ZL |
+| Confirm | R2 / Options | RT / Menu | ZR / + |
+
+- The keys show their controller button. The labels follow the controller type (auto or the settings panel's choice), by position, so a remapped `controls.txt` does not get in the way.
+- While the keyboard is open the controller types instead of playing; the game gets it back once every button and stick is released.
+- The pages hold Latin letters, French accents, digits and punctuation. Other scripts come from the Mac's input methods.
+- The text follows the game's limits: its length and the characters it does not allow.
+- The keyboard's labels are in Chinese, French or English, following the Mac's language (`TOTK_UI_LANG` overrides it).
+- AZERTY is the first choice on a French Mac, QWERTY otherwise. The choice is kept in `keyboard-layout.txt` next to `controls.txt`.
+- `python -m unittest tests.test_text_keyboard` checks it without game files; `games/totk/tests/text_keyboard/test.py --preview` opens it to look at.
 
 ## Button icons
 

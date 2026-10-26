@@ -9,7 +9,9 @@ source = pathlib.Path(__file__).with_name('probe.m')
 with tempfile.TemporaryDirectory(prefix='totk-text-keyboard-') as work:
     binary = pathlib.Path(work) / 'probe'
     subprocess.run(['xcrun', 'clang', '-std=c11', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
-                    '-Wno-deprecated-declarations', str(source), '-framework', 'Cocoa',
+                    '-Wno-deprecated-declarations',
+                    '-I' + str(source.parents[2] / 'third_party/d2r_gfx/gfx/nvn/include'),
+                    str(source), '-framework', 'Cocoa',
                     '-framework', 'QuartzCore', '-framework', 'GameController', '-framework', 'IOKit',
                     '-o', str(binary)], check=True)
     lifecycle = pathlib.Path(work) / 'lifecycle'
