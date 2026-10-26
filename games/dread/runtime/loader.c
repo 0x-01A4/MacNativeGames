@@ -19,6 +19,9 @@
 #include "mach_vm_compat.h"
 #include <sys/ucontext.h>
 #include "runtime_tables.h"
+/* main.npdm: the main thread's priority and the process's default core (runtime/threads.c) */
+int runtime_npdm_main_priority(void) { return NPDM_MAIN_PRIORITY; }
+int runtime_npdm_default_core(void) { return NPDM_DEFAULT_CORE; }
 #include "game_patches.h"
 #include "game_version.h"
 #define NM (sizeof(modules)/sizeof(modules[0]))

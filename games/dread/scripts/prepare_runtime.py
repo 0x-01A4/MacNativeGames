@@ -137,6 +137,12 @@ def runtime_tables(work, out):
         lines.append('{' + f'.name={json.dumps(m["name"])},.digest={json.dumps(m["sha256"])},.file_size={m["size"]}ULL,.text_end={l["TEXT_END"]}ULL,.ro_off={l["RO_OFF"]}ULL,.data_off={l["DATA_OFF"]}ULL,.patch_off={l["PATCH_OFF"]}LL,.patch_lead={l["PATCH_LEAD"]}ULL,.patch_size={l["PATCH_SIZE"]}ULL,.image_size={l["IMAGE_SIZE"]}ULL,.key_off={l["KEY_PAGE_OFF"]}ULL,.symbols=symbol_{n},.nsym={len(m["symbols"])},.relocs=reloc_{n},.nreloc={len(m["relocs"])},.gates=gate_{n},.ngate={len(m["gates"])},.init={m["tags"].get(12,0)}ULL,.ctor_flag={m["ctor_flag"]}ULL,.init_array={m["tags"].get(25,0)}ULL,.init_size={m["tags"].get(27,0)}ULL' + '},')
     lines.append('};')
     lines.append(f'#define PROBE_PLT {plt[0]}ULL\n#define PROBE_SLOT {slot}ULL')
+    npdm_path = work / f'extracted/{VERSION}/exefs/main.npdm'
+    assert sha(npdm_path) == EXPECTED['exefs_sha256']['main.npdm'], 'Unverified main.npdm'
+    npdm = npdm_path.read_bytes()
+    assert npdm[:4] == b'META' and npdm[0xd] <= 3, 'main.npdm header'
+    # The main thread's priority and the process's default core (Horizon pins threads created with core -2 to it)
+    lines.append(f'#define NPDM_MAIN_PRIORITY {npdm[0xc]}\n#define NPDM_DEFAULT_CORE {npdm[0xd]}')
     (out / 'runtime_tables.h').write_text('\n'.join(lines) + '\n')
     (work / 'analysis').mkdir(exist_ok=True)
     (work / 'analysis/runtime-layout.json').write_text(json.dumps(modules, indent=2) + '\n')
