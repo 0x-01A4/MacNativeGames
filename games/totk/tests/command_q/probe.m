@@ -10,18 +10,48 @@ int runtime_fs_save_busy(void){return mode==2||(mode==1&&runtime_now_ns()<200000
 _Noreturn void runtime_fail(const char *message){fprintf(stderr,"FAIL: %s\n",message);exit(1);}
 void runtime_input_key(unsigned code,int down){(void)code;(void)down;}
 void runtime_input_clear(void){}
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_gamepad_start(void){}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
+void runtime_gamepad_settings_enable(int on){(void)on;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
+int runtime_gamepad_settings_requested(void){return 0;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 static int textCaptureFixture;
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_gamepad_text_capture(int on){textCaptureFixture=on;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_gamepad_text_read(RuntimeGamepadState *out){*out=(RuntimeGamepadState){0};}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 int runtime_setting_word(const char *n,char *s,size_t z){(void)n;(void)s;(void)z;return 0;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_setting_save(const char *n,const char *s,const char *w){(void)n;(void)s;(void)w;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 int runtime_gamepad_type(int *detected){if(detected)*detected=-1;return 0;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 int runtime_mouse_enabled(void){return 0;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_mouse_set_hook(void (*hook)(void)){(void)hook;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_mouse_move(double dx,double dy){(void)dx;(void)dy;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_mouse_button(int button,int down){(void)button;(void)down;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 void runtime_mouse_release(void){}
+#endif
 void runtime_oe_push_message(uint32_t message){(void)message;}
 void hle_bind_system_event(void *event,int autoclear){(void)event;(void)autoclear;}
 void hle_signal_system_event(void *event){(void)event;}
@@ -45,8 +75,12 @@ int runtime_aspect_set_ratio(float r){(void)r;return 0;}
 float runtime_aspect_ratio(void){return 0;}
 float runtime_aspect_start(void){return 0;}
 int runtime_output_native(int mode,unsigned *w,unsigned *h){(void)mode;(void)w;(void)h;return 0;}
+#ifndef FRONTEND_REAL_GAMEPAD
 int runtime_gamepad_type_set(int type){return type;}
+#endif
+#ifndef FRONTEND_REAL_GAMEPAD
 int runtime_mouse_set(int on){return on;}
+#endif
 void nvn_fps_lock_set(int fps){(void)fps;}
 int nvn_fps_lock(void){return 0;}
 

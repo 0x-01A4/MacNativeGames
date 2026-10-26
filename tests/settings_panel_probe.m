@@ -31,6 +31,8 @@ void runtime_mouse_move(double dx, double dy) { (void)dx; (void)dy; }
 void runtime_mouse_button(int button, int down) { (void)button; (void)down; }
 void runtime_mouse_release(void) {}
 void runtime_gamepad_clear(void) {}
+static int fakeSettingsCapture;
+void runtime_gamepad_text_capture(int on) { fakeSettingsCapture = !!on; }
 /* runtime/hid_feedback.c's and gamepad_feedback.m's rumble, strength and gyro switches without a controller. */
 static int fakeFeedback[2] = {1, 1}, fakeFeedbackLocked[2], fakeFeedbackPresent[2] = {1, 1}, fakeGainLocked;
 static float fakeGain = 1;
@@ -110,7 +112,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
 
     /* Key 1 opens it; a held key acts once. */
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
-    assert(settingsOpen && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
+    assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
     assert(settingsPanel.rows.count == 12);
 

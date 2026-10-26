@@ -358,6 +358,7 @@ void runtime_front_run(void(*callback)(void)){
   [bootOverlay addSubview:bootStage];[bootOverlay addSubview:bootDetail];[bootOverlay addSubview:bootProgress];
   [window.contentView addSubview:bootOverlay];[bootProgress startAnimation:nil];
   front_menubar_fps();
+  settings_controller_start();
   /* The FPS, shader and load lines: in the corner box (compact HUD), or with TOTK_HUD=corners drawn into the game picture's
      corners by the present encoder (gfx/nvn/fps_overlay.c). The box sits under the opaque boot overlay until it is hidden. */
   if(hud_compact()){TOTKHudBox *box=[[TOTKHudBox alloc] initWithFrame:NSZeroRect];box.autoresizingMask=NSViewMinXMargin|NSViewMinYMargin;
@@ -395,6 +396,7 @@ int runtime_front_text_input(const RuntimeTextRequest *req,char *out,size_t out_
  __block NSString *result=nil;dispatch_semaphore_t sem=dispatch_semaphore_create(0);
  dispatch_async(dispatch_get_main_queue(), ^{
   if(openBar){dispatch_semaphore_signal(sem);return;}   /* do not strand an earlier guest request */
+  if(settingsOpen)settings_show(0);
   NSView *cv=window.contentView;
   TOTKTextBar *bar=[[TOTKTextBar alloc] initWithFrame:cv.bounds];
   bar.maxUnits=maxU;bar.minUnits=minU;bar.digitsOnly=digits;bar.disabled=dis;
