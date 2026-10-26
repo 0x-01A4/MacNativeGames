@@ -12082,6 +12082,81 @@ static int mfxup_draw(NvProg *pr) {
     return 0;
 }
 #include "nvn_cube_group.h"
+#ifndef GAME_BOTW
+/* TOTK only (PR #990; Breath of the Wild's UI is not measured with it and keeps the squeeze as it was): on a screen wider
+   than 16:9, what uw_ui_squeeze squeezed into the middle 16:9 is looked at once more by where its nn::ui2d quad lands
+   (ui2d_quad_covers_screen): a backdrop keeps the canvas, the map is squeezed in its own proportions without the 16:9 cut,
+   its frame and layer panel go against the screen edges. In: the squeeze (*ux, *uy); out: the squeeze, edge (-1 / 1 a side
+   strip kept at that edge, -2 / 2 a piece stretched from it), world (the map's picture) and map_screen (the map is shown,
+   so a scissor of the whole canvas stays whole). TOTK_UI_COVER_WIDE=0 turns it off. */
+static void totk_uw_wide_ui(NvProg *pr, const p_draw *dw, const p_draw_idx *di, NSUInteger tw, NSUInteger th,
+                            double *pux, double *puy, int *pedge, int *pworld, int *map_screen) {
+    double ux = *pux, uy = *puy; int edge = 0, world = 0; (void)th;
+    if ((ux != 1 || uy != 1) && dw && dw->count == 4 && S.nattr == 2 && S.stream[0].stride == 20 && ui_covers_layout()) ux = uy = 1;   // a backdrop keeps the canvas
+    if (ux != 1 || uy != 1) {   // a TOTK backdrop keeps the canvas: by where its quad lands, or else by the scene picture it samples
+        static int off = -1; if (off < 0) { const char *e = getenv("TOTK_UI_COVER_WIDE"); off = e && !strcmp(e, "0"); }
+        int cover = off ? 0 : ui2d_quad_covers_screen(), kept = cover == 1 || cover == 4 || (cover < 0 && ui_samples_scene_picture());
+        edge = cover == 2 ? -1 : cover == 3 ? 1 : cover == 5 ? -2 : cover == 6 ? 2 : 0;
+        /* The map (user 2026-10-26: stretched, and its markers slid on it): its picture is wider than the Switch's screen
+           (2250 x 1080, NDC -1.17..1.17), so squeezed like the markers over it, in its own proportions, it nearly fills the
+           wide screen (+-0.96): it is squeezed, but its scissor is not, so the 16:9 middle does not cut it (nor the markers over it: a scissor of the whole canvas is never squeezed). */
+        if (cover == 1 && (g_ui2d_box[0] < -1.05f || g_ui2d_box[1] > 1.05f)) { kept = 0; world = 1; }
+        /* Then, once the map's chrome starts (its frame strips and bars come after the markers), what lies in a side quarter
+           of the map screen - the layer panel on the left, its divider, the gradients on the right - goes against its edge
+           with the frame, as on the Switch, instead of leaving a band between the frame and the middle 16:9 (user
+           2026-10-26 "la barre bleue", Codex's read of the catalogue). The markers, drawn before, stay on the map. */
+        static uint64_t map_frame, chrome_frame, seq_frame; static int seq0;
+        uint64_t fr = atomic_load(&g_cur_frame);
+        if (seq_frame != fr) { seq_frame = fr; seq0 = 0; }
+        g_uw_seq = seq0++;   // the draw's place among this frame's squeezed UI draws (catalogue)
+        if (world) map_frame = fr;
+        else if (map_frame == fr && cover >= 2) chrome_frame = fr;
+        int map_on = map_frame && map_frame + 2 >= fr, markers = map_frame == fr && chrome_frame != fr;   // between the map and its frame
+        *map_screen = map_on;
+        g_uw_phase = !map_on ? 0 : world ? 1 : markers ? 2 : 3;
+        if (!world && !kept && cover == 0 && map_on && !markers) {
+            if (g_ui2d_box[1] <= -0.6f) edge = -1; else if (g_ui2d_box[0] >= 0.6f) edge = 1;
+        }
+        /* The layer panel is drawn among the markers (catalogue seq/phase, Codex 2026-10-26): it opens with its divider, an
+           untextured line of the full height at x = -0.74, and its icons follow in the left column. From that line until a
+           draw lands outside the column, the left column goes against the left edge with the frame. */
+        static uint64_t panel_frame;
+        if (map_on && markers && cover == 0 && !kept) {
+            int line = g_ui2d_box[2] <= -0.99f && g_ui2d_box[3] >= 0.99f && g_ui2d_box[1] - g_ui2d_box[0] < 0.03f && g_ui2d_box[1] <= -0.6f;
+            if (line) panel_frame = fr;
+            if (panel_frame == fr) {
+                if (g_ui2d_box[1] <= -0.6f) edge = -1;
+                else if (g_ui2d_box[0] > -0.6f && g_ui2d_box[0] < 1) panel_frame = 0;   // back on the map: a marker
+            }
+        }
+    /* TOTK_UW_CATALOG=1 (the iPhone's debug log turns it on): each kind of UI draw the squeeze applies to once - its shaders,
+       vertices, the texture its fragment shader samples, its viewport, cover and whether it kept the canvas - to tell a
+       menu's backdrop from the widgets around it. Kinds are told apart by cover and kept too (a grey layer and a widget
+       may share shaders and an 8x8 texture). */
+    {
+        static int cat = -1; static uint64_t seen[256]; static int nseen;
+        if (cat < 0) { const char *e = getenv("TOTK_UW_CATALOG"); cat = e && strcmp(e, "0"); }
+        if (cat) {   // off: no texture lookup or hashing per UI draw
+        uint64_t h = ghost_tex(); int tid = (int)(h & 0xfffff); const tex_t *t = tid > 0 && tid < g_ntreg && g_treg[tid].ok ? &g_treg[tid].t : NULL;
+        const char *vk = pr && pr->sh[0] ? pr->sh[0]->key : "-", *fk = pr && pr->sh[1] ? pr->sh[1]->key : "-";
+        uint64_t k = 1469598103934665603ull;
+        for (const char *c = vk; *c && c < vk + 8; c++) k = (k ^ (uint8_t)*c) * 1099511628211ull;
+        for (const char *c = fk; *c && c < fk + 8; c++) k = (k ^ (uint8_t)*c) * 1099511628211ull;
+        k ^= (uint64_t)(t ? t->d.width : 0) << 32 ^ (t ? t->d.height : 0) ^ (uint64_t)(cover + 1) << 60 ^ (uint64_t)kept << 63 ^ (uint64_t)world << 59 ^ (uint64_t)g_uw_phase << 56;
+        int known = 0; for (int i = 0; i < nseen; i++) known |= seen[i] == k;
+        if (cat && !known && nseen < 256) { seen[nseen++] = k;
+            MLOG("[uw-cat] vs %.8s fs %.8s %s %u inst %d nattr %d stride %d vbuf %llu tex %ux%u fmt %#x vp %g,%g %gx%g canvas %lux%lu blend %#x cover %d kept %d world %d seq %d phase %d box %.2f..%.2f x %.2f..%.2f",
+                 vk, fk, dw ? "draw" : "indexed", dw ? dw->count : di ? di->count : 0, dw ? dw->instances : di ? di->instances : 0, S.nattr, S.stream[0].stride,
+                 (unsigned long long)S.vbuf[0].size, t ? t->d.width : 0, t ? t->d.height : 0, t ? (unsigned)t->d.format : 0u,
+                 S.has_vp ? S.vp[0][0] : 0, S.has_vp ? S.vp[0][1] : 0, S.has_vp ? S.vp[0][2] : 0, S.has_vp ? S.vp[0][3] : 0, (unsigned long)tw, (unsigned long)th, S.color.blend_en, cover, kept, world, g_uw_seq, g_uw_phase,
+                 cover >= 0 ? g_ui2d_box[0] : 0, cover >= 0 ? g_ui2d_box[1] : 0, cover >= 0 ? g_ui2d_box[2] : 0, cover >= 0 ? g_ui2d_box[3] : 0); }
+        }
+    }
+        if (kept) ux = uy = 1;
+    }
+    *pux = ux; *puy = uy; *pedge = edge; *pworld = world;
+}
+#endif
 static void draw_inner(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); g_draw_skip[0]++; return; }
     g_prog_for_draw = 1; __unsafe_unretained NvProg *pr = prog_get(S.prog); g_prog_for_draw = 0;
@@ -12328,69 +12403,14 @@ frz_plain:;
         if (uh > 0 && uh < 1) { if (ui_cover_all(uh)) vs = 1 / uh; else if (uy > 0) { so = lround(uy * th); if (ui_mat_ok()) moff = 2 * uy; else { vo = so; static int n; if (n++ < 4) MLOG("界面下移：投影矩阵这次读不到，退回挪视口（通道 %llu）", g_stat_pass); } } } }
     if (moff != g_ui_moff) { g_ui_moff = moff; args_dirty_stage(0); }
     double ux, uy, cx = tw / 2.0, cy = th / 2.0;   // key 4: UI squeezed by 1 / ux across, 1 / uy down, about the canvas centre
-    int world = 0;   // 1: the map's picture, squeezed but not cut to the middle 16:9 (see below)
+    int world = 0;   // 1: the map's picture, squeezed but not cut to the middle 16:9 (totk_uw_wide_ui)
     int edge = 0;   // a frame's side strip: squeezed, but kept against the left (-1) / right (1) edge of the canvas; +-2: a quad
                     // from that edge past the middle, stretched from the canvas edge to where its inner side is squeezed to
+    int map_screen = 0;   // TOTK's map is shown: a scissor of the whole canvas is not squeezed (its markers reach the sides)
     uw_ui_squeeze(pr && pr->sh[0] ? pr->sh[0]->key : NULL, dw, di, tw, th, &ux, &uy);
-    if ((ux != 1 || uy != 1) && dw && dw->count == 4 && S.nattr == 2 && S.stream[0].stride == 20 && ui_covers_layout()) ux = uy = 1;   // a backdrop keeps the canvas
-    if (ux != 1 || uy != 1) {   // a TOTK backdrop keeps the canvas: by where its quad lands, or else by the scene picture it samples
-        static int off = -1; if (off < 0) { const char *e = getenv("TOTK_UI_COVER_WIDE"); off = e && !strcmp(e, "0"); }
-        int cover = off ? 0 : ui2d_quad_covers_screen(), kept = cover == 1 || cover == 4 || (cover < 0 && ui_samples_scene_picture());
-        edge = cover == 2 ? -1 : cover == 3 ? 1 : cover == 5 ? -2 : cover == 6 ? 2 : 0;
-        /* The map (user 2026-10-26: stretched, and its markers slid on it): its picture is wider than the Switch's screen
-           (2250 x 1080, NDC -1.17..1.17), so squeezed like the markers over it, in its own proportions, it nearly fills the
-           wide screen (+-0.96): it is squeezed, but its scissor is not, so the 16:9 middle does not cut it (nor the markers over it: a scissor of the whole canvas is never squeezed). */
-        if (cover == 1 && (g_ui2d_box[0] < -1.05f || g_ui2d_box[1] > 1.05f)) { kept = 0; world = 1; }
-        /* Then, once the map's chrome starts (its frame strips and bars come after the markers), what lies in a side quarter
-           of the map screen - the layer panel on the left, its divider, the gradients on the right - goes against its edge
-           with the frame, as on the Switch, instead of leaving a band between the frame and the middle 16:9 (user
-           2026-10-26 "la barre bleue", Codex's read of the catalogue). The markers, drawn before, stay on the map. */
-        static uint64_t map_frame, chrome_frame, seq_frame; static int seq0;
-        uint64_t fr = atomic_load(&g_cur_frame);
-        if (seq_frame != fr) { seq_frame = fr; seq0 = 0; }
-        g_uw_seq = seq0++;   // the draw's place among this frame's squeezed UI draws (catalogue)
-        if (world) map_frame = fr;
-        else if (map_frame == fr && cover >= 2) chrome_frame = fr;
-        int map_on = map_frame && map_frame + 2 >= fr, markers = map_frame == fr && chrome_frame != fr;   // between the map and its frame
-        g_uw_phase = !map_on ? 0 : world ? 1 : markers ? 2 : 3;
-        if (!world && !kept && cover == 0 && map_on && !markers) {
-            if (g_ui2d_box[1] <= -0.6f) edge = -1; else if (g_ui2d_box[0] >= 0.6f) edge = 1;
-        }
-        /* The layer panel is drawn among the markers (catalogue seq/phase, Codex 2026-10-26): it opens with its divider, an
-           untextured line of the full height at x = -0.74, and its icons follow in the left column. From that line until a
-           draw lands outside the column, the left column goes against the left edge with the frame. */
-        static uint64_t panel_frame;
-        if (map_on && markers && cover == 0 && !kept) {
-            int line = g_ui2d_box[2] <= -0.99f && g_ui2d_box[3] >= 0.99f && g_ui2d_box[1] - g_ui2d_box[0] < 0.03f && g_ui2d_box[1] <= -0.6f;
-            if (line) panel_frame = fr;
-            if (panel_frame == fr) {
-                if (g_ui2d_box[1] <= -0.6f) edge = -1;
-                else if (g_ui2d_box[0] > -0.6f && g_ui2d_box[0] < 1) panel_frame = 0;   // back on the map: a marker
-            }
-        }
-    /* TOTK_UW_CATALOG=1 (the iPhone's debug log turns it on): each kind of UI draw the squeeze applies to once - its shaders,
-       vertices, the texture its fragment shader samples, its viewport, cover and whether it kept the canvas - to tell a
-       menu's backdrop from the widgets around it. Kinds are told apart by cover and kept too (a grey layer and a widget
-       may share shaders and an 8x8 texture). */
-    {
-        static int cat = -1; static uint64_t seen[256]; static int nseen;
-        if (cat < 0) { const char *e = getenv("TOTK_UW_CATALOG"); cat = e && strcmp(e, "0"); }
-        uint64_t h = ghost_tex(); int tid = (int)(h & 0xfffff); const tex_t *t = tid > 0 && tid < g_ntreg && g_treg[tid].ok ? &g_treg[tid].t : NULL;
-        const char *vk = pr && pr->sh[0] ? pr->sh[0]->key : "-", *fk = pr && pr->sh[1] ? pr->sh[1]->key : "-";
-        uint64_t k = 1469598103934665603ull;
-        for (const char *c = vk; *c && c < vk + 8; c++) k = (k ^ (uint8_t)*c) * 1099511628211ull;
-        for (const char *c = fk; *c && c < fk + 8; c++) k = (k ^ (uint8_t)*c) * 1099511628211ull;
-        k ^= (uint64_t)(t ? t->d.width : 0) << 32 ^ (t ? t->d.height : 0) ^ (uint64_t)(cover + 1) << 60 ^ (uint64_t)kept << 63 ^ (uint64_t)world << 59 ^ (uint64_t)g_uw_phase << 56;
-        int known = 0; for (int i = 0; i < nseen; i++) known |= seen[i] == k;
-        if (cat && !known && nseen < 256) { seen[nseen++] = k;
-            MLOG("[uw-cat] vs %.8s fs %.8s %s %u inst %d nattr %d stride %d vbuf %llu tex %ux%u fmt %#x vp %g,%g %gx%g canvas %lux%lu blend %#x cover %d kept %d world %d seq %d phase %d box %.2f..%.2f x %.2f..%.2f",
-                 vk, fk, dw ? "draw" : "indexed", dw ? dw->count : di ? di->count : 0, dw ? dw->instances : di ? di->instances : 0, S.nattr, S.stream[0].stride,
-                 (unsigned long long)S.vbuf[0].size, t ? t->d.width : 0, t ? t->d.height : 0, t ? (unsigned)t->d.format : 0u,
-                 S.has_vp ? S.vp[0][0] : 0, S.has_vp ? S.vp[0][1] : 0, S.has_vp ? S.vp[0][2] : 0, S.has_vp ? S.vp[0][3] : 0, (unsigned long)tw, (unsigned long)th, S.color.blend_en, cover, kept, world, g_uw_seq, g_uw_phase,
-                 cover >= 0 ? g_ui2d_box[0] : 0, cover >= 0 ? g_ui2d_box[1] : 0, cover >= 0 ? g_ui2d_box[2] : 0, cover >= 0 ? g_ui2d_box[3] : 0); }
-    }
-        if (kept) ux = uy = 1;
-    }
+#ifndef GAME_BOTW
+    totk_uw_wide_ui(pr, dw, di, tw, th, &ux, &uy, &edge, &world, &map_screen);
+#endif
     double vx = S.has_vp ? S.vp[0][0] : 0, vw = S.has_vp ? S.vp[0][2] : tw, vy = S.has_vp ? S.vp[0][1] + vo : vo, vh = S.has_vp ? S.vp[0][3] * vs : th * vs;
     double ax = edge == -1 ? vx : edge == 1 ? vx + vw : cx, kx = 1 / ux;   // across: x -> ax + (x - ax) * kx (the centre, or a side strip's own edge)
     if (ux != 1 && (edge == -2 || edge == 2)) {   // the outer side stays at the canvas edge, the inner side goes where the squeeze puts it
@@ -12448,7 +12468,7 @@ frz_plain:;
     MTLScissorRect sc = {0, 0, tw, th};
     if (R.has_sc) {
         long sx0 = R.sc.x, sx1 = (long)R.sc.x + R.sc.w;
-        if (ux != 1 && !world && (sx0 > 0 || sx1 < (long)tw)) { sx0 = lround(ax + (sx0 - ax) * kx); sx1 = lround(ax + (sx1 - ax) * kx); }   // as the viewport, or a side strip is cut away
+        if (ux != 1 && !world && (!map_screen || sx0 > 0 || sx1 < (long)tw)) { sx0 = lround(ax + (sx0 - ax) * kx); sx1 = lround(ax + (sx1 - ax) * kx); }   // as the viewport, or a side strip is cut away
         long x0 = sx0 < 0 ? 0 : sx0, y0 = R.sc.y <= 0 ? 0 : R.sc.y + so, x1 = sx1, y1 = vs != 1 ? (long)th : (long)R.sc.y + R.sc.h + so;
         if (uy != 1) { y0 = lround(cy + (R.sc.y - cy) / uy); y1 = lround(cy + ((long)R.sc.y + R.sc.h - cy) / uy); if (y0 < 0) y0 = 0; }   // the Mac only: so = 0, vs = 1
         if (x1 > (long)tw) x1 = tw; if (y1 > (long)th) y1 = th;
