@@ -1,6 +1,6 @@
 /* Odyssey graphics settings, the present part (odyssey_gfx.h has the settings; nvn_mtl.m includes this before
    present_encode_m4). The game picture goes through, in order:
-     anti-aliasing (key 3) at the picture's own size into gx_aa[slot]  ->  the upscale to the viewport (key 5): MetalFX
+     anti-aliasing (key 3: FXAA, or SMAA's three passes) at the picture's own size into gx_aa[slot]  ->  the upscale to the viewport (key 5): MetalFX
      (output_upscale), or FSR 1 EASU / Lanczos-2 drawn by a shader, or the bilinear blit  ->  CAS (key 4) on the result.
    A stage that is off costs nothing; a shader upscale followed by CAS goes through gx_up[slot] (the viewport's size).
    The passes read their constants from the slot's present buffer: the final draw at 0 (its Crop as before), the
@@ -14,7 +14,7 @@ static const char *gx_msl =
     "struct V { float4 p [[position]]; float2 uv; };\n"
     "vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }\n"
     // rect/edge: the input's valid region in UV (as the blit's Crop); region: the same in texels (x, y, w, h); outsz: the pass's output size
-    "struct GP { float4 rect; float4 edge; float4 region; float4 outsz; float sharp; float3 pad; };\n"
+    "struct GP { float4 rect; float4 edge; float4 region; float4 outsz; float sharp; float srgb; float2 pad; };\n"
     "static float3 tap(texture2d<float> t, sampler s, constant GP& c, float2 uv, float2 d) { return t.sample(s, clamp(uv + d, c.edge.xy, c.edge.zw)).rgb; }\n"
     "static float luma(float3 v) { return dot(v, float3(0.299, 0.587, 0.114)); }\n"
     "static float2 in_uv(V in, constant GP& c) { return clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw); }\n"
@@ -87,12 +87,92 @@ static const char *gx_msl =
     "  for (int y = 0; y < 4; y++) { float3 row = 0.0; for (int x = 0; x < 4; x++) row += rd(t, c, i + int2(x - 1, y - 1)) * wx[x]; ac += row * wy[y]; }\n"
     "  aw = (wx[0] + wx[1] + wx[2] + wx[3]) * (wy[0] + wy[1] + wy[2] + wy[3]);\n"
     "  float3 f = rd(t, c, i), g = rd(t, c, i + int2(1, 0)), j = rd(t, c, i + int2(0, 1)), k = rd(t, c, i + int2(1, 1));\n"
-    "  return float4(clamp(ac / max(aw, 1e-5), min(min(f, g), min(j, k)), max(max(f, g), max(j, k))), 1.0); }\n";
-enum { GX_FN_FXAA, GX_FN_CAS, GX_FN_EASU, GX_FN_LANCZOS, GX_NFN };
-static const char *const gx_fn_name[GX_NFN] = {"fs_fxaa", "fs_cas", "fs_easu", "fs_lanczos"};
+    "  return float4(clamp(ac / max(aw, 1e-5), min(min(f, g), min(j, k)), max(max(f, g), max(j, k))), 1.0); }\n"
+    // the valid region copied to a texture of its own (SMAA works on whole textures)
+    "fragment float4 fs_copy(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant GP& c [[buffer(0)]]) { return t.sample(s, in_uv(in, c)); }\n"
+    // SMAA 1x (after Jimenez et al., SMAA.hlsl, MIT; third_party/smaa): luma edges with local contrast adaptation,
+    // orthogonal pattern search with the precomputed area and search tables (no diagonal or corner passes: the
+    // SMAA_PRESET_MEDIUM pattern set with HIGH's threshold 0.1 and 16 search steps), then neighbourhood blending.
+    // Metal's texture origin is top-left as in Direct3D, so the tables are used as stored. c.srgb = 1: the input is an
+    // sRGB-format texture (sampled linear), edges are found on display values.
+    "constant float SMAA_T = 0.1, SMAA_LCA = 2.0; constant int SMAA_STEPS = 16;\n"
+    "static float smaa_l(float3 v, bool srgb) { if (srgb) v = pow(max(v, 0.0), float3(1.0 / 2.2)); return dot(v, float3(0.2126, 0.7152, 0.0722)); }\n"
+    "fragment float4 fs_smaa_edge(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant GP& c [[buffer(0)]]) {\n"
+    "  float2 uv = in.uv, px = 1.0 / float2(t.get_width(), t.get_height()); bool sr = c.srgb > 0.5;\n"
+    "  float L = smaa_l(t.sample(s, uv).rgb, sr), Ll = smaa_l(t.sample(s, uv + px * float2(-1, 0)).rgb, sr), Lt = smaa_l(t.sample(s, uv + px * float2(0, -1)).rgb, sr);\n"
+    "  float4 delta; delta.xy = abs(L - float2(Ll, Lt));\n"
+    "  float2 edges = step(SMAA_T, delta.xy);\n"
+    "  if (dot(edges, float2(1.0)) == 0.0) discard_fragment();\n"
+    "  float Lr = smaa_l(t.sample(s, uv + px * float2(1, 0)).rgb, sr), Lb = smaa_l(t.sample(s, uv + px * float2(0, 1)).rgb, sr);\n"
+    "  delta.zw = abs(L - float2(Lr, Lb));\n"
+    "  float2 mx = max(delta.xy, delta.zw);\n"
+    "  float Lll = smaa_l(t.sample(s, uv + px * float2(-2, 0)).rgb, sr), Ltt = smaa_l(t.sample(s, uv + px * float2(0, -2)).rgb, sr);\n"
+    "  delta.zw = abs(float2(Ll, Lt) - float2(Lll, Ltt));\n"
+    "  mx = max(mx, delta.zw); float fd = max(mx.x, mx.y);\n"
+    "  edges *= step(fd, SMAA_LCA * delta.xy);\n"
+    "  return float4(edges, 0.0, 0.0); }\n"
+    "static float smaa_slen(texture2d<float> st, sampler pt, float2 e, float offset) {\n"
+    "  float2 scale = float2(66.0, 33.0) * float2(0.5, -1.0), bias = float2(66.0, 33.0) * float2(offset, 1.0);\n"
+    "  scale += float2(-1.0, 1.0); bias += float2(0.5, -0.5);\n"
+    "  scale /= float2(64.0, 16.0); bias /= float2(64.0, 16.0);\n"
+    "  return st.sample(pt, scale * e + bias).r; }\n"
+    "static float smaa_xl(texture2d<float> et, texture2d<float> st, sampler li, sampler pt, float2 tc, float end, float4 m) {\n"
+    "  float2 e = float2(0.0, 1.0);\n"
+    "  while (tc.x > end && e.g > 0.8281 && e.r == 0.0) { e = et.sample(li, tc).rg; tc = -float2(2.0, 0.0) * m.xy + tc; }\n"
+    "  float off = -(255.0 / 127.0) * smaa_slen(st, pt, e, 0.0) + 3.25; return m.x * off + tc.x; }\n"
+    "static float smaa_xr(texture2d<float> et, texture2d<float> st, sampler li, sampler pt, float2 tc, float end, float4 m) {\n"
+    "  float2 e = float2(0.0, 1.0);\n"
+    "  while (tc.x < end && e.g > 0.8281 && e.r == 0.0) { e = et.sample(li, tc).rg; tc = float2(2.0, 0.0) * m.xy + tc; }\n"
+    "  float off = -(255.0 / 127.0) * smaa_slen(st, pt, e, 0.5) + 3.25; return -m.x * off + tc.x; }\n"
+    "static float smaa_yu(texture2d<float> et, texture2d<float> st, sampler li, sampler pt, float2 tc, float end, float4 m) {\n"
+    "  float2 e = float2(1.0, 0.0);\n"
+    "  while (tc.y > end && e.r > 0.8281 && e.g == 0.0) { e = et.sample(li, tc).rg; tc = -float2(0.0, 2.0) * m.xy + tc; }\n"
+    "  float off = -(255.0 / 127.0) * smaa_slen(st, pt, e.gr, 0.0) + 3.25; return m.y * off + tc.y; }\n"
+    "static float smaa_yd(texture2d<float> et, texture2d<float> st, sampler li, sampler pt, float2 tc, float end, float4 m) {\n"
+    "  float2 e = float2(1.0, 0.0);\n"
+    "  while (tc.y < end && e.r > 0.8281 && e.g == 0.0) { e = et.sample(li, tc).rg; tc = float2(0.0, 2.0) * m.xy + tc; }\n"
+    "  float off = -(255.0 / 127.0) * smaa_slen(st, pt, e.gr, 0.5) + 3.25; return -m.y * off + tc.y; }\n"
+    "static float2 smaa_area(texture2d<float> at, sampler li, float2 dist, float e1, float e2) {\n"
+    "  float2 tc = 16.0 * round(4.0 * float2(e1, e2)) + dist;\n"
+    "  tc = (1.0 / float2(160.0, 560.0)) * tc + 0.5 / float2(160.0, 560.0);\n"
+    "  return at.sample(li, tc).rg; }\n"
+    "fragment float4 fs_smaa_weight(V in [[stage_in]], texture2d<float> et [[texture(0)]], texture2d<float> at [[texture(1)]], texture2d<float> st [[texture(2)]],\n"
+    "                               sampler li [[sampler(0)]], sampler pt [[sampler(1)]]) {\n"
+    "  float4 m = float4(1.0 / float2(et.get_width(), et.get_height()), float2(et.get_width(), et.get_height()));\n"
+    "  float2 tc = in.uv, pix = tc * m.zw;\n"
+    "  float4 o0 = m.xyxy * float4(-0.25, -0.125, 1.25, -0.125) + tc.xyxy, o1 = m.xyxy * float4(-0.125, -0.25, -0.125, 1.25) + tc.xyxy;\n"
+    "  float4 o2 = m.xxyy * float4(-2.0, 2.0, -2.0, 2.0) * float(SMAA_STEPS) + float4(o0.xz, o1.yw);\n"
+    "  float4 w = 0.0; float2 e = et.sample(pt, tc).rg;\n"
+    "  if (e.g > 0.0) {\n"
+    "    float3 co; co.x = smaa_xl(et, st, li, pt, o0.xy, o2.x, m); co.y = o1.y; float2 d; d.x = co.x;\n"
+    "    float e1 = et.sample(li, co.xy).r;\n"
+    "    co.z = smaa_xr(et, st, li, pt, o0.zw, o2.y, m); d.y = co.z;\n"
+    "    d = abs(round(m.zz * d - pix.xx));\n"
+    "    float e2 = et.sample(li, co.zy, int2(1, 0)).r;\n"
+    "    w.rg = smaa_area(at, li, sqrt(d), e1, e2); }\n"
+    "  if (e.r > 0.0) {\n"
+    "    float3 co; co.y = smaa_yu(et, st, li, pt, o1.xy, o2.z, m); co.x = o0.x; float2 d; d.x = co.y;\n"
+    "    float e1 = et.sample(li, co.xy).g;\n"
+    "    co.z = smaa_yd(et, st, li, pt, o1.zw, o2.w, m); d.y = co.z;\n"
+    "    d = abs(round(m.ww * d - pix.yy));\n"
+    "    float e2 = et.sample(li, co.xz, int2(0, 1)).g;\n"
+    "    w.ba = smaa_area(at, li, sqrt(d), e1, e2); }\n"
+    "  return w; }\n"
+    "fragment float4 fs_smaa_blend(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture2d<float> bt [[texture(1)]], sampler li [[sampler(0)]]) {\n"
+    "  float4 m = float4(1.0 / float2(t.get_width(), t.get_height()), float2(t.get_width(), t.get_height()));\n"
+    "  float2 tc = in.uv; float4 off = m.xyxy * float4(1.0, 0.0, 0.0, 1.0) + tc.xyxy;\n"
+    "  float4 a; a.x = bt.sample(li, off.xy).a; a.y = bt.sample(li, off.zw).g; a.wz = bt.sample(li, tc).xz;\n"
+    "  if (dot(a, float4(1.0)) < 1e-5) return t.sample(li, tc);\n"
+    "  bool h = max(a.x, a.z) > max(a.y, a.w);\n"
+    "  float4 bo = h ? float4(a.x, 0.0, a.z, 0.0) : float4(0.0, a.y, 0.0, a.w);\n"
+    "  float2 bw = h ? a.xz : a.yw; bw /= dot(bw, float2(1.0));\n"
+    "  float4 bc = bo * float4(m.xy, -m.xy) + tc.xyxy;\n"
+    "  return bw.x * t.sample(li, bc.xy) + bw.y * t.sample(li, bc.zw); }\n";
+enum { GX_FN_FXAA, GX_FN_CAS, GX_FN_EASU, GX_FN_LANCZOS, GX_FN_COPY, GX_FN_SMAA_EDGE, GX_FN_SMAA_WEIGHT, GX_FN_SMAA_BLEND, GX_NFN };
+static const char *const gx_fn_name[GX_NFN] = {"fs_fxaa", "fs_cas", "fs_easu", "fs_lanczos", "fs_copy", "fs_smaa_edge", "fs_smaa_weight", "fs_smaa_blend"};
 static id<MTLLibrary> g_gx_lib;
-static struct { int fn; MTLPixelFormat fmt; __strong id<MTLRenderPipelineState> pso; } g_gx_pso[16]; static int g_gx_npso;
-static id<MTLTexture> g_gx_aa[3], g_gx_up[3];
+static struct { int fn; MTLPixelFormat fmt; __strong id<MTLRenderPipelineState> pso; } g_gx_pso[32]; static int g_gx_npso;
+static id<MTLTexture> g_gx_aa[3], g_gx_up[3], g_gx_cp[3], g_gx_edge[3], g_gx_wt[3];
 static id<MTL4CounterHeap> g_gx_heap; static double g_gx_hz; static int g_gx_timed[3];
 static double g_gx_ms[128]; static _Atomic int g_gx_nms;
 static _Atomic uint64_t g_gx_out;   // the viewport the picture was last drawn at (h << 32 | w), for the HUD
@@ -110,7 +190,7 @@ static id<MTLRenderPipelineState> gx_pso(int fn, MTLPixelFormat fmt) {
     pd.colorAttachments[0].pixelFormat = fmt;
     id<MTLRenderPipelineState> p = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
     if (!p) { MLOG("【红】[gfx] %s pipeline (format %lu) failed: %s", gx_fn_name[fn], (unsigned long)fmt, e.localizedDescription.UTF8String); return nil; }
-    if (g_gx_npso < 16) { g_gx_pso[g_gx_npso].fn = fn; g_gx_pso[g_gx_npso].fmt = fmt; g_gx_pso[g_gx_npso].pso = p; g_gx_npso++; }
+    if (g_gx_npso < 32) { g_gx_pso[g_gx_npso].fn = fn; g_gx_pso[g_gx_npso].fmt = fmt; g_gx_pso[g_gx_npso].pso = p; g_gx_npso++; }
     return p;
 }
 static id<MTLTexture> gx_target(id<MTLTexture> __strong *t, NSUInteger w, NSUInteger h, MTLPixelFormat fmt) {
@@ -146,6 +226,70 @@ static int gx_pass(id<MTL4CommandBuffer> cb, int fn, id<MTLTexture> in, const NS
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     m4_end(en);
     return 1;
+}
+/* SMAA (key 3): the lookup tables as textures, its argument tables (three textures, linear and point samplers) and the
+   three passes from a whole texture `in` into g_gx_aa[slot]. */
+#include "../../../smaa/AreaTex.h"
+#include "../../../smaa/SearchTex.h"
+static id<MTLTexture> g_smaa_area, g_smaa_search; static id<MTLSamplerState> g_smaa_point;
+static id<MTL4ArgumentTable> g_smaa_args[3][3];
+static int smaa_ready(void) {
+    if (g_smaa_area) return 1;
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG8Unorm width:AREATEX_WIDTH height:AREATEX_HEIGHT mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModeShared;
+    id<MTLTexture> a = [g_dev newTextureWithDescriptor:d];
+    d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:SEARCHTEX_WIDTH height:SEARCHTEX_HEIGHT mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModeShared;
+    id<MTLTexture> s = [g_dev newTextureWithDescriptor:d];
+    MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterNearest; sd.supportArgumentBuffers = YES;
+    id<MTLSamplerState> pt = [g_dev newSamplerStateWithDescriptor:sd];
+    MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 3; ad.maxSamplerStateBindCount = 2; ad.maxBufferBindCount = 1;
+    NSError *e = nil;
+    for (int i = 0; i < 3; i++) for (int k = 0; k < 3; k++) { g_smaa_args[i][k] = [g_dev newArgumentTableWithDescriptor:ad error:&e]; if (!g_smaa_args[i][k]) { MLOG("【红】[gfx] SMAA argument table: %s", e.localizedDescription.UTF8String); return 0; } }
+    if (!a || !s || !pt) { MLOG("【红】[gfx] SMAA tables could not be created: SMAA off"); return 0; }
+    [a replaceRegion:MTLRegionMake2D(0, 0, AREATEX_WIDTH, AREATEX_HEIGHT) mipmapLevel:0 withBytes:areaTexBytes bytesPerRow:AREATEX_PITCH];
+    [s replaceRegion:MTLRegionMake2D(0, 0, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT) mipmapLevel:0 withBytes:searchTexBytes bytesPerRow:SEARCHTEX_PITCH];
+    res_add(a); res_add(s); res_commit();
+    g_smaa_search = s; g_smaa_point = pt; g_smaa_area = a;
+    MLOG("[gfx] SMAA ready (area %dx%d, search %dx%d)", AREATEX_WIDTH, AREATEX_HEIGHT, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT);
+    return 1;
+}
+static int smaa_pass(id<MTL4CommandBuffer> cb, int fn, id<MTLTexture> t0, id<MTLTexture> t1, id<MTLTexture> t2, id<MTLTexture> dst, int slot, int k, NSUInteger off, int clear) {
+    id<MTLRenderPipelineState> p = gx_pso(fn, dst.pixelFormat); if (!p) return 0;
+    MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
+    rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    rp.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionDontCare; rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+    id<MTL4RenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp]; if (!en) return 0;
+    [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    float *u = (float *)((uint8_t *)g_present_uv[slot].contents + off); memset(u, 0, 80);
+    u[17] = t0.pixelFormat == MTLPixelFormatRGBA8Unorm_sRGB || t0.pixelFormat == MTLPixelFormatBGRA8Unorm_sRGB;   // GP.srgb
+    id<MTL4ArgumentTable> args = g_smaa_args[slot][k];
+    [args setTexture:t0.gpuResourceID atIndex:0];
+    if (t1) [args setTexture:t1.gpuResourceID atIndex:1];
+    if (t2) [args setTexture:t2.gpuResourceID atIndex:2];
+    [args setSamplerState:g_blit_samp.gpuResourceID atIndex:0]; [args setSamplerState:g_smaa_point.gpuResourceID atIndex:1];
+    [args setAddress:g_present_uv[slot].gpuAddress + off atIndex:0];
+    [en setArgumentTable:args atStages:MTLRenderStageFragment];
+    [en setViewport:(MTLViewport){0, 0, dst.width, dst.height, 0, 1}]; [en setRenderPipelineState:p];
+    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    m4_end(en);
+    return 1;
+}
+static id<MTLTexture> gx_smaa(id<MTL4CommandBuffer> cb, id<MTLTexture> src, NSUInteger r[4], int slot) {
+    if (!smaa_ready()) return nil;
+    id<MTLTexture> in = src;
+    if (r[0] || r[1] || r[2] != in.width || r[3] != in.height) {   // a region of a bigger texture: copied first
+        id<MTLTexture> c = gx_target(&g_gx_cp[slot], r[2], r[3], in.pixelFormat);
+        if (!c || !gx_pass(cb, GX_FN_COPY, in, r, c, slot, GX_PASS_A)) return nil;
+        in = c;
+    }
+    id<MTLTexture> ed = gx_target(&g_gx_edge[slot], r[2], r[3], MTLPixelFormatRG8Unorm), wt = gx_target(&g_gx_wt[slot], r[2], r[3], MTLPixelFormatRGBA8Unorm),
+                   out = gx_target(&g_gx_aa[slot], r[2], r[3], in.pixelFormat);
+    if (!ed || !wt || !out) return nil;
+    if (!smaa_pass(cb, GX_FN_SMAA_EDGE, in, nil, nil, ed, slot, 0, GX_PASS_B, 1)) return nil;
+    if (!smaa_pass(cb, GX_FN_SMAA_WEIGHT, ed, g_smaa_area, g_smaa_search, wt, slot, 1, GX_PASS_B, 0)) return nil;
+    if (!smaa_pass(cb, GX_FN_SMAA_BLEND, in, wt, nil, out, slot, 2, GX_PASS_B, 0)) return nil;
+    return out;
 }
 static float gx_sharpness(void) {
     static float s = -1; if (s < 0) { const char *e = getenv("ODYSSEY_CAS_SHARPNESS"); s = e ? (float)atof(e) : 0.5f; if (!(s >= 0 && s <= 1)) s = 0.5f; }
@@ -218,6 +362,9 @@ static id<MTLTexture> gx_picture(id<MTL4CommandBuffer> cb, id<MTLTexture> src, N
     if (aa == GX_AA_FXAA) {
         id<MTLTexture> t = gx_target(&g_gx_aa[slot], r[2], r[3], src.pixelFormat);
         if (t && gx_pass(cb, GX_FN_FXAA, in, r, t, slot, GX_PASS_A)) { in = t; r[0] = r[1] = 0; }
+    } else if (aa == GX_AA_SMAA) {
+        id<MTLTexture> t = gx_smaa(cb, in, r, slot);
+        if (t) { in = t; r[0] = r[1] = 0; }
     }
     NSUInteger ow = (NSUInteger)vp.width, oh = (NSUInteger)vp.height;
     if (up == GX_UP_METALFX) {

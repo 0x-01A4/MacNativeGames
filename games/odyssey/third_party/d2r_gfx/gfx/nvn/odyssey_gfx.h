@@ -1,6 +1,6 @@
 #pragma once
 /* Odyssey graphics settings (user, 26 October): keys 3-7 and the graphics lines of the HUD (nvn_mtl.m includes this once).
-     3  anti-aliasing  off / FXAA / SMAA / TAA       at the game picture's size, before the upscale (SMAA and TAA: not yet)
+     3  anti-aliasing  off / FXAA / SMAA / TAA       at the game picture's size, before the upscale (TAA: not yet)
      4  sharpen (CAS)  off / on                      on the final picture, after the upscale
      5  upscaler       MetalFX / FSR 1 / Lanczos / bilinear   the game picture to the window
      6  textures       game / 4x / 8x / 16x          anisotropic filtering of the game's mipmapped samplers (the game's
@@ -31,7 +31,7 @@ static const char *const gx_token[GX_N][4] = {
 static const char *const gx_label[GX_N][4] = {
     {"off", "FXAA", "SMAA", "TAA"}, {"off", "on"}, {"MetalFX", "FSR 1", "Lanczos", "bilinear"},
     {"game default", "4x anisotropic", "8x anisotropic", "16x anisotropic"}, {"1600x900", "1920x1080", "2240x1260"}};
-static const int gx_ready[GX_N] = {2, 2, 4, 4, 3};   // values a key cycles through (SMAA and TAA join when they exist)
+static const int gx_ready[GX_N] = {3, 2, 4, 4, 3};   // values a key cycles through (TAA joins when it exists)
 static _Atomic int g_gx[GX_N];
 static int g_gx_res_now;                             // the resolution this launch runs at (ODYSSEY_RENDER_RES)
 static _Atomic int g_samp_flush;                      // key 6: the sampler cache rebuilds with the new filtering
