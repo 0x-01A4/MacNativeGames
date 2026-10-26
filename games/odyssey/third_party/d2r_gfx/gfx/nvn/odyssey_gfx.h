@@ -71,9 +71,17 @@ static void gx_save(void) {
     const char *path = getenv("ODYSSEY_GFX_SETTINGS"); if (!path) return;
     pthread_mutex_lock(&g_gx_file_mu);
     char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    char keep[2048] = ""; size_t kn = 0;   // the launcher's own lines (frame_generation, launcher) stay as they are
+    FILE *in = fopen(path, "r"); char line[128];
+    while (in && fgets(line, sizeof line, in)) {
+        int ours = 0; for (int w = 0; w < GX_N; w++) { size_t l = strlen(gx_key[w]); if (!strncmp(line, gx_key[w], l) && line[l] == '=') ours = 1; }
+        if (!ours && strchr(line, '=') && kn + strlen(line) + 2 < sizeof keep) { kn += (size_t)snprintf(keep + kn, sizeof keep - kn, "%s%s", line, line[strlen(line) - 1] == '\n' ? "" : "\n"); }
+    }
+    if (in) fclose(in);
     FILE *f = fopen(tmp, "w");
     if (f) {
         for (int w = 0; w < GX_N; w++) fprintf(f, "%s=%s\n", gx_key[w], gx_token[w][gx_get(w)]);
+        fputs(keep, f);
         if (!fclose(f)) rename(tmp, path);
     }
     pthread_mutex_unlock(&g_gx_file_mu);

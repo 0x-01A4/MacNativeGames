@@ -112,8 +112,10 @@ def main():
     if title.is_file():
         clone(title, game / "build/pso_title.tsv")
         os.symlink("../Resources/game/build/pso_title.tsv", macos / "pso_title.tsv")
-    subprocess.run(["xcrun", "clang", "-O2", "-Wall", "-Wextra", "-Werror", "-o", str(macos / "Odyssey"),
-                    str(GAME / "scripts/odyssey_app_launcher.c")], check=True)
+    # The launcher and its settings window (shown before the game; the game's icon, the graphics and play settings).
+    subprocess.run(["xcrun", "clang", "-O2", "-Wall", "-Wextra", "-Werror", "-fobjc-arc", "-o", str(macos / "Odyssey"),
+                    str(GAME / "scripts/odyssey_app_launcher.c"), str(GAME / "scripts/odyssey_launcher_ui.m"),
+                    "-framework", "Cocoa", "-framework", "CoreGraphics"], check=True)
     subprocess.run(["sips", "-s", "format", "icns", str(ICON), "--out", str(resources / "OdysseyIcon.icns")],
                    check=True, stdout=subprocess.DEVNULL)
     info = {
