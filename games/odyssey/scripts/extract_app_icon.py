@@ -61,6 +61,8 @@ def main():
                         'Control icon is not a complete JPEG')
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_bytes(contents)
+                # the update's version, for the window title (1.3.0 and 1.4.1 share their executables)
+                args.output.with_name('game-version.txt').write_text(version + '\n')
                 print(f'Verified local {version} title icon -> {args.output}')
                 return
     raise SystemExit('Update Control icon not found')

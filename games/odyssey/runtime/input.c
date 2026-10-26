@@ -29,8 +29,8 @@ static void user_input(const char *what){
 }
 /* Keys from the window are the user's; scripted and auto-load presses use the synthetic entry.
    Key 1 toggles the shortcut reminder in frontend.m. Key 2 (Mac key code 19) cycles MetalFX frame interpolation:
-   off -> 30+30 -> half the refresh rate -> uncapped (totk_mfx.m). Key 3 (key code 20) cycles 2K modes:
-   MetalFX 2K -> native 2K -> off (runtime_output_mode_cycle). Key 6 (key code 22) cycles the controller type: auto -> Xbox ->
+   off -> 30+30 -> half the refresh rate -> uncapped (totk_mfx.m). Key 3 (key code 20) cycles the picture: original
+   1600x900 -> with MetalFX -> native 1920x1080 -> native at the bigger render size (runtime_output_mode_cycle). Key 6 (key code 22) cycles the controller type: auto -> Xbox ->
    PlayStation -> Switch (runtime_gamepad_type_cycle, gamepad.m). Key 7 (key code 26) turns mouse mode on / off
    (runtime_mouse_toggle, gamepad.m; the window holds the pointer: frontend.m). Key 5 (key code 23) turns MetalFX edge
    smoothing on / off (taa_toggle, third_party/d2r_gfx/gfx/nvn/totk_taa.m). Held-key repeats do not cycle. */

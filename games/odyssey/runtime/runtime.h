@@ -91,6 +91,8 @@ void runtime_boot_count(const char *stage,uint64_t done,uint64_t total);   /* a 
    adds to the texture heap and to Graphics, and so to the application pool (runtime/services.c). */
 int runtime_output_res(unsigned *w,unsigned *h);
 uint64_t runtime_output_res_extra_bytes(void);
+uint64_t runtime_render_pool_extra(void);               /* bytes the bigger render target pool adds to the application pool (key 3, game_patches.c) */
+const char *runtime_picture_name(void);                 /* key 3's state for the shortcut box; NULL without a bigger render size */
 int runtime_output_res_toggle(void);                    /* legacy two-state output size switch */
 int runtime_output_mode_cycle(void);                    /* key 3: MetalFX 2K -> native 2K -> off */
 uint64_t runtime_output_size_current(void);              /* configured canvas: width in low 32 bits, height in high 32 bits */
