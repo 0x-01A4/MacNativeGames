@@ -55,6 +55,8 @@ mouse_middle = zl
 
 2–7 键不再是快捷键。iPhone / iPad 使用触屏控件或兼容手柄，没有设置面板。触屏按 Switch 手柄排布：左上 L、ZL，右上 R、ZR，中间 − 和 +，左边十字键，右边 A、B、X、Y。十字键在左摇杆上方，A、B、X、Y 在右摇杆上方，L3、R3（按下摇杆）在左下角和右下角。在左半屏避开按钮的地方按住拖动是左摇杆，在右半屏是转镜头（右摇杆）；摇杆以手指按下的位置为中心。接上手柄时触屏控件自动隐藏：碰一下屏幕就会显示，可以照常使用，手指离开 3 秒后再次隐藏。
 
+**手机体感与震动：** 没有连接手柄时，手机的 CoreMotion 传感器作为游戏的六轴设备：虚拟摇杆照常移动、转视角，在游戏选项里打开体感操作后，倾斜手机即可瞄准弓或究极手。游戏震动交给手机的 Taptic Engine，左右两路混合成一路，并用感知曲线和短保持让小幅震动也能被感觉到（`TOTK_PHONE_HAPTICS_GAIN`，默认 1.5）。系统“设置”App › App › 本游戏中有“手機體感”和“手機震動”两个独立开关，默认开启，修改后重新启动游戏生效。接上手柄后手机自动让位、停止，断开后恢复；进后台停止，并随左右横屏方向调整体感轴向。`TOTK_PHONE_GYRO=0` / `TOTK_PHONE_HAPTICS=0` 仍可通过 `devicectl` 覆盖对应设置；`TOTK_GYRO=0` / `TOTK_RUMBLE=0` 仍分别关闭全部体感 / 震动。iPad 等没有触觉马达的设备不播放手机震动。
+
 **超宽屏界面布局（可选，1.4.3）：** 选了宽画面比例时 HUD 和菜单留在中间 16:9。想让 HUD 贴到 21:9 或 32:9 屏幕的四角，可以用你自己的游戏文件按屏幕比例生成布局再启动：`.venv/bin/python scripts/make_romfs_patches.py --version v143 --aspect 3440x1440`（写到 `extracted/v143/romfs-patches-3440x1440`；`--hud center` 让 HUD 留在中间）和 `scripts/make_output_res_overlay.py 3440x1440 --version v143`，然后用 `TOTK_OUTPUT_RES=3440x1440 TOTK_ASPECT=3440x1440 TOTK_UI_SQUEEZE=0 TOTK_ROMFS_PATCHES=extracted/v143/romfs-patches-3440x1440` 启动（在工作目录里）。布局在启动时读取，所以这一局一直是宽屏，不配合面板里的画面比例使用。每个要改的界面面板都按名字查找，写入前核对游戏原版的值。
 
 菜单栏左侧、应用菜单之后以游戏自己的菜单显示实时帧率（“60 FPS”，补帧显示生成帧时为“50+50 FPS”），与窗口里的性能信息显示什么无关；全屏时随菜单栏隐藏。`TOTK_MENUBAR_FPS=0` 不在菜单栏显示；`TOTK_TITLE_FPS=1` 时窗口标题末尾也显示同样的帧率（“… Ver. 1.4.3 — 60 FPS”）。
@@ -62,8 +64,6 @@ mouse_middle = zl
 原生 2K 将游戏合成画布和 UI 改为 2560×1440，3D 场景仍由游戏独立的渲染比例控制，并非强制所有内部通道以 1440p 渲染。手动 MetalFX 在较小窗口中也可使用，输出放大会跟随实际窗口尺寸，包括 4K。
 
 语言：游戏和启动器自身的文字（启动画面、着色器预热进度、提示叠层、键盘输入提示）跟随 Mac 的系统语言。启动器文字在中文系统上显示中文，其他语言显示英文。地区变体和主机一样：美洲以外的英语（en-GB、en-AU 等）选英式英语，温度显示摄氏度（美式英语显示华氏度）；加拿大的法语选加拿大法语，美洲的西班牙语选拉美西班牙语；1.4.3 版本中，巴西葡萄牙语会选择游戏官方的 pt-BR 文本。简体和繁体中文按文字（zh-Hans / zh-Hant）区分，没有文字标记时按地区区分（台湾、香港、澳门为繁体）。只想让本游戏使用另一种语言时，可在“系统设置 › 通用 › 语言与地区 › 应用程序”中为它选择，或设置它的首选语言，例如 `defaults write org.macnativegames.totk AppleLanguages -array pt-BR`（`defaults delete org.macnativegames.totk AppleLanguages` 可撤销）。如需指定，可用 `TOTK_LANG` 设置游戏语言（例如 `open --env TOTK_LANG=zh-Hans "Tears of the Kingdom.app"`），用 `TOTK_UI_LANG=zh` / `en` 设置启动器文字。
-
-**手机体感与震动：** 没有连接手柄时，手机的 CoreMotion 传感器作为游戏的六轴设备：虚拟摇杆照常移动、转视角，在游戏选项里打开体感操作后，倾斜手机即可瞄准弓或究极手。游戏震动交给手机的 Taptic Engine，左右两路混合成一路，并用感知曲线和短保持让小幅震动也能被感觉到（`TOTK_PHONE_HAPTICS_GAIN`，默认 1.5）。系统“设置”App › App › 本游戏中有“手機體感”和“手機震動”两个独立开关，默认开启，修改后重新启动游戏生效。接上手柄后手机自动让位、停止，断开后恢复；进后台停止，并随左右横屏方向调整体感轴向。`TOTK_PHONE_GYRO=0` / `TOTK_PHONE_HAPTICS=0` 仍可通过 `devicectl` 覆盖对应设置；`TOTK_GYRO=0` / `TOTK_RUMBLE=0` 仍分别关闭全部体感 / 震动。iPad 等没有触觉马达的设备不播放手机震动。
 
 ## 文字输入（Mac）
 
