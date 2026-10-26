@@ -526,7 +526,12 @@ def main():
 
     index = read_index(romfs / 'runtime-index.bin')
     archives = [ARCHIVE] + sorted(p for p in index if p.startswith('Font/') and p.endswith('.bfarc.zs') and p != ARCHIVE)
-    layout_path = next(p for p in index if p.startswith(LAYOUT_PREFIX) and p.endswith('.blarc.zs'))
+    layout_path = next((p for p in index if p.startswith(LAYOUT_PREFIX) and p.endswith('.blarc.zs')), None)
+    if not layout_path:
+        parser.error(f'{romfs} holds no {LAYOUT_PREFIX}*.blarc.zs (the in-game button guide): is this Tears of the Kingdom\'s RomFS?')
+    restbl = next((p for p in index if p.startswith('System/Resource/ResourceSizeTable.') and p.endswith('.rsizetable.zs')), None)
+    if not restbl:
+        parser.error(f'{romfs} holds no System/Resource/ResourceSizeTable.*.rsizetable.zs: is this Tears of the Kingdom\'s RomFS?')
     existing = [str(args.mod / p) for p in archives + [layout_path] if (args.mod / p).exists()]
     if existing and not args.replace:
         parser.error(f'{", ".join(existing)} already exist(s) (another mod\'s font archive, or an earlier run): '
@@ -539,9 +544,8 @@ def main():
         for lo, hi in sarc_members(pack).values():
             d = zstd.ZstdDict(pack[lo:hi]); dictionaries[d.dict_id] = d
         raws = {path: read(path) for path in archives}
-        restbl = next(p for p in index if p.startswith('System/Resource/ResourceSizeTable.') and p.endswith('.rsizetable.zs'))
         restbl_raw = read(restbl)
-        layout = next(p for p in index if p.startswith(LAYOUT_PREFIX) and p.endswith('.blarc.zs'))
+        layout = layout_path
         layout_raw = read(layout)
 
     text_fonts, redrawn, growth = None, {}, {}
