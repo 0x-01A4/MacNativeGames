@@ -11824,6 +11824,28 @@ static uint16_t vertex_stream_mask(NvShader *vs) {
     }
     return mask;
 }
+/* TOTK_VBUF_LOG=1 (diagnostic, off by default): each new combination of the draw's shaders, the vertex attributes its vertex
+   shader reads (location:format:offset:stream), the streams' stride, divisor and bound size, and the draw's index type, count
+   and base vertex, as "[vbuf] vs fs a=... s=... i=type:count:base" (at most 200,000 lines). The index count is what ties a
+   draw to a model shape (one of its LODs); a stream's size / stride is not a vertex count, buffers are shared. Used to find
+   which shader program the game draws a model shape with (MacNativeGames-artifacts/claude/cmodel/match.py, 2026-10-26). */
+static void vbuf_log(NvShader *vs, NvShader *fs, const p_draw *dw, const p_draw_idx *di) {
+    static int on = -1; static NSMutableSet<NSString *> *seen; static unsigned logged;
+    if (on < 0) { const char *e = getenv("TOTK_VBUF_LOG"); on = e && atoi(e) > 0; if (on) seen = [NSMutableSet set]; }
+    if (!on || !vs || logged >= 200000) return;
+    NSMutableString *a = [NSMutableString string], *st = [NSMutableString string]; uint32_t used = 0;
+    const nvn_refl *rf = &vs->rf;
+    for (int v = 0; v < rf->nv; v++) {
+        int at = rf->v[v].nvn; if (at >= 16 || at >= S.nattr) continue;
+        va_st x = S.attr[at]; if (!x.fmt) continue;
+        [a appendFormat:@"%d:%x:%u:%u,", at, (unsigned)x.fmt, (unsigned)x.offset, (unsigned)x.stream]; if (x.stream < 16) used |= 1u << x.stream;
+    }
+    for (int k = 0; k < 16; k++) if (used >> k & 1) [st appendFormat:@"%d:%u:%u:%llu,", k, S.stream[k].stride, S.stream[k].divisor, (unsigned long long)S.vbuf[k].size];
+    NSString *line = [NSString stringWithFormat:@"%s %s a=%@ s=%@ i=%d:%d:%d", vs->key, fs ? fs->key : "-", a, st, di ? (int)di->itype : -1, di ? (int)di->count : dw ? (int)dw->count : 0, di ? (int)di->base_vertex : dw ? (int)dw->first : 0];
+    if ([seen containsObject:line]) return;
+    [seen addObject:line]; logged++;
+    MLOG("[vbuf] %s", line.UTF8String);
+}
 static void bind_vertex_streams(id<MTL4RenderCommandEncoder> en, NvShader *vs) {
     uint16_t mask=vertex_streams_on()?vertex_stream_mask(vs):UINT16_MAX;
     uint64_t bound=0,omitted=0;
@@ -12314,6 +12336,7 @@ frz_plain:;
       enc_r_clip(en, S.depth_clamp && !noclamp ? MTLDepthClipModeClamp : MTLDepthClipModeClip); }   // TOTK: SetDepthClamp
     enc_r_blend_color(en, S.blend_color[0], S.blend_color[1], S.blend_color[2], S.blend_color[3]);
     bind_vertex_streams((id<MTL4RenderCommandEncoder>)en,pr->sh[0]);
+    vbuf_log(pr->sh[0], pr->sh[1], dw, di);
     if (g_lay.active) enc_r_vbuf(en, LAY_BUF_INDEX, lay_gpu(g_lay_probe_neg == 1 ? 0 : g_lay.cur - g_lay.base));   // TOTK: this draw's layer within the layered pass
     if (pr->sh[0]) encode_args(en, pr->sh[0], 0, 1);
     if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
