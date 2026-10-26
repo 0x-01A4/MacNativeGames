@@ -28,8 +28,8 @@ static uint64_t physicalPrev;
 static uint64_t tapUntil[CONTROLLER_BUTTONS];   /* ns, for tap */
 static int toggleOn[CONTROLLER_BUTTONS];        /* for toggle */
 static int toggleMoved[CONTROLLER_BUTTONS];     /* the stick moved since the toggle went on */
-static __weak GCController *rawLeftController;
-static SwitchLeftFallback rawLeft;
+static __weak GCController *rawLeftController, *rawRightController;
+static SwitchLeftFallback rawLeft, rawRight;
 static uint64_t gamepadRawLeftAt;
 static int32_t gamepadNativeLx, gamepadNativeLy;
 static void refresh_gamepads(void);
@@ -40,6 +40,13 @@ void runtime_gamepad_switch_left(void *source, int x, int y) {
     if (rawLeftController != controller) rawLeft = (SwitchLeftFallback){0};
     rawLeftController = controller;
     switch_left_feed(&rawLeft, x, y, runtime_now_ns());
+    refresh_gamepads();
+}
+void runtime_gamepad_switch_right(void *source, int x, int y) {
+    GCController *controller = (__bridge GCController *)source;
+    if (rawRightController != controller) rawRight = (SwitchLeftFallback){0};
+    rawRightController = controller;
+    switch_left_feed(&rawRight, x, y, runtime_now_ns());
     refresh_gamepads();
 }
 
@@ -446,8 +453,15 @@ static void refresh_gamepads(void) {
         }
         next.lx = stronger_axis(next.lx, stick_axis(lx));
         next.ly = stronger_axis(next.ly, stick_axis(ly));
-        next.rx = stronger_axis(next.rx, stick_axis(pad.rightThumbstick.xAxis.value));
-        next.ry = stronger_axis(next.ry, stick_axis(pad.rightThumbstick.yAxis.value));
+        float rx = pad.rightThumbstick.xAxis.value, ry = pad.rightThumbstick.yAxis.value;
+        int rightWasActive = rawRight.active;
+        float rawRX, rawRY;
+        if (controller == rawRightController && switch_left_get(&rawRight, rx, ry, runtime_now_ns(), &rawRX, &rawRY)) {
+            rx = rawRX; ry = rawRY;
+            if (!rightWasActive) fprintf(stderr, "[totk-input] Switch right stick: native axes stuck at zero; using live HID input\n");
+        }
+        next.rx = stronger_axis(next.rx, stick_axis(rx));
+        next.ry = stronger_axis(next.ry, stick_axis(ry));
     }
     if (hidPad.present) {
         next.connected = 1;
