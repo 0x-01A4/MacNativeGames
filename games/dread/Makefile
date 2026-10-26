@@ -118,5 +118,13 @@ install: app
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALL_DIR)/$(APP)"
 	@echo "installed $(INSTALL_DIR)/$(APP)"
 
+# Native unit tests of the graphics pieces (synthetic data, no game files): texel region writes vs the whole-level path.
+.PHONY: test
+test: $(OUT)/test-texel-region
+	"$(OUT)/test-texel-region"
+$(OUT)/test-texel-region: tests/texel_region/test.c third_party/d2r_gfx/gfx/nvn/nvn_tex.c third_party/d2r_gfx/gfx/tex/nvn_deswizzle.c
+	@mkdir -p "$(dir $@)"
+	xcrun clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all -Ithird_party/d2r_gfx/gfx/nvn -Ithird_party/d2r_gfx/gfx/tex $^ -o "$@"
+
 clean:
 	rm -rf "$(OUT)/obj" "$(OUT)/dread-native"

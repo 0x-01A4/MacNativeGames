@@ -20,6 +20,9 @@ int nvn_swizzle(const nvn_texdesc *d, unsigned level, unsigned layer, const void
 // 单点地址：本级本层内，线性 (x 字节, y 块行, z 切片) → 相对本级本层起点的块线性字节偏移（单测按手算核）
 // Single-point address: within this level and layer, linear (x byte, y block row, z slice) → block-linear byte offset relative to the start of this level and layer (unit tests verify against hand calculation)
 uint64_t nvn_bl_offset(uint32_t x, uint32_t y, uint32_t z, uint32_t row_bytes, uint32_t rows, unsigned tileH, unsigned tileD);
+// Region write into the storage (WriteTexels): hb block rows of wb bytes at byte x0 of block row y0 of slice z; -1 when unsupported
+int nvn_swizzle_region(const nvn_texdesc *d, unsigned level, unsigned layer, uint32_t z, uint32_t x0, uint32_t y0,
+                       uint32_t wb, uint32_t hb, const void *src, size_t src_row, void *storage);
 
 int nvn_deswizzle_geom(const nvn_texdesc *d, unsigned level, unsigned layer,
                        uint32_t *row_bytes, uint32_t *rows, uint32_t *slices,

@@ -10526,7 +10526,19 @@ void mtl_write_texels(const tex_t *t, unsigned level, unsigned layer0, const NVN
     uint32_t lw = MAX(t->d.width >> level, 1u), lh = MAX(t->d.height >> level, 1u), lz = is3d ? MAX(t->d.depth >> level, 1u) : 1;
     if ((uint32_t)(r->xoffset + r->width) > lw || (uint32_t)(r->yoffset + r->height) > lh || (is3d && (uint32_t)(r->zoffset + nz) > lz)) die("WriteTexels: region outside level %u", level);
     TILELOG(t, "WriteTexels lv%u xy=%d,%d %dx%d owned %d mirrored %d flags=%#x pbh=%d tileH=%u size=%llu", level, r->xoffset, r->yoffset, r->width, r->height, gpu_owned(t->serial), tex_mirrored(t), t->d.flags, t->d.pkg_block_h, t->L.tileH, (unsigned long long)t->L.size);
+    /* Mirrored storage: write only the region (nvn_swizzle_region). The whole-level deswizzle / copy / swizzle below is
+       the fallback for layouts it does not cover; per call it costs the whole level, which stalled Metroid Dread's main
+       thread for tens of seconds while it filled its map textures in small pieces. */
+    int region_done = 0;
     if (tex_mirrored(t)) {
+        dm_guest_write_prepare(t->mem, t->L.size);
+        region_done = 1;
+        for (int z = 0; z < nz && region_done; z++)
+            region_done = !nvn_swizzle_region(&t->d, level, is3d ? 0 : layer0 + r->zoffset + z, is3d ? (uint32_t)(r->zoffset + z) : 0,
+                                              (uint32_t)x0, (uint32_t)y0, (uint32_t)wb, (uint32_t)hb, src + z * img, row, t->mem);
+        if (region_done && !gpu_owned(t->serial)) return;
+    }
+    if (tex_mirrored(t) && !region_done) {
         size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
         uint8_t *lin = malloc(lp * lr * lz);
         if (!lin) die("WriteTexels: out of memory");

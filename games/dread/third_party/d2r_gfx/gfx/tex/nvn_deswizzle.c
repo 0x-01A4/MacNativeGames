@@ -76,6 +76,31 @@ static int move(const nvn_texdesc *d, unsigned level, unsigned layer, uint8_t *b
     return 0;
 }
 
+/* A region of one level / layer (slice z of a 3D level) written straight into the storage: hb block rows of wb bytes,
+   starting at byte x0 of block row y0, from src with src_row bytes per block row. Block-linear storage is addressed per
+   run inside a 16-byte GOB segment (nvn_bl_offset), so only the region's bytes are touched. -1 when unsupported. */
+int nvn_swizzle_region(const nvn_texdesc *d, unsigned level, unsigned layer, uint32_t z, uint32_t x0, uint32_t y0,
+                       uint32_t wb, uint32_t hb, const void *src, size_t src_row, void *storage) {
+    const uint8_t *s = src; uint8_t *st = storage;
+    if (nvn_tex_is_linear(d)) {
+        if (level || layer || z || d->samples > 1 || (d->target != 0 && d->target != 1 && d->target != 7)) return -1;
+        uint32_t stride = nvn_tex_linear_stride(d);
+        for (uint32_t y = 0; y < hb; y++) memcpy(st + (size_t)(y0 + y) * stride + x0, s + y * src_row, wb);
+        return 0;
+    }
+    uint32_t row_bytes, rows, slices, bpb; uint64_t base; unsigned th, td;
+    if (nvn_deswizzle_geom(d, level, layer, &row_bytes, &rows, &slices, &base, &th, &td, &bpb)) return -1;
+    if (x0 + wb > row_bytes || y0 + hb > rows || z >= slices) return -1;
+    st += base;
+    for (uint32_t y = 0; y < hb; y++)
+        for (uint32_t x = x0; x < x0 + wb;) {
+            uint32_t n = 16 - x % 16; if (n > x0 + wb - x) n = x0 + wb - x;   // a run never leaves its 16-byte segment
+            memcpy(st + nvn_bl_offset(x, y0 + y, z, row_bytes, rows, th, td), s + y * src_row + (x - x0), n);
+            x += n;
+        }
+    return 0;
+}
+
 int nvn_deswizzle(const nvn_texdesc *d, unsigned level, unsigned layer, const void *src, void *dst, size_t dst_pitch) {
     return move(d, level, layer, (uint8_t *)src, (uint8_t *)dst, dst_pitch, 1);
 }
