@@ -11,6 +11,11 @@ _Noreturn void runtime_fail(const char *message){fprintf(stderr,"FAIL: %s\n",mes
 void runtime_input_key(unsigned code,int down){(void)code;(void)down;}
 void runtime_input_clear(void){}
 void runtime_gamepad_start(void){}
+static int textCaptureFixture;
+void runtime_gamepad_text_capture(int on){textCaptureFixture=on;}
+void runtime_gamepad_text_read(RuntimeGamepadState *out){*out=(RuntimeGamepadState){0};}
+int runtime_setting_word(const char *n,char *s,size_t z){(void)n;(void)s;(void)z;return 0;}
+void runtime_setting_save(const char *n,const char *s,const char *w){(void)n;(void)s;(void)w;}
 int runtime_gamepad_type(int *detected){if(detected)*detected=-1;return 0;}
 int runtime_mouse_enabled(void){return 0;}
 void runtime_mouse_set_hook(void (*hook)(void)){(void)hook;}
@@ -58,6 +63,19 @@ int runtime_feedback_choice(int gyro){(void)gyro;return 0;}
 void runtime_feedback_choose(int gyro,int on){(void)gyro;(void)on;}
 int runtime_rumble_gain_locked(void){return 0;}
 float runtime_rumble_gain(void){return 1;}
+void runtime_rumble_gain_set(float gain){(void)gain;}
+int runtime_triggers_available(void){return 0;}
+int runtime_triggers_locked(void){return 0;}
+int runtime_triggers_choice(void){return 0;}
+void runtime_triggers_choose(int on){(void)on;}
+
+/* Frontend settings references; this probe does not open that panel. */
+int runtime_feedback_choice(int g){(void)g;return 0;}
+int runtime_feedback_locked(int g){(void)g;return 0;}
+int runtime_feedback_present(int g){(void)g;return 0;}
+void runtime_feedback_choose(int g,int on){(void)g;(void)on;}
+float runtime_rumble_gain(void){return 1;}
+int runtime_rumble_gain_locked(void){return 0;}
 void runtime_rumble_gain_set(float gain){(void)gain;}
 int runtime_triggers_available(void){return 0;}
 int runtime_triggers_locked(void){return 0;}

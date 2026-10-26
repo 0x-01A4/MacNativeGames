@@ -27,7 +27,7 @@ void *runtime_codec_override(const char *name);
 void *runtime_movie_override(const char *name);   /* runtime/movie_host.c: movie::Decoder for VP9 cutscenes */
 void *runtime_time_override(const char *name);
 void *runtime_applet_override(const char *name);
-void *runtime_swkbd_override(const char *name);   /* runtime/swkbd_host.c: nn::swkbd text entry with the Mac keyboard */
+void *runtime_swkbd_override(const char *name);   /* runtime/swkbd_host.c: nn::swkbd text entry with keyboard or controller */
 void runtime_swkbd_probe(void);
 void runtime_swkbd_selftest(void);
 void runtime_dump_threads(void);   /* threads.c: every guest thread's wait state and guest return chain (TOTK_INPUT_FILE "threads") */   /* diagnostic "kbtest": show the text entry bar from a thread of its own */
@@ -38,7 +38,7 @@ uint32_t runtime_thread_current_handle(void);            /* threads.c: handle of
 void *runtime_hle_wrap_named(void *fn, const char *name);/* hle_stack.c: runtime_hle_wrap with a name for diagnostics */
 void runtime_hle_trace_set(int mode);                    /* hle_stack.c: 1 count host calls, 2 also log the first call of each, 0 stop and print */
 void runtime_hle_describe(unsigned index, char *out, size_t cap);   /* hle_stack.c: readable name of a host-call wrapper */
-/* Text entry bar in the game window (runtime/frontend.m, Mac): the player types on the keyboard, Return confirms (1, the text
+/* Text entry in the game window (runtime/frontend.m, Mac): controller keyboard and Mac typing, Return confirms (1, the text
    as UTF-8 in out), Escape cancels (0). The caller waits; give the virtual core up around it (runtime_core_away). */
 typedef struct { const char *prompt, *initial; int max_units, min_units, secure, digits_only; uint32_t disabled; } RuntimeTextRequest;
 int runtime_front_text_input(const RuntimeTextRequest *req, char *out, size_t out_size);
@@ -138,6 +138,10 @@ typedef struct { uint64_t buttons; int32_t lx,ly,rx,ry; int connected; } Runtime
 void runtime_gamepad_start(void);
 void runtime_gamepad_switch_left(void *controller, int x, int y);
 void runtime_gamepad_read(RuntimeGamepadState *out);
+/* Mac software keyboard: exclusive controller capture; UI reads physical positions (controller_map.h),
+   independent of gameplay remaps. Main-thread only. Closing waits for release before gameplay resumes. */
+void runtime_gamepad_text_capture(int on);
+void runtime_gamepad_text_read(RuntimeGamepadState *out);
 /* Forget held buttons and sticks: macOS stops delivering controller events (including releases) while the app is in
    the background, so a button held at focus loss would otherwise stay pressed for the game. */
 void runtime_gamepad_clear(void);

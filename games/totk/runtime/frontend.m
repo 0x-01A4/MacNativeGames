@@ -136,10 +136,10 @@ static CVReturn vsync_callback(CVDisplayLinkRef link,const CVTimeStamp *now,cons
 -(BOOL)acceptsFirstResponder{return YES;}
 /* While the settings panel is open only key 1 (it closes the panel, runtime/input.c) and Esc (closes it here, not the game's
    menu) do anything; releases still go through so nothing stays held. */
--(void)keyDown:(NSEvent *)e{if(settingsOpen&&e.keyCode!=18){if(e.keyCode==53)settings_show(0);return;}runtime_input_key(e.keyCode,1);}
+-(void)keyDown:(NSEvent *)e{if(textEntryOpen)return;if(settingsOpen&&e.keyCode!=18){if(e.keyCode==53)settings_show(0);return;}runtime_input_key(e.keyCode,1);}
 -(void)keyUp:(NSEvent *)e{runtime_input_key(e.keyCode,0);}
 -(void)flagsChanged:(NSEvent *)e{int shift=!!(e.modifierFlags&NSEventModifierFlagShift),option=!!(e.modifierFlags&NSEventModifierFlagOption);
- if(e.keyCode==56&&(!settingsOpen||!shift))runtime_input_key(56,shift);if(e.keyCode==58&&(!settingsOpen||!option))runtime_input_key(58,option);}
+ if(e.keyCode==56&&(!(settingsOpen||textEntryOpen)||!shift))runtime_input_key(56,shift);if(e.keyCode==58&&(!(settingsOpen||textEntryOpen)||!option))runtime_input_key(58,option);}
 /* The game has no mouse controls. In native full screen, keep the pointer out of the picture while idle, but show it again
    as soon as it moves; restore it when the window loses focus or leaves full screen. */
 -(void)hideCursorIfIdle:(NSTimer *)timer{
@@ -528,46 +528,8 @@ void runtime_front_run(void(*callback)(void)){
   [NSApp run];runtime_fail("native event loop returned unexpectedly");
  }
 }
-/* Text entry for the game (nn::swkbd::ShowKeyboard, runtime/swkbd_host.c; on the Switch a keyboard applet takes the screen).
-   User, 2026-10-17: no on-screen keyboard, just the Mac keyboard. A bar at the bottom of the game window shows the game's
-   prompt and one text field (input methods work); Return confirms, Escape cancels. Characters the game disallows and text
-   beyond its length limit are removed as they are typed (the caller checks again). The calling guest thread waits on a
-   semaphore; the game's keys are cleared while the bar has the keyboard. */
-@interface TOTKTextBar:NSView<NSTextFieldDelegate>
-@property(strong) NSTextField *field;
-@property int maxUnits,minUnits,digitsOnly;
-@property uint32_t disabled;
-@property(copy) void(^done)(NSString *text);   /* nil: cancelled */
--(void)refilter;
-@end
-@implementation TOTKTextBar
--(BOOL)allowed:(unichar)c{
- BOOL digit=c>='0'&&c<='9';uint32_t d=self.disabled;
- if(self.digitsOnly&&!digit)return NO;
- if(c<0x20||c==0x7f)return NO;
- if((d&1u<<1&&c==' ')||(d&1u<<2&&c=='@')||(d&1u<<3&&c=='%')||(d&1u<<4&&c=='/')||(d&1u<<5&&c=='\\')||(d&1u<<6&&digit))return NO;
- return YES;
-}
--(void)controlTextDidChange:(NSNotification *)n{(void)n;[self refilter];}
--(void)refilter{
- NSText *ed=self.field.currentEditor;if([ed isKindOfClass:NSTextView.class]&&((NSTextView *)ed).hasMarkedText)return;   /* still composing */
- NSString *s=self.field.stringValue;NSMutableString *t=[NSMutableString string];
- [s enumerateSubstringsInRange:NSMakeRange(0,s.length) options:NSStringEnumerationByComposedCharacterSequences usingBlock:^(NSString *sub,NSRange r,NSRange er,BOOL *stop){
-  (void)r;(void)er;
-  if(sub.length==1&&![self allowed:[sub characterAtIndex:0]])return;
-  if(self.maxUnits>0&&t.length+sub.length>(NSUInteger)self.maxUnits){*stop=YES;return;}
-  [t appendString:sub];}];
- if(![t isEqualToString:s]){self.field.stringValue=t;NSBeep();}
-}
--(void)finish:(NSString *)text{void(^d)(NSString *)=self.done;self.done=nil;if(d)d(text);}
--(BOOL)control:(NSControl *)c textView:(NSTextView *)tv doCommandBySelector:(SEL)sel{
- (void)c;(void)tv;
- if(sel==@selector(insertNewline:)){[self refilter];NSString *s=self.field.stringValue;
-  if((NSInteger)s.length<self.minUnits||!s.length){NSBeep();return YES;}[self finish:s];return YES;}
- if(sel==@selector(cancelOperation:)){[self finish:nil];return YES;}
- return NO;
-}
-@end
+/* AppKit text entry, including controller navigation; independent of the renderer. */
+#include "text_keyboard.h"
 static __weak TOTKTextBar *openBar;   /* main thread only */
 void runtime_front_text_test(const char *op,const char *text){
  NSString *o=[NSString stringWithUTF8String:op],*t=[NSString stringWithUTF8String:text?text:""]?:@"";
@@ -589,26 +551,21 @@ int runtime_front_text_input(const RuntimeTextRequest *req,char *out,size_t out_
  int maxU=req->max_units,minU=req->min_units,digits=req->digits_only,secure=req->secure;uint32_t dis=req->disabled;
  __block NSString *result=nil;dispatch_semaphore_t sem=dispatch_semaphore_create(0);
  dispatch_async(dispatch_get_main_queue(), ^{
-  NSView *cv=window.contentView;CGFloat w=fmin(720,cv.bounds.size.width-40),h=104;
-  TOTKTextBar *bar=[[TOTKTextBar alloc] initWithFrame:NSMakeRect(floor((cv.bounds.size.width-w)/2),48,w,h)];
-  bar.autoresizingMask=NSViewMinXMargin|NSViewMaxXMargin|NSViewMaxYMargin;bar.wantsLayer=YES;bar.layer.cornerRadius=12;
-  bar.layer.backgroundColor=[NSColor colorWithCalibratedRed:0.035 green:0.075 blue:0.09 alpha:0.92].CGColor;
+  if(openBar){dispatch_semaphore_signal(sem);return;}   /* do not strand an earlier guest request */
+  NSView *cv=window.contentView;
+  TOTKTextBar *bar=[[TOTKTextBar alloc] initWithFrame:cv.bounds];
   bar.maxUnits=maxU;bar.minUnits=minU;bar.digitsOnly=digits;bar.disabled=dis;
-  NSTextField *label=[NSTextField labelWithString:prompt];label.font=[NSFont systemFontOfSize:16 weight:NSFontWeightSemibold];
-  label.textColor=NSColor.whiteColor;label.frame=NSMakeRect(18,h-36,w-36,22);label.lineBreakMode=NSLineBreakByTruncatingTail;
-  NSString *limit=maxU>0?[NSString stringWithFormat:@(TOTK_UI("最多 %d 个字 · ","Up to %d characters · ")),maxU]:@"";
-  NSTextField *hint=[NSTextField labelWithString:[NSString stringWithFormat:@(TOTK_UI("%@用键盘输入，回车确定，Esc 取消","%@Type with the keyboard, Return to confirm, Esc to cancel")),limit]];
-  hint.font=[NSFont systemFontOfSize:12];hint.textColor=[NSColor colorWithCalibratedWhite:0.72 alpha:1];hint.alignment=NSTextAlignmentRight;
-  hint.frame=NSMakeRect(18,h-36,w-36,20);hint.autoresizingMask=NSViewWidthSizable;
-  NSTextField *field=secure?[[NSSecureTextField alloc] initWithFrame:NSMakeRect(18,16,w-36,34)]:[[NSTextField alloc] initWithFrame:NSMakeRect(18,16,w-36,34)];
-  field.font=[NSFont systemFontOfSize:20];field.stringValue=initial;field.delegate=bar;field.bezelStyle=NSTextFieldRoundedBezel;bar.field=field;
+  [bar buildWithPrompt:prompt initial:initial secure:secure];
   __weak TOTKTextBar *weakBar=bar;
-  bar.done=^(NSString *text){result=[text copy];[weakBar removeFromSuperview];[window makeFirstResponder:window.contentView];textEntryOpen=0;front_mouse_update();dispatch_semaphore_signal(sem);};
-  [bar addSubview:label];[bar addSubview:hint];[bar addSubview:field];[cv addSubview:bar];openBar=bar;
+  bar.done=^(NSString *text){result=[text copy];[weakBar removeFromSuperview];openBar=nil;
+   runtime_gamepad_text_capture(0);[window makeFirstResponder:window.contentView];
+   textEntryOpen=0;front_mouse_update();dispatch_semaphore_signal(sem);};
+  [cv addSubview:bar];openBar=bar;
   runtime_input_clear();
   if(window.miniaturized)[window deminiaturize:nil];
   if(!assume_focus()){[NSApp activateIgnoringOtherApps:YES];[window makeKeyAndOrderFront:nil];}   /* test windows never take the keyboard */
-  [window makeFirstResponder:field];
+  [window makeFirstResponder:bar.field];
+  runtime_gamepad_text_capture(1);[bar startController];
   textEntryOpen=1;front_mouse_update();   /* the pointer is the player's while typing */
   fprintf(stderr,"[totk] keyboard: text entry bar shown (%s)\n",prompt.UTF8String);
  });
