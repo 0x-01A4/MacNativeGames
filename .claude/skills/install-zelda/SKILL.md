@@ -5,7 +5,7 @@ description: Build and install The Legend of Zelda Tears of the Kingdom or Breat
 
 # Install Tears of the Kingdom / Breath of the Wild
 
-You are helping a player turn **their own** game dump into an app. Done right, this is one build of 20–40 minutes, mostly waiting. Follow the steps in order; do not read `docs/install.md` end to end first (it is long and mostly history). Each step below says when a section of it is worth opening.
+You are helping a player turn **their own** game dump into an app. Done right, this is one build of 20–40 minutes, mostly waiting. Follow the steps in order. `docs/install.md` has the same steps for the player to read; you do not need it unless a step below points there.
 
 ## Rules
 
@@ -89,7 +89,7 @@ python3.14 build_app.py "<botw base.nsp>" -k "<prod.keys>" --update "<1.9.0 upda
   --platform ios --ios-game-data documents -o "<folder>/Tears of the Kingdom.ipa"
 ```
 
-If `/Applications` is on another volume than the work folder, use a folder next to the work folder instead. Leaving out `--update` builds Tears of the Kingdom 1.0.0. Mods, Vision Pro and other options: `docs/install.md` ("Build with a mod's code patches", "Apple Vision Pro"). Other games (Smash, Odyssey, …) are not built by `build_app.py`: see `games/<name>/README.md`.
+If `/Applications` is on another volume than the work folder, use a folder next to the work folder instead. Leaving out `--update` builds Tears of the Kingdom 1.0.0. Mods: `docs/mods.md`; Vision Pro: `docs/install.md` ("Apple Vision Pro"). Other games (Smash, Odyssey, …) are not built by `build_app.py`: see `games/<name>/README.md`.
 
 ## 4. Run it to the end
 
@@ -106,7 +106,7 @@ If `/Applications` is on another volume than the work folder, use a folder next 
 - An app moved or copied to another volume afterwards is checked by macOS again: no window for a few minutes. Wait.
 - If macOS asks to allow access to files on a removable volume, the player clicks Allow.
 - Short stutters the first time in a new place are expected.
-- Key 1 opens the settings panel. Controls and settings: `docs/install.md` ("Controls").
+- Key 1 opens the settings panel. Controls and settings: `docs/controls.md`.
 
 **iPhone / iPad:** connect the device by cable, then:
 
