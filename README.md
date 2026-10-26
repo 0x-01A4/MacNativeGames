@@ -53,6 +53,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 26 | Mac | **Metal performance diagnostics on macOS 27** (both Zelda games, off by default): with `TOTK_STATE_REPORTING=1` the game reports its states (start-up and shader warm-up, focus, resolution, MetalFX, TAA, frame interpolation, frame-rate cap) to Apple's StateReporting, and `games/totk/scripts/metal_perf_report.py` turns a `metalperftrace` trace into a report per state ([details](docs/metal-performance-diagnostics.md)) |
 | Oct 26 | Mac | **Super Smash Bros. Ultimate** update ([`games/ssbu`](games/ssbu/README.md)): no more crash in long World of Light sessions (Giga Bowser) or when taking a photo; your own DLC fighters (DLC menu: choose the folder with your DLC); photos saved as PNG; the menus' alpha test; every session's log kept, Log menu |
 | Oct 25 | Mac | **Super Mario Party Jamboree 2.3.0** (community port, experimental): independent [`games/jamboree`](games/jamboree/README.md) build, vertex-storage writes during rasterizer discard fix character deformation; tested scope and limitations documented |
 | Oct 24 | Mac | **Super Smash Bros. Ultimate 13.0.2** (community port): fights, World of Light with the Spirit Board, saves, movies with sound; 1080p or 2K; own runtime in [`games/ssbu`](games/ssbu/README.md), with its one-command build there |
@@ -156,6 +157,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 26 日 | Mac | **macOS 27 上的 Metal 性能诊断**（两款塞尔达，默认关闭）：设 `TOTK_STATE_REPORTING=1` 后，游戏把自己的状态（启动和着色器预热、焦点、分辨率、MetalFX、TAA、补帧、帧率上限）报告给 Apple 的 StateReporting，`games/totk/scripts/metal_perf_report.py` 把 `metalperftrace` 追踪按状态整理成报告（[说明](docs/metal-performance-diagnostics.md)） |
 | 10 月 26 日 | Mac | **任天堂明星大乱斗 特别版** 更新（[`games/ssbu`](games/ssbu/README.md)）：灯火之星长时间游玩（基加库巴）和拍照时不再崩溃；支持你自己的 DLC 斗士（DLC 菜单里选 DLC 所在文件夹）；照片存为 PNG；菜单图形的 alpha 测试；每次游玩的日志都会保留，新增日志菜单 |
 | 10 月 25 日 | Mac | **超级马力欧派对 空前盛会 2.3.0**（社区移植，实验）：独立构建，放在 [`games/jamboree`](games/jamboree/README.md)；光栅化丢弃时照样执行顶点存储写入，修好了角色变形；测过的范围和已知限制写在那里 |
 | 10 月 24 日 | Mac | **任天堂明星大乱斗 特别版 13.0.2**（社区移植）：对战、灯火之星和命魂板、存档、带声音的过场动画；1080p 或 2K；运行时独立放在 [`games/ssbu`](games/ssbu/README.md)，一条命令构建，步骤见那里 |
