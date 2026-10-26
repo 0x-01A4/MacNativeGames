@@ -53,6 +53,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 26 | Mac | **Super Smash Bros. Ultimate** update ([`games/ssbu`](games/ssbu/README.md)): no more crash in long World of Light sessions (Giga Bowser) or when taking a photo; your own DLC fighters (DLC menu: choose the folder with your DLC); photos saved as PNG; the menus' alpha test; every session's log kept, Log menu |
 | Oct 25 | Mac | **Super Mario Party Jamboree 2.3.0** (community port, experimental): independent [`games/jamboree`](games/jamboree/README.md) build, vertex-storage writes during rasterizer discard fix character deformation; tested scope and limitations documented |
 | Oct 24 | Mac | **Super Smash Bros. Ultimate 13.0.2** (community port): fights, World of Light with the Spirit Board, saves, movies with sound; 1080p or 2K; own runtime in [`games/ssbu`](games/ssbu/README.md), with its one-command build there |
 | Oct 23 | iPhone | **Breath of the Wild 1.6.0** on the iPhone: full screen, add-on content, saves copied from the Mac; both games render at 960x540 on the phone and use their own upscale to 1280x720 (no MetalFX) |
@@ -155,6 +156,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 26 日 | Mac | **任天堂明星大乱斗 特别版** 更新（[`games/ssbu`](games/ssbu/README.md)）：灯火之星长时间游玩（基加库巴）和拍照时不再崩溃；支持你自己的 DLC 斗士（DLC 菜单里选 DLC 所在文件夹）；照片存为 PNG；菜单图形的 alpha 测试；每次游玩的日志都会保留，新增日志菜单 |
 | 10 月 25 日 | Mac | **超级马力欧派对 空前盛会 2.3.0**（社区移植，实验）：独立构建，放在 [`games/jamboree`](games/jamboree/README.md)；光栅化丢弃时照样执行顶点存储写入，修好了角色变形；测过的范围和已知限制写在那里 |
 | 10 月 24 日 | Mac | **任天堂明星大乱斗 特别版 13.0.2**（社区移植）：对战、灯火之星和命魂板、存档、带声音的过场动画；1080p 或 2K；运行时独立放在 [`games/ssbu`](games/ssbu/README.md)，一条命令构建，步骤见那里 |
 | 10 月 23 日 | iPhone | **旷野之息 1.6.0** 上 iPhone：铺满屏幕、带 DLC、可拷入 Mac 的存档；两款游戏在手机上都是内部 960×540，用游戏自己的放大到 1280×720（不用 MetalFX） |
