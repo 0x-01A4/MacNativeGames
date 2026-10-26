@@ -28,3 +28,31 @@ static inline const char *romfs_path_relative(const char *mount, const char *pat
     while (*path == '/') ++path;
     return romfs_path_valid_relative(path) ? path : NULL;
 }
+
+/* A RomFS path as Horizon's fs normalizes it: separators collapsed, "." dropped, ".." resolved, never above the root
+   (Metroid Dread's sound library opens rom:/system/snd/../../sounds/streams/...). Backslashes stay invalid. The result is
+   only looked up in the verified RomFS index, never used as a host file path. Writes into out; NULL when invalid, empty,
+   above the root or longer than cap. */
+static inline const char *romfs_path_normalize(const char *mount, const char *path, char *out, size_t cap) {
+    if (!mount || !*mount || !path || !out || !cap) return NULL;
+    size_t size = strlen(mount);
+    if (strncmp(path, mount, size) || path[size] != ':' || path[size + 1] != '/' || strchr(path, '\\')) return NULL;
+    size_t n = 0;
+    for (const char *part = path + size + 2; *part;) {
+        const char *end = strchr(part, '/');
+        size_t len = end ? (size_t)(end - part) : strlen(part);
+        if (len == 2 && part[0] == '.' && part[1] == '.') {
+            if (!n) return NULL;
+            while (n && out[n - 1] != '/') --n;
+            if (n) --n;
+        } else if (len && !(len == 1 && part[0] == '.')) {
+            if (n + (n ? 1 : 0) + len >= cap) return NULL;
+            if (n) out[n++] = '/';
+            memcpy(out + n, part, len); n += len;
+        }
+        if (!end) break;
+        part = end + 1;
+    }
+    out[n] = 0;
+    return n ? out : NULL;
+}

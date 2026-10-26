@@ -241,8 +241,9 @@ void runtime_fs_init(void) {
  fprintf(stderr,"[totk] native read-only RomFS ready: %llu files\n",(unsigned long long)file_count);
 }
 static int path_ok(const char *p) {return romfs_path_valid_relative(p);}
-static const char *rom_path(const char *path) {
- return romfs_path_relative(mount_name,path);
+static const char *rom_path(const char *path) {   /* normalized as Horizon does; callers use or copy it at once */
+ static _Thread_local char normalized[4096];
+ return romfs_path_normalize(mount_name,path,normalized,sizeof normalized);
 }
 static uint64_t lower(const char *name) {uint64_t lo=0,hi=file_count;while(lo<hi){uint64_t m=lo+(hi-lo)/2;if(strcmp(entry_name(entry(m)),name)<0)lo=m+1;else hi=m;}return lo;}
 static void fs_log(const char *what,const char *path);
