@@ -331,7 +331,8 @@ void runtime_dispatch(uint64_t ret,uint64_t *regs) {
  for(unsigned i=0;i<NM;i++)for(unsigned j=0;j<modules[i].ngate;j++) {
   const Gate *g=&modules[i].gates[j];if((uintptr_t)modules[i].base+g->ret!=ret)continue;
   if(g->timer){mach_timebase_info_data_t tb;mach_timebase_info(&tb);__uint128_t ns=(__uint128_t)mach_absolute_time()*tb.numer/tb.denom;
-   need(g->arg<31&&g->arg!=18,"timer target register");regs[g->arg]=(uint64_t)(ns*12/625);__atomic_fetch_add(&timer_calls,1,__ATOMIC_RELAXED);return;}
+   need(g->arg<31&&g->arg!=18,"timer target register");regs[g->arg]=(uint64_t)(ns*12/625);__atomic_fetch_add(&timer_calls,1,__ATOMIC_RELAXED);
+   runtime_core_checkpoint();return;}   /* a preemption point too: Metroid Dread's main thread polls the counter for seconds while a higher-priority thread it waits for wants its core */
   __atomic_fetch_add(&svc_calls,1,__ATOMIC_RELAXED);runtime_svc(g->arg,regs,modules[i].name,g->original);runtime_core_checkpoint();return;   /* Horizon switches to a higher-priority thread the SVC woke before returning */
  }
  runtime_fail("unknown gate return address");
