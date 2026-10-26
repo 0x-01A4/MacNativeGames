@@ -8,7 +8,7 @@
 #   已登记剪口（CUTS，按 NSO 构建号限定）：改写前逐条断言原字节，不符即中止；结果列在 <名>.cuts.tsv
 #   已登记观测门（OBS，按构建号限定）：入口一条指令换成「进宿主观测回调 → 执行原指令 → 跳回」，诊断零运行时改代码；列在 <名>.obs.tsv
 # 键页只在数据段末尾保存“实际键号 × 8”，补丁代码通过键页间接取线程槽：装载器可使用任意键号。
-# 输出：<名>.patched.bin（键页与补丁区接在映像后 PATCH_OFF）、<名>.fixups.tsv（布局与键页下标表头）、<名>.gates.tsv、<名>.sites.tsv、<名>.cuts.tsv、<名>.obs.tsv
+# 输出：<名>.patched.bin（键页与补丁区接在映像后 PATCH_OFF；映像过大时补丁区在模块前，见 PATCH_LEAD）、<名>.fixups.tsv（布局与键页下标表头）、<名>.gates.tsv、<名>.sites.tsv、<名>.cuts.tsv、<名>.obs.tsv
 # Generic NSO rewriter: Switch aarch64 module → an image that can execute natively on Apple systems.
 # Usage: patch_nso.py <NSO file> <output dir> <module name>
 # Rewrites (the Apple kernel modifies x18 and tpidr_el0; Horizon's thread area, svc and timers have no counterpart on Apple):
@@ -19,7 +19,7 @@
 #   Registered cuts (CUTS, restricted by NSO build ID): before rewriting, the original bytes are asserted one by one and any mismatch aborts; results are listed in <name>.cuts.tsv
 #   Registered observation gates (OBS, restricted by build ID): one instruction at the entry is replaced with "enter the host observation callback → execute the original instruction → jump back", so diagnostics modify zero code at runtime; listed in <name>.obs.tsv
 # The key page only stores "actual key number × 8" at the end of the data segment, and patch code fetches thread slots indirectly through the key page: the loader may use any key number.
-# Output: <name>.patched.bin (key page and patch area appended after the image at PATCH_OFF), <name>.fixups.tsv (layout and key page index header), <name>.gates.tsv, <name>.sites.tsv, <name>.cuts.tsv, <name>.obs.tsv
+# Output: <name>.patched.bin (key page and patch area appended after the image at PATCH_OFF; before the module for a very large image, see PATCH_LEAD), <name>.fixups.tsv (layout and key page index header), <name>.gates.tsv, <name>.sites.tsv, <name>.cuts.tsv, <name>.obs.tsv
 import struct, re, sys, os
 from itertools import combinations
 import lz4.block
@@ -44,6 +44,20 @@ RO_OFF, DATA_OFF = segs[1][1], segs[2][1]
 KEY_PAGE_OFF = (len(IMG) + 0x3FFF) & ~0x3FFF
 IMG.extend(bytes(0x4000))
 PATCH_OFF = (len(IMG) + 0xFFFF) & ~0xFFFF
+# 前置补丁区：映像（含 bss）太大、正文到映像后的补丁区超出 B 的 ±128 MiB 时（Metroid Dread main：bss 1.8 GiB），
+# 补丁区放在模块前 PATCH_LEAD 处、向偏移 0 增长；键页仍在 bss 后（ADRP ±4 GiB 可达）。文件只存补丁区与映像到数据段末，
+# bss 与键页由装载器零填。其余模块（映像小）布局与产物不变。
+# Leading patch area: when the image (bss included) is so large that the patch area after it is out of B's ±128 MiB
+# from the text (Metroid Dread main: 1.8 GiB bss), the patch area goes PATCH_LEAD before the module and grows towards
+# offset 0; the key page stays after bss (ADRP reaches ±4 GiB). The file holds the patch area and the image up to the
+# end of data only; the loader zero-fills bss and the key page. Smaller modules keep the old layout and output.
+PATCH_LEAD = 0
+if PATCH_OFF >= (1 << 27) - (1 << 20):
+    PATCH_LEAD = 0x400000   # main 1.0.0 needs 0xa9ac
+    PATCH_OFF = -PATCH_LEAD
+    assert TEXT_END + PATCH_LEAD < (1 << 27), 'text too large for a leading patch area'
+    assert KEY_PAGE_OFF + 0x4000 - PATCH_OFF < (1 << 32), 'key page out of ADRP reach'
+FILE_IMAGE_END = (DATA_OFF + segs[2][2] + 0x3FFF) & ~0x3FFF if PATCH_LEAD else len(IMG)
 
 # ---- 已登记剪口：{NSO 构建号: [(偏移, 原字节, 新字节, 理由)]} ----
 # 联网剪口（排除范围：战网 / 联机）：取自社区离线修复（LFS Mod Offline Fix for v2228224，与官方 94012 main 只差这 7 个字）。
@@ -1066,7 +1080,12 @@ if RULE_RUN:
 
 os.makedirs(outdir, exist_ok=True)
 P = lambda ext: os.path.join(outdir, f'{NAME}.{ext}')
-open(P('patched.bin'), 'wb').write(IMG + bytearray(PATCH_OFF - len(IMG)) + patch)
+if PATCH_LEAD:
+    assert len(patch) <= PATCH_LEAD, f'patch area {len(patch):#x} larger than PATCH_LEAD'
+    assert not any(IMG[FILE_IMAGE_END:]), 'bss or key page not zero'
+    open(P('patched.bin'), 'wb').write(patch + bytearray(PATCH_LEAD - len(patch)) + IMG[:FILE_IMAGE_END])
+else:
+    open(P('patched.bin'), 'wb').write(IMG + bytearray(PATCH_OFF - len(IMG)) + patch)
 import hashlib
 with open(os.path.join(outdir, 'build_src.sha256'), 'w') as f:
     f.write(hashlib.sha256(open(os.path.abspath(__file__), 'rb').read()).hexdigest() + '  patch_nso.py\n')
@@ -1082,6 +1101,7 @@ elif os.path.exists(P('rules.tsv')):
     os.unlink(P('rules.tsv'))  # 重出native时清本模块旧规则登记，不让旧manifest混入原资源域 | When rebuilding native, clear this module's old rule registration so the old manifest does not leak into the original-resource domain
 with open(P('fixups.tsv'), 'w') as f:
     f.write(f'# PATCH_OFF\t{PATCH_OFF:#x}\n# KEY_PAGE_OFF\t{KEY_PAGE_OFF:#x}\n# KEY_PAGE_SIZE\t0x4000\n# TEXT_END\t{TEXT_END:#x}\n# RO_OFF\t{RO_OFF:#x}\n# DATA_OFF\t{DATA_OFF:#x}\n')
+    f.write(f'# PATCH_LEAD\t{PATCH_LEAD:#x}\n# PATCH_SIZE\t{len(patch):#x}\n# IMAGE_SIZE\t{KEY_PAGE_OFF + 0x4000:#x}\n')
     for k in KEY_INDEX: f.write(f'# KEY_{k}_IDX\t{KEY_INDEX[k]}\n')
 with open(P('gates.tsv'), 'w') as f:
     for ret, k, arg, orig in gates: f.write(f'{ret:#x}\t{k}\t{arg}\t{orig:#x}\n')
@@ -1100,7 +1120,7 @@ with open(P('params.tsv'), 'w') as f:
 with open(P('obs.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for off, oid, ow, why in obs: f.write(f'{off:#x}\t{oid}\t{ow}\t{why}\n')
-print(NAME, stats, 'cuts', len(cuts), 'obs', len(obs), 'patch', len(patch), 'PATCH_OFF', hex(PATCH_OFF), 'slot_refs', len(fix), 'gates', len(gates))
+print(NAME, stats, 'cuts', len(cuts), 'obs', len(obs), 'patch', len(patch), 'PATCH_OFF', hex(PATCH_OFF), 'PATCH_LEAD', hex(PATCH_LEAD), 'slot_refs', len(fix), 'gates', len(gates))
 # 启动块清单随 main 出：取仓库版本化数据 dm/data/bootlist_<main 构建号>.tsv 原样拷进产物目录并写 sha256（清单入库、不每版重录；
 # 记录本身有竞态——同产物三次记录块集合 5292 / 5114 / 5281、发起线程亦有不同——重录只在构建号变化或主动改进时做，提交附 mini A/B）
 # The boot block list ships with main: take the repository's versioned data dm/data/bootlist_<main build ID>.tsv, copy it as is into the build output directory and write its sha256 (the list is checked in, not re-recorded for every version;

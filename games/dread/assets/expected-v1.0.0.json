@@ -16,7 +16,11 @@
     "sdk": "1c9f198a91c0bcfee5cf8f5b53fb941895e91334dfb766ce79fc68576797f017",
     "subsdk0": "67a38fcf89cd13e040a021eb3d157072f38ebf6680a907874c35c7b231b5d4e2"
   },
-  "rewritten_sha256": {},
+  "rewritten_sha256": {
+    "main.patched.bin": "a358b91072a19e8bd742b3db095ab36bf07af36425c315213fb56823cf7deb04",
+    "sdk.patched.bin": "31f8d4331e89291232776b3edfb0ed097bbce7761179eb7311ccf590f6e2a649",
+    "subsdk0.patched.bin": "e84539bb052a880b97ad759dea2115e3fa557dae0390cc4a8900716fc56ab388"
+  },
   "romfs": {
     "size": 4400319820,
     "sha256": "d3c6c3101a7109fed312383e18646ff5aeca4d0479a5b753e6ac4d77a582a3ae",

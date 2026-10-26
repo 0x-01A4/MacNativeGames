@@ -32,14 +32,15 @@ def exclusive_groups(image, windows):
     for lo, hi in windows: groups.setdefault(find(lo), []).append((lo, hi))
     return {lo: group for group in groups.values() for lo, _ in group}
 
-def load(path):
+def load(path, bss=True):
+    """bss=False：只到数据段末（bss 1.8 GiB 的模块不必整块进内存）。 | bss=False: up to the end of data only (a module with a 1.8 GiB bss need not be held whole)."""
     d = open(path, 'rb').read()
     assert d[:4] == b'NSO0', path
     flags = struct.unpack_from('<I', d, 0xc)[0]
     segs = [struct.unpack_from('<III', d, 0x10 + i * 0x10) for i in range(3)]
-    bss = struct.unpack_from('<I', d, 0x3c)[0]
+    bss_size = struct.unpack_from('<I', d, 0x3c)[0] if bss else 0
     csz = struct.unpack_from('<III', d, 0x60)
-    img = bytearray(segs[2][1] + segs[2][2] + bss)
+    img = bytearray(segs[2][1] + segs[2][2] + bss_size)
     for i, (fo, mo, sz) in enumerate(segs):
         raw = d[fo:fo + csz[i]]
         if flags >> i & 1: raw = lz4.block.decompress(raw, uncompressed_size=sz)
@@ -52,6 +53,33 @@ def header(out_dir, mod):
         if not line.startswith('#'): break
         k, v = line[1:].split(); h[k] = int(v, 0)      # 0x 开头为偏移，十进制为槽号 | A 0x prefix means an offset, decimal means a slot number
     return h
+
+class Patched:
+    """改写产物 <mod>.patched.bin，按模块偏移取字节。补丁区在映像后（PATCH_LEAD 0）时就是文件本身；在模块前时文件从
+    -PATCH_LEAD 起，文件末到 IMAGE_SIZE（bss、键页）读作 0，与装载器零填一致。
+    The rewrite output <mod>.patched.bin, read by module offset. With the patch area after the image (PATCH_LEAD 0) it
+    is the file itself; with the patch area before the module the file starts at -PATCH_LEAD, and the part from the
+    file's end to IMAGE_SIZE (bss, key page) reads as zero, as the loader zero-fills it."""
+    def __init__(self, out_dir, mod):
+        h = header(out_dir, mod)
+        self.data = open(f'{out_dir}/{mod}.patched.bin', 'rb').read()
+        self.lead = h.get('PATCH_LEAD', 0)
+        self.po = h['PATCH_OFF']
+        self.pe = self.po + h['PATCH_SIZE'] if 'PATCH_SIZE' in h else len(self.data)
+        self.lo, self.hi = -self.lead, max(len(self.data) - self.lead, h.get('IMAGE_SIZE', 0))
+
+    def in_patch(self, a): return self.po <= a < self.pe
+
+    def __getitem__(self, k):
+        if not isinstance(k, slice):
+            if not self.lo <= k < self.hi: raise IndexError(k)
+            return self.data[k + self.lead] if k + self.lead < len(self.data) else 0
+        assert k.step is None
+        a = self.lo if k.start is None else max(k.start, self.lo)
+        b = self.hi if k.stop is None else min(k.stop, self.hi)
+        if b <= a: return b''
+        part = self.data[a + self.lead:b + self.lead]
+        return part + bytes(b - a - len(part))
 
 def mod0(img):
     m0 = struct.unpack_from('<I', img, 4)[0]

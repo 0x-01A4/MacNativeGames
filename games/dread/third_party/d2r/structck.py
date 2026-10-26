@@ -40,8 +40,9 @@ out_dir, mod, nso = sys.argv[1:4]
 orig = nsoimg.load(nso)
 h = nsoimg.header(out_dir, mod)
 PO, TE = h['PATCH_OFF'], h['TEXT_END']
-pat = open(f'{out_dir}/{mod}.patched.bin', 'rb').read()
-W = lambda b, o: struct.unpack_from('<I', b, o)[0]
+pat = nsoimg.Patched(out_dir, mod)                   # 按模块偏移取；补丁区可在模块前（PATCH_LEAD） | Read by module offset; the patch area may lie before the module (PATCH_LEAD)
+PE = pat.pe
+W = lambda b, o: struct.unpack_from('<I', b[o:o + 4])[0]
 fails = []
 def bad(msg):
     fails.append(msg)
@@ -183,7 +184,7 @@ for blk in range(TE, len(orig), 4096):
     e = min(blk + 4096, len(orig))
     if pat[blk:e] != orig[blk:e]: nd += [o for o in range(blk, e) if pat[o] != orig[o] and o not in cutb]
 if nd: bad(f'非 text 段与原映像不同（剪口以外）{len(nd)} 字节 例 {[hex(x) for x in nd[:5]]}')
-if any(pat[len(orig):PO]): bad('映像尾到补丁区之间非 0')
+if any(pat[PE:0] if pat.lead else pat[len(orig):PO]): bad('映像尾到补丁区之间非 0')   # 前置补丁区：补丁末到偏移 0 的填充 | Leading patch area: the pad from the patch end to offset 0
 
 # ② text 改动 == 改写点头
 # ② text changes == rewrite site heads
@@ -201,7 +202,7 @@ def btarget(o):
     imm = w & 0x3FFFFFF
     if imm & 0x2000000: imm -= 0x4000000
     return o + 4 * imm
-nb = [a for a in heads | obs_heads if not (btarget(a) is not None and PO <= btarget(a) < len(pat))]
+nb = [a for a in heads | obs_heads if not (btarget(a) is not None and pat.in_patch(btarget(a)))]
 if nb: bad(f'改写点头不是跳进补丁区的 B：{len(nb)} 例 {[hex(x) for x in nb[:5]]}')
 
 # ③ 独立分母
@@ -232,7 +233,7 @@ nwin_ref = sum(1 for o in ind if o in inwin)
 
 # ④ 补丁区干净
 # ④ Patch area is clean
-P = llvm_dis(pat[PO:], PO)
+P = llvm_dis(pat[PO:PE], PO)
 left = sorted(o for o, t in P.items() if RX18.search(t) or sysk(t) not in (None, 'tpidrro_r'))
 if left: bad(f'补丁区残留 x18/系统寄存器/svc：{len(left)} 例 {[(hex(x), P[x]) for x in left[:5]]}')
 
@@ -241,6 +242,7 @@ if left: bad(f'补丁区残留 x18/系统寄存器/svc：{len(left)} 例 {[(hex(
 KEY = {k[4:-4]: v for k, v in h.items() if k.startswith('KEY_') and k.endswith('_IDX')}
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 _md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); _md.detail = True
+_sx = lambda a: a - (1 << 64) if a >= 1 << 63 else a   # capstone 把补丁区负偏移按无符号给 | capstone reports a negative patch-area offset unsigned
 def keyseq(at):
     q = list(_md.disasm(pat[at:at + 20], at))
     if len(q) < 5 or q[0].mnemonic != 'mrs' or 'tpidrro_el0' not in q[0].op_str \
@@ -250,12 +252,12 @@ def keyseq(at):
             or q[3].operands[1].reg != q[0].operands[0].reg:
         return None
     d = q[2].operands[1].mem.disp
-    return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
+    return (_sx(q[3].address) + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
 # C windows intentionally change the call word as well as the preceding head.
 # Inspect the actual decoded sequence, including the original link-producing PC.
 for prefix, call in calls.items():
     start = btarget(prefix)
-    if start is None or not PO <= start < len(pat):
+    if start is None or not pat.in_patch(start):
         bad(f'call preparation has no trampoline {prefix:#x}'); continue
     decoded = list(_md.disasm(pat[start:start + 36], start))
     first = next(_md.disasm(orig[prefix:prefix + 4], prefix), None)
@@ -292,7 +294,7 @@ def paramseq(at, r):
             or q[6].operands[1].mem.disp != q[0].operands[1].mem.disp or q[7].mnemonic != 'b':
         return None
     d = q[3].operands[1].mem.disp
-    return (q[6].address + 4, d // 8)
+    return (_sx(q[6].address) + 4, d // 8)
 gates = {}
 for l in open(f'{out_dir}/{mod}.gates.tsv'):
     r, k, arg, oa = l.split(); gates[int(r, 16)] = (k, int(arg), int(oa, 16))
@@ -331,7 +333,7 @@ for off, oid, ow, why in obs:
     # this ABI is checked functionally by gatefn (the stub deliberately clobbers x9–x17 and NZCV, and full restoration is checked), not approximated here by position
     if set(range(off, off + 4)) & _busy: bad(f'观测门 {off:#x} 与改写点 / 窗口 / 剪口重叠')
     s_ = btarget(off)
-    if s_ is None or not (PO <= s_ < len(pat)): bad(f'观测门头 {off:#x} 不是跳进补丁区的 B'); continue
+    if s_ is None or not pat.in_patch(s_): bad(f'观测门头 {off:#x} 不是跳进补丁区的 B'); continue
     ks = keyseq(s_ + 4)
     if W(pat, s_) != 0xA9BF7BFD or not ks or ks[1] != KEY.get('KGATE') \
             or W(pat, ks[0]) & 0xFFC00000 != 0xF9400000 or W(pat, ks[0] + 4) != LDR_X29_SP or W(pat, ks[0] + 8) != 0xD63F03C0 \
@@ -354,7 +356,7 @@ for n, (roff, form) in _hreg.items():
     mt, mb = re.search(r'跳 (0x[0-9a-fA-F]+)', form), re.search(r'回 (0x[0-9a-fA-F]+)', form)
     if not mt or not mb or int(mb[1], 16) != roff + 4: bad(f'分支门 svc #{n:#x}：登记表形态缺跳转目标或回点 ≠ 原处+4：{form}'); continue
     tgt = int(mt[1], 16); s_ = btarget(roff); ks = keyseq(s_ + 8) if s_ is not None else None
-    if s_ is None or not (PO <= s_ < len(pat)) or W(pat, s_) != 0xA9BF7FE8 or W(pat, s_ + 4) != 0xA9BF7BFD or not ks or ks[1] != KEY.get('KGATE') \
+    if s_ is None or not pat.in_patch(s_) or W(pat, s_) != 0xA9BF7FE8 or W(pat, s_ + 4) != 0xA9BF7BFD or not ks or ks[1] != KEY.get('KGATE') \
             or W(pat, ks[0]) & 0xFFC00000 != 0xF9400000 or W(pat, ks[0] + 4) != LDR_X29_SP or W(pat, ks[0] + 8) != 0xD63F03C0 or W(pat, ks[0] + 12) != 0xA8C17BFD \
             or W(pat, ks[0] + 16) != 0x34000068 or W(pat, ks[0] + 20) != 0xA8C17FE8 or W(pat, ks[0] + 24) != B(ks[0] + 24, tgt) \
             or W(pat, ks[0] + 28) != 0xA8C17FE8 or W(pat, ks[0] + 32) != W(orig, roff) or W(pat, ks[0] + 36) != B(ks[0] + 36, roff + 4):
@@ -370,7 +372,7 @@ if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KA
         or not {k for *_, k in params} <= set(KEY) or set(KEY.values()) != set(range(8)):
     bad(f'表头键页下标不合规：{KEY}（须含八个键且下标恰为 0..7）')
 kv = {v: k for k, v in KEY.items()}; nk = {}
-for o in range(PO, len(pat) - 4, 4):
+for o in range(PO, PE - 4, 4):
     w = W(pat, o)
     if w & 0xFFFFFFE0 != 0xD53BD060: continue           # mrs xN, tpidrro_el0
     n = w & 31; ks = keyseq(o); k = kv.get(ks[1]) if ks else None
@@ -493,7 +495,7 @@ def _block(start):
         out.append(ins)
         if ins.mnemonic == 'b':
             t = ins.operands[0].imm
-            if not (PO <= t < len(pat)): break
+            if not pat.in_patch(t): break
     return out
 static_entries = [(a, set()) for a in sites]
 for a, b, r, _ in params:
@@ -547,7 +549,7 @@ print(f'STATIC {mod} scanned={static_seen} violations={sum(1 for x in fails if x
 #   for every b in text that jumps into the patch area (trampoline head a), follow the patch block through all exits back to text (sequential b and conditional branches; bl is treated as returning; ret / br do not count as returning to text).
 #   Legal exits: a+4; the address after skipped words that are all words absorbed by the rewrite (≠ the original word and not another trampoline head, e.g. the nop at parameter-gate B);
 #   window (W row [lo, hi)) heads: hi and the branch targets of the original instructions inside the window; non-window heads: the branch targets of the original instructions inside the contiguous absorbed span.
-_heads = {o for o in range(0, TE & ~3, 4) if W(pat, o) & 0xFC000000 == 0x14000000 and btarget(o) is not None and btarget(o) >= PO}
+_heads = {o for o in range(0, TE & ~3, 4) if W(pat, o) & 0xFC000000 == 0x14000000 and btarget(o) is not None and pat.in_patch(btarget(o))}
 _wend = dict(wins)
 def _bt(w, o):
     if w & 0x7C000000 == 0x14000000: return o + 4 * (((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000)
@@ -569,17 +571,17 @@ def _exits(start):
     ex, seen, st = set(), set(), [start]
     while st:
         o = st.pop()
-        while o not in seen and o + 4 <= len(pat):
+        while o not in seen and o + 4 <= PE:
             seen.add(o); w = W(pat, o)
             if w & 0xFC000000 == 0x14000000:
                 t = _bt(w, o)
-                if t < PO: ex.add(t); break
+                if not pat.in_patch(t): ex.add(t); break
                 o = t; continue
             if w & 0xFC000000 == 0x94000000: o += 4; continue
             if w == 0xD65F03C0 or w & 0xFFFFFC1F == 0xD61F0000: break
             t = _bt(w, o)
             if t is not None:
-                if t < PO: ex.add(t)
+                if not pat.in_patch(t): ex.add(t)
                 else: st.append(t)
             o += 4
     return ex
