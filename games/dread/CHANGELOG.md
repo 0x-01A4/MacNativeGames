@@ -15,8 +15,8 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 0 | Feasibility: does the game fit the TotK architecture? | done 2026-10-25 |
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
-| 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | in progress: headless boot reaches the VI display service |
-| 4 | A picture, audio, input, saves | not started |
+| 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
+| 4 | A picture, audio, input, saves | next: the title movie decoder (VP9, mode 2) |
 | 5 | Performance, shaders, packaging as an app | not started |
 
 ## Log
@@ -156,3 +156,35 @@ awake display.
 
 Commit: `7a8a428` feat(dread): answer the fs allocator, exit-request sections and nfp calls, and accept thread stacks
 in module data.
+
+### 2026-10-25: stage 3 done, the first frame is presented
+
+With the screen unlocked, runs use a window and `TOTK_GPU_ALLOW_SUBMIT=1`, each capped at 90 s.
+
+- **The VI display and NVN window come up** (2 swapchain images, 1600x900, format 0x25). The game then crashed in its own
+  code (`main+0x1a0310`, `[x20+0x390]` with x20 = 0), the same place every run, so not a race. In lldb the lookup
+  that returned null (`main+0xeab90`) was asking for `system/engine/prjdecals/shotimpact00_def.bsmat`. The asset is in
+  `packs/system/system.pkg`: Mercury packs index files by CRC-64 of the path (reflected ECMA polynomial, initial value
+  all ones, no final XOR), and that hash is in the pack's table of 272 entries.
+- **The cause was the RomFS mount.** `TOTK_FS_LOG` lines for `rom:/` paths came from the host's save-path code, and no
+  RomFS read was ever made: the game had not mounted its RomFS. At `main+0x132424..0x132458` it asks
+  `QueryMountRomCacheSize`, allocates a buffer of that size and calls `MountRom` only when the allocation is not null.
+  The host answered 0, so the allocation was null and the mount was skipped; every pack and asset open then failed
+  and the game ran on with empty tables. `QueryMountRomCacheSize` now answers what the SDK computes: the four metadata
+  tables of the verified image (directory and file hash tables and entries). TotK and Bayonetta 3 accept 0 and are
+  not affected (other folders).
+- New diagnostics, off by default: `TOTK_FS_LOG=1` logs the RomFS mount, `TOTK_FS_LOG=2` also every RomFS read.
+
+Verified: RomFS mounted as `rom`, 771 RomFS opens, the save folder mounted, **"first presented frame" at 1.214 s**,
+frames 1-3 presented (clears only: a loading screen) with 99 NVN functions in use.
+
+**Next stop (stage 4): the title movie.** The game builds a `movie::Decoder` of type 3 (VP9), output format 3, mode 2.
+The host's decoder (`movie_host.c`, from TotK) covers VP9 in buffer mode (mode 1, NV12) only, so this one goes to the
+SDK's library, which needs Tegra's decoder and crashes in `android::Surface` (`subsdk0` `DecoderImpl::Configure`,
+called from `main+0x225870`). Dread's movie player is `main+0x220e24..0x2268dc`. In mode 2 the game hands the decoder
+NVN objects (`movie::Buffer::SetNvnDev` at `main+0x2267f0`, `SetNvnSync` at `main+0x226804`, after
+`GetOutputBufferFormat` at `main+0x2267c4` and before `GetOutputBuffer` at `main+0x226834`). The decoder writes
+frames into NVN memory and signals an NVN sync. That needs reading before the host decoder can serve it. The movies
+are WebM; main also uses `movie::Extractor`, which runs in the library (WebM parsing, no hardware).
+
+Commit: `f671685` fix(dread): QueryMountRomCacheSize answers the RomFS metadata size, so the game mounts its RomFS.
