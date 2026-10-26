@@ -110,10 +110,18 @@ static unsigned host_path_kind(const char *path, char *out, size_t cap, int *kin
     pthread_mutex_unlock(&lock);
     if (!m) return R_PATH_NOT_FOUND;
     if (kind) *kind = k;
-    const char *rest = colon + 1;
-    for (const char *q = rest + 1; *q;) { const char *e = strchr(q, '/'); size_t len = e ? (size_t)(e - q) : strlen(q); if (!e && !len) break; if (!component_ok(q, len) || memchr(q, '\\', len)) return R_INVALID_PATH; q = e ? e + 1 : q + len; }
-    if (snprintf(out, cap, "%s%s", root, rest) >= (int)cap) return R_INVALID_PATH;
-    size_t L = strlen(out); while (L > strlen(root) && out[L - 1] == '/') out[--L] = 0;
+    /* Repeated separators collapse, as Horizon's fs normalizes them (Metroid Dread opens savedata://userdata/); "." and ".."
+       stay invalid here, since this becomes a host path. */
+    size_t L = (size_t)snprintf(out, cap, "%s", root); if (L >= cap) return R_INVALID_PATH;
+    for (const char *q = colon + 1; *q;) {
+        while (*q == '/') q++;
+        if (!*q) break;
+        const char *e = strchr(q, '/'); size_t len = e ? (size_t)(e - q) : strlen(q);
+        if (!component_ok(q, len) || memchr(q, '\\', len)) return R_INVALID_PATH;
+        if (L + 1 + len >= cap) return R_INVALID_PATH;
+        out[L++] = '/'; memcpy(out + L, q, len); L += len; out[L] = 0;
+        q += len;
+    }
     return 0;
 }
 static unsigned host_path(const char *path, char *out, size_t cap) { return host_path_kind(path, out, cap, NULL); }
@@ -377,25 +385,35 @@ void runtime_save_probe(void) {
     printf("{\"status\":\"pass\",\"probe\":\"probe-save\",\"checks\":%u,\"scope\":\"save-in-progress state (runtime_fs_save_busy) through open / write / close / create / rename / delete / commit on a save mount; reads and temporary storage do not count; stale uncommitted changes do not hold a close\"}\n", checks);
 }
 
+/* TOTK_FS_LOG: the result of each save-side path operation as well (a game may quit on one it cannot handle). */
+static int fs_result_log(void) { static int on = -1; if (on < 0) on = getenv("TOTK_FS_LOG") != NULL; return on; }
+static unsigned logged(const char *op, const char *path, unsigned r) { if (fs_result_log() && path && !runtime_romfs_owns(path)) fprintf(stderr, "[totk-fs] %s %s -> %#x\n", op, path, r); return r; }
+static unsigned log_open_file(uint64_t *out, const char *path, int mode) { return logged("OpenFile", path, open_file(out, path, mode)); }
+static unsigned log_create_file(const char *path, int64_t size) { return logged("CreateFile", path, create_file(path, size)); }
+static unsigned log_delete_file(const char *path) { return logged("DeleteFile", path, delete_file(path)); }
+static unsigned log_rename_file(const char *from, const char *to) { return logged("RenameFile", from, rename_file(from, to)); }
+static unsigned log_create_directory(const char *path) { return logged("CreateDirectory", path, create_directory(path)); }
+static unsigned log_open_directory(uint64_t *out, const char *path, int mode) { return logged("OpenDirectory", path, open_directory(out, path, mode)); }
+static unsigned log_commit(const char *name) { return logged("Commit", name, commit(name)); }
 void *runtime_fs_host_override(const char *name) {
     static const struct { const char *name; void *fn; } map[] = {
-        {"_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", open_file}, {"_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", file_size},
+        {"_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", log_open_file}, {"_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", file_size},
         {"_ZN2nn2fs9CloseFileENS0_10FileHandleE", close_file}, {"_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", entry_type},
         {"_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", read_file}, {"_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvmRKNS0_10ReadOptionE", read_options},
         {"_ZN2nn2fs8ReadFileENS0_10FileHandleElPvm", read_exact},
         {"_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", write_file},
         {"_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", set_file_size}, {"_ZN2nn2fs9FlushFileENS0_10FileHandleE", flush_file},
-        {"_ZN2nn2fs10CreateFileEPKcl", create_file}, {"_ZN2nn2fs10DeleteFileEPKc", delete_file}, {"_ZN2nn2fs10RenameFileEPKcS2_", rename_file},
-        {"_ZN2nn2fs15CreateDirectoryEPKc", create_directory}, {"_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", delete_recursive},
+        {"_ZN2nn2fs10CreateFileEPKcl", log_create_file}, {"_ZN2nn2fs10DeleteFileEPKc", log_delete_file}, {"_ZN2nn2fs10RenameFileEPKcS2_", log_rename_file},
+        {"_ZN2nn2fs15CreateDirectoryEPKc", log_create_directory}, {"_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", delete_recursive},
         {"_ZN2nn2fs15DeleteDirectoryEPKc", delete_directory}, {"_ZN2nn2fs12SetAllocatorEPFPvmEPFvS1_mE", set_allocator},   /* Metroid Dread */
-        {"_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", open_directory},
+        {"_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", log_open_directory},
         {"_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", read_directory},
         {"_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", close_directory},
         {"_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", mount_save},
         {"_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE", mount_save_ro},
         {"_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE", save_exists},
-        {"_ZN2nn2fs21MountTemporaryStorageEPKc", mount_temp}, {"_ZN2nn2fs7UnmountEPKc", unmount}, {"_ZN2nn2fs6CommitEPKc", commit},
-        {"_ZN2nn2fs14CommitSaveDataEPKc", commit}, {"_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", ensure_save},   /* Bayonetta 3 */
+        {"_ZN2nn2fs21MountTemporaryStorageEPKc", mount_temp}, {"_ZN2nn2fs7UnmountEPKc", unmount}, {"_ZN2nn2fs6CommitEPKc", log_commit},
+        {"_ZN2nn2fs14CommitSaveDataEPKc", log_commit}, {"_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", ensure_save},   /* Bayonetta 3 */
         {"_ZN2nn2fs18CreateCacheStorageEill", create_cache}, {"_ZN2nn2fs18DeleteCacheStorageEi", delete_cache},
         {"_ZN2nn2fs17MountCacheStorageEPKci", mount_cache},
         {"_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", open_cache_list},
