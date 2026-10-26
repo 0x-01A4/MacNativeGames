@@ -145,6 +145,8 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   @[settings_text("全部（FPS、着色器、读取）","All (FPS, shaders, load)"),settings_text("只显示 FPS","FPS only"),settings_text("关","Off")],
   @[@(HUD_MODE_ALL),@(HUD_MODE_MINIMAL),@(HUD_MODE_OFF)],
   ^int{return fps_overlay_hud_mode();},^(int v){fps_overlay_set_hud_mode(v);[(TOTKHudBox *)hudBox refresh];})];
+ [rows addObject:settings_row(settings_text("帧率图","FPS graph"),nil,nil,
+  ^int{return fpsGraphEnabled;},^(int v){fpsGraphEnabled=v;[(TOTKFpsGraph *)fpsGraphBox setEnabled:v];[(TOTKHudBox *)hudBox refresh];})];
  [rows addObject:settings_row(settings_text("锁帧","Frame lock"),
   @[settings_text("关","Off"),settings_text("30 帧","30 fps"),settings_text("40 帧","40 fps"),settings_text("60 帧","60 fps")],@[@0,@30,@40,@60],
   ^int{return nvn_fps_lock();},^(int v){nvn_fps_lock_set(v);if(v)dm_gfx_set_flag("mfx_interp",MFX_OFF);})];
