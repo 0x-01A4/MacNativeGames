@@ -26,6 +26,7 @@ static NSView *shortcutHelp;
 static BOOL mouseHeld;
 static int textEntryOpen;
 static void front_mouse_update(void);
+int taa_enabled(void);   /* third_party/d2r_gfx/gfx/nvn/totk_taa.m: key 5 */
 static uint64_t bootStartNS;
 static _Atomic uint64_t presentedFrames;
 static _Atomic int warmPending;
@@ -177,7 +178,8 @@ static NSString *shortcut_text(void){
  }
  /* Keys 3 (picture modes) and 4 (21:9) are not listed: for Odyssey runtime_output_mode_cycle and runtime_aspect_toggle
     are stubs (runtime/game_patches.c), so those keys do nothing. */
- return [NSString stringWithFormat:@(TOTK_UI("快捷键说明\n1  显示 / 隐藏所有提示\n2  补帧：当前 %@（仅 120 Hz；按键切换）\n6  手柄类型：当前 %@（按键切换）\n7  鼠标操作：当前 %@（按键切换）","Shortcuts\n1  Show / hide all overlays\n2  Interpolation: %@ (120 Hz only; press to toggle)\n6  Controller type: %@ (current; press to cycle)\n7  Mouse: %@ (current; press to switch)")),[NSString stringWithUTF8String:interp],pad_type_text(),
+ return [NSString stringWithFormat:@(TOTK_UI("快捷键说明\n1  显示 / 隐藏所有提示\n2  补帧：当前 %@（仅 120 Hz；按键切换）\n5  边缘平滑（MetalFX 时间性）：%@\n6  手柄类型：当前 %@（按键切换）\n7  鼠标操作：当前 %@（按键切换）","Shortcuts\n1  Show / hide all overlays\n2  Interpolation: %@ (120 Hz only; press to toggle)\n5  Edge smoothing (MetalFX Temporal): %@\n6  Controller type: %@ (current; press to cycle)\n7  Mouse: %@ (current; press to switch)")),[NSString stringWithUTF8String:interp],
+  taa_enabled()?@(TOTK_UI("开","on")):@(TOTK_UI("关","off")),pad_type_text(),
   runtime_mouse_enabled()?@(TOTK_UI("开（视角、按键，⌘Tab 释放指针）","on (camera, buttons; Command-Tab frees the pointer)")):@(TOTK_UI("关","off"))];
 }
 -(instancetype)initWithFrame:(NSRect)frame{if((self=[super initWithFrame:frame])){int compact=hud_compact();self.wantsLayer=YES;self.layer.backgroundColor=[NSColor colorWithCalibratedWhite:0.04 alpha:compact?0.72:0.86].CGColor;self.layer.cornerRadius=compact?7:14;self.layer.borderWidth=1;self.layer.borderColor=[NSColor colorWithCalibratedWhite:1 alpha:compact?0.14:0.2].CGColor;

@@ -25,6 +25,7 @@
 #include "totk_mfx.h"
 #include "odyssey_mfx.h"
 #include "totk_mfx_up.h"
+#include "totk_taa.h"
 #include "totk_sysload.h"
 /* TOTK_MFX_UPSCALE: for the one compose draw that samples the smaller scene, the scene texture and its MetalFX upscale
    (mfxup_draw before the draw, encode_args swaps the binding). */
@@ -4962,6 +4963,7 @@ static id<MTL4RenderCommandEncoder> rp_begin_ex(int clear_only) {
     { void td_note(id pd, NSUInteger nc); td_note(pd, (NSUInteger)R.rt.n);
       void ts_note(id pd, NSUInteger nc); ts_note(pd, (NSUInteger)R.rt.n); }
     ser_gate();
+    if (taa_pass(pd) == 2) g_mfx.want_cam = 1;   // key 5: the G-buffer pass found; its first draw gives the camera
     if (mfx_enabled()) mfx_pass_setup(pd);   // TOTK: MetalFX scene / UI attachments, G-buffer depth
     else if (uw_ratio()) canvas_learn(pd);   // key 4: the canvas the UI is squeezed in
     g_enc = enc_r_begin(pd);
@@ -9900,6 +9902,7 @@ static void mfx_take_camera(void) {
     }
     if (first < 0) return;
     mfx_note_camera(selected, 84);
+    if (taa_active()) taa_note_camera(selected, 84);
     taken[first]++;
     if (++captures % 600 == 0) {
         char b[160]; int n = 0;
@@ -10423,9 +10426,28 @@ static int mfxup_dock(__unsafe_unretained NvShader *fs) {
    Returns 1 when the draw was replaced (not to be encoded). */
 static int mfxup_draw(NvProg *pr) {
     g_mfxup_src = nil; g_mfxup_out = nil; g_mfxup_sh = nil;
-    if (!pr || !mfxup_enabled()) return 0;
+    if (!pr) return 0;
     __unsafe_unretained NvShader *fs = pr->sh[1];
     if (!fs) return 0;
+    /* Key 5: the compose shader's scene goes through the MetalFX temporal scaler (1:1) first; encode_args binds the result,
+       or the spatial upscale below takes it as its input when the scene is smaller than the canvas. Odyssey's scene is a
+       one-slice 2D array that the compose shader samples as 2D. MetalFX takes a 2D texture, and encode_args binds the 2D
+       type view and compares that with g_mfxup_src: the scaler gets the same view. */
+    id<MTLTexture> taa_out = nil;
+    if (taa_ready() && TAA_COMPOSE(fs) && R.rt.n && R.rt.color[0]) {
+        int tid = (int)(S.tex[1][0] & 0xfffff);
+        id<MTLTexture> src = tid > 0 ? (__bridge id<MTLTexture>)tex_fast(tid) : nil;
+        if (src && src.textureType == MTLTextureType2DArray && src.arrayLength == 1) src = tex_type_view(src, MTLTextureType2D);
+        if (src) {
+            rp_end(); blit_close(); rs_sync();
+            taa_out = taa_encode(g_cb, src);
+            if (taa_out) {
+                static int added; if (!added && taa_residency()) { [g_q4 addResidencySet:taa_residency()]; added = 1; }
+                g_mfxup_src = src; g_mfxup_out = taa_out; g_mfxup_sh = fs;
+            }
+        }
+    }
+    if (!mfxup_enabled()) return 0;
     if (mfxup_dock(fs)) {
         static unsigned n; if (++n % 1800 == 1) { char b[200]; mfxup_stats(MFXUP_DOCKED, b, sizeof b);
             MLOG("[mfx-up] 至帧 %llu：%s；替换游戏放大 %llu 次，保留 %llu 次（建不出或在后台建 %llu、目标不符 %llu、混合/掩码/深度 %llu、尺寸 %llu、视口/剪裁 %llu、常量 %llu）",
@@ -10441,8 +10463,8 @@ static int mfxup_draw(NvProg *pr) {
     if (!src || !dst || src.width >= dst.width || src.height >= dst.height) return 0;
     rp_end(); blit_close(); rs_sync();
     pt_mark(g_cb, 'X', nil);   // TOTK_PASS_GPU: the MetalFX upscale as its own entry
-    id<MTLTexture> out = mfxup_encode(g_cb, src, dst.width, dst.height);
-    if (!out) return 0;
+    id<MTLTexture> out = mfxup_encode(g_cb, taa_out ? taa_out : src, dst.width, dst.height);
+    if (!out) return 0;   // the anti-aliased scene, if any, stays bound (g_mfxup_out)
     mfxup_queue_residency();
     g_mfxup_src = src; g_mfxup_out = out; g_mfxup_sh = fs; atomic_store(&g_mfxup_last, atomic_load(&g_cur_frame));
     static unsigned n; if (++n % 1800 == 1) { char b[200]; mfxup_stats(MFXUP_SCENE, b, sizeof b); MLOG("[mfx-up] 至帧 %llu：%s", (unsigned long long)atomic_load(&g_cur_frame), b); }
@@ -10717,8 +10739,14 @@ frz_plain:;
             }
         }
     }
-    if (S.has_vp) enc_r_viewport(en, (MTLViewport){vx, S.vp[0][1] + vo, vw, S.vp[0][3] * vs, S.dr[0], S.dr[1]});
-    else enc_r_viewport(en, (MTLViewport){vx, vo, vw, th * vs, 0, 1});
+    /* Key 5: the G-buffer pass's geometry moves by this frame's sub-pixel jitter (taa_jitter), as games/totk does. Not the
+       full-screen triangles and quads (6 vertices or fewer), not moved or squeezed UI (vo, vs, ux), not draws counted by an
+       occlusion query (g_vis_counting: a light scaled by its sample count would pulse), and not draws that sample an
+       attachment of their pass (decals read their own pixel; moved, they blend in their neighbours). */
+    double jx = 0, jy = 0; unsigned nv = di ? di->count : dw ? dw->count : 0;
+    if (taa_jittered() && nv > 6 && vo == 0 && vs == 1 && ux == 1 && !g_vis_counting && !draw_samples_rt(pr)) taa_jitter(&jx, &jy);
+    if (S.has_vp) enc_r_viewport(en, (MTLViewport){vx + jx, S.vp[0][1] + vo + jy, vw, S.vp[0][3] * vs, S.dr[0], S.dr[1]});
+    else enc_r_viewport(en, (MTLViewport){vx + jx, vo + jy, vw, th * vs, 0, 1});
     MTLScissorRect sc = {0, 0, tw, th};
     if (R.has_sc) {
         long sx0 = R.sc.x, sx1 = (long)R.sc.x + R.sc.w;
@@ -13251,6 +13279,7 @@ static int mfx_present_frame(const tex_t *t, double period, int discard) {
     @autoreleasepool { return mfx_present_frame_body(t, period, discard); }
 }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
+    taa_frame_end();   // key 5: next frame's jitter, this frame's depth and camera forgotten (also while off)
     int discard = atomic_load(&g_present_discard), islot = mfx_enabled() && t ? mfx_present_frame(t, period, discard) : -1;
     if (mfx_latch() && !mfx_enabled()) { g_mfx.scene_done = g_mfx.ui_cleared = g_mfx.depth_done = g_mfx.want_cam = 0; odyssey_scene_frame(&g_odyssey_scene); BOTW_MFX_FRAME_RESET() }   // key 2 / flag mfx_interp: the next frame is fully on or off
     if (t && !mfx_enabled() && uw_ratio()) uw_note_present(t);   // key 4: the canvas search (TOTK_MFX does it in mfx_present_frame)
