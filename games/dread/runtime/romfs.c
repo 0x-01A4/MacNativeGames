@@ -329,6 +329,12 @@ unsigned runtime_romfs_list(const char *path,int mode,void (*add)(void *ctx,cons
  last[0]=0;list_source(prefix,n,mode,added_name,added_size,lo,nadded,add,ctx,last);
  return 0;
 }
+/* Unmount of the RomFS by its mount name (Metroid Dread unmounts "rom" after the title movies): the name is released, so
+   a later MountRom under any name works. 1 when name was the RomFS mount. */
+int runtime_romfs_unmount(const char *name) {
+ pthread_mutex_lock(&lock);int ours=name&&*mount_name&&!strcmp(name,mount_name);if(ours)*mount_name=0;pthread_mutex_unlock(&lock);
+ if(ours)fs_log("unmount",name);return ours;
+}
 int runtime_romfs_owns(const char *path) {size_t n=strlen(mount_name);return n&&path&&!strncmp(path,mount_name,n)&&path[n]==':';}
 int runtime_romfs_handle(uint64_t h) {return h>0x100000000ULL&&h<0x100000000ULL+NH;}
 unsigned runtime_romfs_read_options(uint64_t *out,uint64_t h,int64_t off,void *buf,uint64_t size) {return runtime_romfs_read(out,h,off,buf,size);}

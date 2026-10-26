@@ -31,6 +31,7 @@
 #include "runtime.h"
 #include "movie_host.h"
 #include <arm_neon.h>
+#include <stdatomic.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <pthread.h>
@@ -73,6 +74,7 @@ typedef struct {
     Ready decoded[OUT_BUFS]; int ndecoded;   /* paced: decoded, not due yet */
     uint64_t t0; int64_t pts0;               /* paced: host time and presentation time of the first frame handed over */
     uint64_t frames, decode_ns, errors, dropped;
+    _Atomic uint64_t epoch;              /* bumped (under g_signal) by Stop, Reset, RegisterClientEvents and destruction */
     pthread_mutex_t mu;
 } Movie;
 
@@ -136,9 +138,28 @@ static Movie *find(const void *guest) {
 }
 
 /* Events are signalled after the decoder's lock is released: the woken game thread calls straight back in. */
-typedef struct { void *ev[8]; int n; } Signals;
-static void note(Movie *m, Signals *s, int which) { if (m->events && m->events[which] && s->n < 8) s->ev[s->n++] = m->events[which]; }
-static void fire(const Signals *s) { for (int i = 0; i < s->n; i++) G.signal_event(s->ev[i]); }
+/* As the library, no client event is signalled once Stop, Reset, a new RegisterClientEvents or the destructor has
+   returned: the game finalizes the events and frees their memory right after (Metroid Dread's movie thread). Each noted
+   signal keeps its decoder and epoch; those calls bump the epoch under g_signal's write lock, which also waits for
+   signals being fired, and fire() drops a signal whose decoder is gone or whose epoch has changed. */
+static pthread_rwlock_t g_signal = PTHREAD_RWLOCK_INITIALIZER;
+typedef struct { void *ev[8]; const Movie *m[8]; uint64_t epoch[8]; int n; } Signals;
+static void note(Movie *m, Signals *s, int which) {
+    if (m->events && m->events[which] && s->n < 8) { s->ev[s->n] = m->events[which]; s->m[s->n] = m; s->epoch[s->n++] = m->epoch; }
+}
+static void fire(const Signals *s) {
+    if (!s->n) return;
+    pthread_rwlock_rdlock(&g_signal);
+    for (int i = 0; i < s->n; i++) {
+        int live = 0;
+        pthread_mutex_lock(&g_lock);
+        for (int k = 0; k < MAX_MOVIES; k++) if (g_movies[k] == s->m[i]) live = g_movies[k]->epoch == s->epoch[i];
+        pthread_mutex_unlock(&g_lock);
+        if (live) G.signal_event(s->ev[i]);
+    }
+    pthread_rwlock_unlock(&g_signal);
+}
+static void revoke_events(Movie *m) { pthread_rwlock_wrlock(&g_signal); m->epoch++; pthread_rwlock_unlock(&g_signal); }
 
 static int frame_bytes(const Movie *m) { return m->w * m->h + (m->w / 2) * (m->h / 2) * 2; }
 
@@ -266,10 +287,12 @@ static void h_ctor(void *obj, int type, int format, int mode, int priority) {
     LOG("VP9 decoder %p on the host (libvpx %s), output format %d, mode %d", obj, vpx_codec_version_str(), format, mode);
 }
 static void destroy(void *obj) {
+    pthread_rwlock_wrlock(&g_signal);   /* no signal of this decoder is in flight or fires later */
     pthread_mutex_lock(&g_lock); Movie *m = NULL;
     for (int i = 0; i < MAX_MOVIES; i++) if (g_movies[i] && g_movies[i]->guest == obj) { m = g_movies[i]; g_movies[i] = NULL; }
     if (m) { pthread_mutex_lock(&m->mu); pthread_mutex_unlock(&m->mu); }   /* wait for an operation in progress (movie_host_tick) */
     pthread_mutex_unlock(&g_lock);
+    pthread_rwlock_unlock(&g_signal);
     if (!m) return;
     LOG("decoder %p destroyed after %llu frames", obj, (unsigned long long)m->frames);
     release_codec(m); pthread_mutex_destroy(&m->mu); free(m);
@@ -304,7 +327,7 @@ static int h_configure(void *obj, void *format) {
 }
 static int h_register_events(void *obj, void *events) {
     Movie *m = find(obj); if (!m) return ((md_fn)G.orig[MOVIE_REGISTER_EVENTS])(obj, events);
-    m->events = events; return ST_OK;
+    revoke_events(m); m->events = events; return ST_OK;
 }
 static void set_format(Movie *m, void *md) {
     G.md_set_string(md, "mime", "video/raw");
@@ -334,11 +357,13 @@ static int h_start(void *obj) {
 }
 static int h_stop(void *obj) {
     Movie *m = find(obj); if (!m) return ((int_fn)G.orig[MOVIE_STOP])(obj);
+    revoke_events(m);
     pthread_mutex_lock(&m->mu); LOG("stop after %llu frames (%llu dropped to keep time)", (unsigned long long)m->frames, (unsigned long long)m->dropped); release_codec(m); pthread_mutex_unlock(&m->mu);
     return ST_OK;
 }
 static int h_reset(void *obj) {
     Movie *m = find(obj); if (!m) return ((int_fn)G.orig[MOVIE_RESET])(obj);
+    revoke_events(m);
     pthread_mutex_lock(&m->mu); release_codec(m); m->last_error = 0; pthread_mutex_unlock(&m->mu);
     return ST_OK;
 }
