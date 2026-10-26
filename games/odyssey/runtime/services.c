@@ -191,6 +191,7 @@ static uint64_t alias_map(int unmap,uint64_t addr,uint64_t size){
  pthread_mutex_unlock(&memory_lock);return 0;
 }
 uint64_t runtime_heap_base(void){return (uintptr_t)heap;}
+void runtime_heap_range(uint8_t **base,size_t *size){*base=heap;*size=heap_size;}   /* key 4: the camera projection search (odyssey_aspect.c) */
 /* Guest memory the game has committed (heap size + mapped alias pages), for memory reports (iOS app monitor). */
 void runtime_guest_committed(uint64_t *heap_bytes,uint64_t *alias_mapped){*heap_bytes=heap_size;*alias_mapped=alias_bytes;}
 /* Physical memory behind the guest regions (stack+heap and alias): resident pages, of which dirty, and pages the system
