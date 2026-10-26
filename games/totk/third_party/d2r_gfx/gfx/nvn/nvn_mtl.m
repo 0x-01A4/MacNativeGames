@@ -7065,6 +7065,16 @@ static int border_parse(NSString *key, border_in *b) {
     }
     return b->n > 0;
 }
+/* TOTK (2026-10-26): a fragment output is declared with the type class of the render target it writes, as NVN's
+   hardware has it: the shader writes untyped 32-bit registers and the colour unit takes their bits as integers for a
+   pure integer format (R8_UI to RGBA32_I) and as floats for every other one. Metal fixes each output's type in the
+   function and refuses a pipeline whose output type does not match its attachment, and the translator typed the outputs
+   from the bound target (the fout answers), each integer target a variant of its own (61 of the 1.4.3 shared list). The
+   pipeline redeclares such an output with the target's type and writes the bits of the value the code computed
+   (pso_desc: fn_retype_outputs on the fragment function it took, whichever patch built it), so any variant serves any
+   target format (deps_match). The MSL of a patched function is kept on it (fn_note_src); the base one is sh_src. */
+static const void *const k_fn_src = &k_fn_src, *const k_fn_fout = &k_fn_fout;
+static void fn_note_src(id<MTLFunction> fn, NSString *src) { if (fn && src) objc_setAssociatedObject(fn, k_fn_src, src, OBJC_ASSOCIATION_COPY_NONATOMIC); }
 static id<MTLFunction> fs_fn_border_with(NvShader *fs, int nodepth, NSString *key, border_in b, NSString **cache_key);
 /* The fragment function for the draw's samplers (border_key), nil when none needs the emulation. recipe: its border_key. */
 /* The peer and key are retained: pointer identity cannot alias a destroyed object. Never cache nil (pending).
@@ -7119,6 +7129,7 @@ static id<MTLFunction> fs_fn_border_with(NvShader *fs, int nodepth, NSString *bk
             NSError *err = nil; id<MTLLibrary> lib = variant_library(src, &err);
             f = lib ? [lib newFunctionWithName:fs->fn.name] : nil;
             if (!f) MDIE("fragment shader %s with emulated sampler border colour: %s", fs->key, err.localizedDescription.UTF8String);
+            fn_note_src(f, src);
         }
         os_unfair_lock_lock(&g_bpatch_lock);
         if (!fs->bpatch) fs->bpatch = [NSMutableDictionary dictionary];
@@ -7158,6 +7169,7 @@ static id<MTLFunction> fs_fn_fbread_slow(NvShader *fs, const int aid[], const in
     CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();   // about 90 ms cold on an M4 Max; Metal's cache keeps it, and the next packaging compiles it into the app (variant_library)
     NSError *err = nil; id<MTLLibrary> lib = src ? variant_library(src, &err) : nil;
     fn = lib ? [lib newFunctionWithName:fs->fn.name] : nil;
+    fn_note_src(fn, src);
     if (fn) { static int logged; if (logged++ < 32) MLOG("[totk] shader %s: reads %d of its own attachments from the tile (%s, %.1f ms)", fs->key, n, key.UTF8String, (CFAbsoluteTimeGetCurrent() - t0) * 1e3); }
     else { static int warned; if (warned++ < 8) { if (src) MLOG("【红】shader %s: tile-reading variant (%s) does not compile: %s", fs->key, key.UTF8String, err.localizedDescription.UTF8String);
                                                   else MLOG("[totk] shader %s keeps sampling memory (%s): the textures are not only sampled", fs->key, key.UTF8String); } }
@@ -7330,6 +7342,7 @@ static id<MTLFunction> fs_fn_without_depth(NvShader *fs) {
         NSError *err = nil; id<MTLLibrary> lib = variant_library(src, &err);
         id<MTLFunction> f = lib ? [lib newFunctionWithName:fs->fn.name] : nil;
         if (!f) MDIE("fragment shader %s without depth export: %s", fs->key, err.localizedDescription.UTF8String);
+        fn_note_src(f, src);
         os_unfair_lock_lock(&lock);
         if (!fs->no_depth_fn) { fs->no_depth_fn = f; MLOG("[totk] fragment depth export omitted for a color-only pass: %s", fs->key); }
         f = fs->no_depth_fn;
@@ -7366,6 +7379,7 @@ static id<MTLFunction> fs_fn_mfx(NvShader *fs, int role, int nodepth) {
             NSError *err = nil; id<MTLLibrary> lib = variant_library(src, &err);
             f = lib ? [lib newFunctionWithName:fs->fn.name] : nil;
             if (!f) MDIE("fragment shader %s, MetalFX copy (role %d): %s", fs->key, role, err.localizedDescription.UTF8String);
+            fn_note_src(f, src);
         } else MLOG("【红】[mfx] fragment shader %s: colour 0 (%s) cannot be copied to the UI layer; this draw is left out of it", fs->key, type ? type.UTF8String : "none");
         os_unfair_lock_lock(&lock);
         if (!fs->mfx_tried[idx]) { fs->mfx_fn[idx] = f; fs->mfx_tried[idx] = 1; }
@@ -7513,6 +7527,85 @@ static id<MTLComputePipelineState> cs_new(NvShader *cs, NSError **e) {
     if (ps) par_add(g_dev, key, d);
     return ps;
 }
+static char pfmt_class(MTLPixelFormat f) {   // 'u' / 's' pure unsigned / signed integer colour format, 'f' any other, 0 none
+    switch (f) {
+        case MTLPixelFormatInvalid: return 0;
+        case MTLPixelFormatR8Uint: case MTLPixelFormatRG8Uint: case MTLPixelFormatRGBA8Uint: case MTLPixelFormatR16Uint: case MTLPixelFormatRG16Uint:
+        case MTLPixelFormatRGBA16Uint: case MTLPixelFormatR32Uint: case MTLPixelFormatRG32Uint: case MTLPixelFormatRGBA32Uint: case MTLPixelFormatRGB10A2Uint: return 'u';
+        case MTLPixelFormatR8Sint: case MTLPixelFormatRG8Sint: case MTLPixelFormatRGBA8Sint: case MTLPixelFormatR16Sint: case MTLPixelFormatRG16Sint:
+        case MTLPixelFormatRGBA16Sint: case MTLPixelFormatR32Sint: case MTLPixelFormatRG32Sint: case MTLPixelFormatRGBA32Sint: return 's';
+        default: return 'f';
+    }
+}
+static NSRegularExpression *fout_decl_re(int l) {
+    return [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"\\b(float|half|uint|int)([234]?)\\s+(\\w+)\\s*\\[\\[color\\(%d\\)\\]\\];", l] options:0 error:nil];
+}
+/* "<output><u|s|f>," for each colour output of src whose declared type class differs from the pipeline's attachment
+   it writes (merged passes: attachment i takes output lmap[i]), nil for none. */
+static NSString *fout_retype_key(NSString *src, const pso_key *k, int merged) {
+    NSMutableString *s = nil;
+    for (int i = 0; i < 8; i++) {
+        if (!k->cfmt[i]) continue;
+        int l = merged ? k->lmap[i] : i; if (l == 0xff) continue;
+        char want = pfmt_class((MTLPixelFormat)k->cfmt[i]); if (!want) continue;
+        NSTextCheckingResult *m = [fout_decl_re(l) firstMatchInString:src options:0 range:NSMakeRange(0, src.length)];
+        if (!m) continue;
+        NSString *type = [src substringWithRange:[m rangeAtIndex:1]];
+        if ([type isEqualToString:@"half"]) continue;   // as_type needs 32-bit components: left as it is
+        char have = [type isEqualToString:@"uint"] ? 'u' : [type isEqualToString:@"int"] ? 's' : 'f';
+        if (have == want || (s && [s containsString:[NSString stringWithFormat:@"%d", l]])) continue;
+        if (!s) s = [NSMutableString string];
+        [s appendFormat:@"%d%c,", l, want];
+    }
+    return s;
+}
+/* The MSL with the outputs fo names redeclared: "float4 o [[color(0)]];" becomes "uint4 o_fout [[color(0)]];", the code
+   writes a local of the declared type instead of out.o, and each return stores its bits in out.o_fout. */
+static NSString *msl_retype_outputs(NSString *msl, NSString *fo, const char *key) {
+    NSString *src = msl, *init = @"main0_out out = {};";
+    NSMutableString *decls = [NSMutableString string], *stores = [NSMutableString string];
+    for (NSString *item in [fo componentsSeparatedByString:@","]) {
+        if (item.length < 2) continue;
+        int l = item.intValue; unichar w = [item characterAtIndex:item.length - 1];
+        NSString *want = w == 'u' ? @"uint" : w == 's' ? @"int" : @"float";
+        NSTextCheckingResult *m = [fout_decl_re(l) firstMatchInString:src options:0 range:NSMakeRange(0, src.length)];
+        if (!m) MDIE("fragment shader %s: no declaration of colour output %d to retype", key, l);
+        NSString *type = [src substringWithRange:[m rangeAtIndex:1]], *width = [src substringWithRange:[m rangeAtIndex:2]], *name = [src substringWithRange:[m rangeAtIndex:3]];
+        NSString *local = [NSString stringWithFormat:@"totk_fout_%d", l];
+        src = [src stringByReplacingCharactersInRange:m.range withString:[NSString stringWithFormat:@"%@%@ %@_fout [[color(%d)]];", want, width, name, l]];
+        NSRegularExpression *use = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"\\bout\\.%@\\b", name] options:0 error:nil];
+        src = [use stringByReplacingMatchesInString:src options:0 range:NSMakeRange(0, src.length) withTemplate:local];
+        [decls appendFormat:@" %@%@ %@ = {};", type, width, local];
+        [stores appendFormat:@"out.%@_fout = as_type<%@%@>(%@); ", name, want, width, local];
+    }
+    if ([src rangeOfString:init].location == NSNotFound) MDIE("fragment shader %s: missing output initialization", key);
+    src = [src stringByReplacingOccurrencesOfString:init withString:[init stringByAppendingString:decls]];
+    return [src stringByReplacingOccurrencesOfString:@"return out;" withString:[NSString stringWithFormat:@"{ %@return out; }", stores]];
+}
+static id<MTLFunction> fn_retype_outputs(id<MTLFunction> fn, NvShader *fs, const pso_key *k, int merged) {
+    NSString *src = objc_getAssociatedObject(fn, k_fn_src);
+    if (!src && fs && fn == fs->fn && sh_has_src(fs)) src = sh_src(fs);
+    if (!src) return fn;   // a diagnostic function, or a shader without MSL: as before
+    NSString *fo = fout_retype_key(src, k, merged); if (!fo) return fn;
+    os_unfair_lock_lock(&g_bpatch_lock);
+    NSMutableDictionary *done = objc_getAssociatedObject(fn, k_fn_fout);
+    id<MTLFunction> g = done[fo];
+    os_unfair_lock_unlock(&g_bpatch_lock);
+    if (g) return g;
+    NSString *rsrc = msl_retype_outputs(src, fo, fs ? fs->key : "?");
+    NSError *e = nil; id<MTLLibrary> lib = variant_library(rsrc, &e);
+    g = lib ? [lib newFunctionWithName:fn.name] : nil;
+    if (!g) MDIE("fragment shader %s (outputs %s retyped): %s", fs ? fs->key : "?", fo.UTF8String, e.localizedDescription.UTF8String);
+    fn_note_src(g, rsrc);
+    os_unfair_lock_lock(&g_bpatch_lock);
+    done = objc_getAssociatedObject(fn, k_fn_fout);
+    if (!done) { done = [NSMutableDictionary dictionary]; objc_setAssociatedObject(fn, k_fn_fout, done, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    if (!done[fo]) done[fo] = g;
+    g = done[fo];
+    os_unfair_lock_unlock(&g_bpatch_lock);
+    static unsigned n; if (++n <= 8 || n % 1000 == 0) MLOG("[fout] fragment shader %s: outputs %s redeclared with their render targets' types (%u so far)", fs ? fs->key : "?", fo.UTF8String, n);
+    return g;
+}
 static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvShader *fs, id<MTLFunction> fsfn, int merged) {
     MTLRenderPipelineDescriptor *d = [MTLRenderPipelineDescriptor new];
     // A border pipeline's key carries its vertex function (pso_get, warm_worker): built off the submit thread too, it reads no sampler here.
@@ -7588,6 +7681,7 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
         }
     }
     d.depthAttachmentPixelFormat = (MTLPixelFormat)k->dfmt; d.stencilAttachmentPixelFormat = (MTLPixelFormat)k->sfmt;
+    if (d.fragmentFunction && !hilited) d.fragmentFunction = fn_retype_outputs(d.fragmentFunction, fs, k, merged);
     MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
     const nvn_refl *rf = &vs->rf;
     for (int v = 0; v < rf->nv; v++) {
@@ -16115,6 +16209,57 @@ int mtl_probe_layer_merge(void) {
     return checked + 5 * 4;
 }
 
+/* probe-gpu-fout: a colour output reaches its render target as the bits the code wrote, whatever type the MSL declares
+   it with (fn_retype_outputs): a float output writing the bits of (7, 200, 3, 1) into RGBA8_UI gives those integers, a
+   uint output writing the bits of (1, 0.5, 0.25, 1) into RGBA8_UNORM gives (255, 128, 64, 255). TOTK_PROBE_NEGATIVE=17
+   skips the retyping: Metal then refuses the pipelines. */
+int mtl_probe_fragment_output_types(void) {
+    mtl_init(); int checked = 0;
+    int negative = getenv("TOTK_PROBE_NEGATIVE") && atoi(getenv("TOTK_PROBE_NEGATIVE")) == 17;
+    NSString *vsrc = @"#include <metal_stdlib>\nusing namespace metal;\nstruct V { float4 p [[position]]; };\n"
+        "vertex V main0(uint i [[vertex_id]]) { float2 p[3] = {float2(-1, -1), float2(3, -1), float2(-1, 3)}; return {float4(p[i], 0, 1)}; }\n";
+    NSString *fsrc[2] = {
+        @"#include <metal_stdlib>\nusing namespace metal;\n\nstruct main0_out\n{\n    float4 out_var_SV_Target0 [[color(0)]];\n};\n\n"
+         "fragment main0_out main0()\n{\n    main0_out out = {};\n    out.out_var_SV_Target0 = as_type<float4>(uint4(7u, 200u, 3u, 1u));\n    return out;\n}\n",
+        @"#include <metal_stdlib>\nusing namespace metal;\n\nstruct main0_out\n{\n    uint4 out_var_SV_Target0 [[color(0)]];\n};\n\n"
+         "fragment main0_out main0()\n{\n    main0_out out = {};\n    out.out_var_SV_Target0.xy = as_type<uint2>(float2(1.0, 0.5));\n    out.out_var_SV_Target0.zw = as_type<uint2>(float2(0.25, 1.0));\n    return out;\n}\n"};
+    const MTLPixelFormat target[2] = {MTLPixelFormatRGBA8Uint, MTLPixelFormatRGBA8Unorm};
+    const uint8_t want[2][4] = {{7, 200, 3, 1}, {255, 128, 64, 255}};
+    NSError *error = nil;
+    id<MTLLibrary> vl = [g_dev newLibraryWithSource:vsrc options:nil error:&error]; if (!vl) MDIE("fragment output probe vertex shader: %s", error.localizedDescription.UTF8String);
+    NvShader *vs = [NvShader new]; vs->fn = [vl newFunctionWithName:@"main0"]; vs->io = @{}; strcpy(vs->key, "probe-fragment-output-types-vs");
+    id<MTLBuffer> rb = probe_buf(1024); op_hdr end = {OP_END, 8};
+    for (int c = 0; c < 2; c++) {
+        id<MTLLibrary> fl = [g_dev newLibraryWithSource:fsrc[c] options:nil error:&error]; if (!fl) MDIE("fragment output probe shader %d: %s", c, error.localizedDescription.UTF8String);
+        NvShader *fs = [NvShader new]; fs->fn = [fl newFunctionWithName:@"main0"]; fs->src = fsrc[c]; fs->io = @{}; fs->stage = 1;
+        snprintf(fs->key, sizeof fs->key, "probe-fragment-output-types-%d", c);
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:target[c] width:16 height:16 mipmapped:NO];
+        td.storageMode = MTLStorageModePrivate; td.usage = MTLTextureUsageRenderTarget;
+        id<MTLTexture> texture = [g_dev newTextureWithDescriptor:td]; res_add(texture);
+        mtl_sub_begin(); mtl_exec((const uint8_t *)&end);
+        S.nattr = 0; memset(S.attr, 0, sizeof S.attr);
+        uint32_t formats[8] = {(uint32_t)target[c]}; pso_key key; pso_key_fill(&key, vs, fs, formats, 0, 0, 1, 0); key.chmask = 15;
+        NSString *fo = fout_retype_key(fsrc[c], &key, 0);
+        if (![fo isEqualToString:c ? @"0f," : @"0u,"]) MDIE("fragment output probe %d: outputs to retype %s", c, fo ? fo.UTF8String : "none");
+        checked++;
+        MTLRenderPipelineDescriptor *pd = pso_desc(&key, vs, fs, nil, 0);
+        if (negative) pd.fragmentFunction = fs->fn;
+        id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithDescriptor:pd error:&error];
+        if (!ps) MDIE("fragment output probe pipeline %d: %s", c, error.localizedDescription.UTF8String);
+        MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; rp.colorAttachments[0].texture = texture; rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        rp.renderTargetWidth = rp.renderTargetHeight = 16; id<MTL4RenderCommandEncoder> en = enc_r_begin(rp); enc_r_pso(en, ps); enc_r_cull(en, MTLCullModeNone);
+        enc_r_viewport(en, (MTLViewport){0, 0, 16, 16, 0, 1}); enc_r_scissor(en, (MTLScissorRect){0, 0, 16, 16});
+        enc_r_draw(en, MTLPrimitiveTypeTriangle, 0, 3); enc_r_end(en);
+        enc_b_copy_texture_buffer(blit(), texture, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(16, 16, 1), rb, 0, 64, 1024); mtl_sub_commit(); mtl_finish();
+        for (unsigned i = 0; i < 1024; i++) {
+            int got = ((uint8_t *)rb.contents)[i];
+            if (abs(got - want[c][i % 4]) > 1) MDIE("fragment output probe %d: pixel %u channel %u is %d, expected %d", c, i / 4, i % 4, got, want[c][i % 4]);
+            checked++;
+        }
+        res_remove(texture);
+    }
+    return checked;
+}
 /* probe-gpu-vin: a vertex input reads the bits NVN's vertex fetch gives for the bound format, whatever type the MSL
    declares it with (vs_vin). Three inputs of a translated-style shader: declared float with RGBA8_UI bound (integer
    bits 7, 200), declared uint with RGBA32_F bound (1.5: 0x3fc00000, top byte 63), declared float with RGBA8_I bound (-1:

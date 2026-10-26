@@ -403,7 +403,8 @@ class ShaderKeyScope(unittest.TestCase):
             self.assertTrue(seed.builtin_serves(root, key, '{"tex":{"3":"2darray"},"attr":{"6":"uint"}}'))
             self.assertTrue(seed.builtin_serves(root, key, {'tex': {'3': '2d_depth'}}))      # the depth-bound one
             self.assertTrue(seed.builtin_serves(root, key, {'attr': {'6': 'float'}}))       # a float input: the pipeline retypes it
-            self.assertFalse(seed.builtin_serves(root, key, {'fout': {'0': 'uint'}}))      # served by a listed variant only
+            self.assertTrue(seed.builtin_serves(root, key, {'fout': {'0': 'uint'}}))       # an integer target: the pipeline retypes the output
+            self.assertEqual(len(seed.builtin_variants(root, key)), 2)                     # the listed variant the seed also made is not built in
             self.assertFalse(seed.builtin_serves(root, other, {}))                          # not a shader of this seed
             lst = root/'list.tsv'
             lst.write_text(f'V\t{key}\t{{"attr":{{"6":"uint"}},"fout":{{}},"img":{{}},"tex":{{"3":"2d"}}}}\n'

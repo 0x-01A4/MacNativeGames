@@ -63,8 +63,16 @@ Offline check (2026-10-22): of 2,681 variants the game translated on this Mac, t
 for every one with the same answers, and 2,641 (98.5 %) are served by the default or the depth-bound variant with
 identical MSL.
 
-What still needs its own variant: a depth texture read without a compare, a queried texture kind other than 2D and
-an integer colour output. The shared list keeps naming those.
+Colour outputs work the same way (2026-10-26): on the Switch the fragment shader writes untyped registers and the
+colour unit takes their bits as integers for a pure integer render target and as floats otherwise; Metal refuses a
+pipeline whose output type does not match its attachment. `pso_desc` redeclares such an output on whichever fragment
+function it took (plain, border, tile-reading, no-depth, MetalFX: each patched function keeps the MSL it was compiled
+from), and the code's value is stored with `as_type` (`fn_retype_outputs`, `make probe-gpu-fout`,
+`TOTK_PROBE_NEGATIVE=17`). The 61 1.4.3 list rows with an integer colour output (and 8 of the older versions, 3 of
+Breath of the Wild) were pruned.
+
+What still needs its own variant: a depth texture read without a compare and a queried texture kind other than 2D.
+The shared list keeps naming those.
 
 The translation chain went from `totk-native-v6-unverified` to `totk-native-v7-unverified` with this change: a v6 cache
 indexes the default variants under the same names with the old, stricter deps, and the runtime takes a cache's index

@@ -45,7 +45,7 @@ GAMES = {
     'botw': dict(folders=('Pack/', 'Effect/', 'Event/', 'System/'), min_shaders=2000,
                  list=Path(__file__).resolve().parents[2]/'botw/assets/shader_list.tsv', all_default=True),
 }
-DEFAULTS = dict(tex='2d', img={}, fout='float')   # no vertex inputs: the pipeline gives each its bound format's type (nvn_mtl.m vs_vin)
+DEFAULTS = dict(tex='2d', img={})   # no vertex inputs or colour outputs: the pipeline gives each its bound format's type (nvn_mtl.m vs_vin, fn_retype_outputs)
 
 
 def suffix(answers):
@@ -57,8 +57,8 @@ SUFFIX = suffix(ANSWERS)
 
 def deps_match(deps, answers):
     """Whether a variant translated with deps serves these answers: totk_shader_rt.m deps_match, which the runtime picks
-    variants with. "*" / "*_depth": any texture kind, without / with a depth format. Vertex input types are not compared:
-    the pipeline redeclares an input with its bound format's type (nvn_mtl.m vs_vin, 2026-10-25)."""
+    variants with. "*" / "*_depth": any texture kind, without / with a depth format. Vertex input and colour output types
+    are not compared: the pipeline redeclares them with their bound formats' types (nvn_mtl.m vs_vin, fn_retype_outputs)."""
     for kind, default in DEFAULTS.items():
         have = answers.get(kind, {})
         for slot, want in deps.get(kind, {}).items():
