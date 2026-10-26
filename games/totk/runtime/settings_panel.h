@@ -17,6 +17,10 @@
                                                              window any more); TOTK_ASPECT's ratio is offered too
      edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
      controller type      auto / Xbox / PlayStation / Switch runtime_gamepad_type_set (gamepad.m), saved
+     DualSense bow trigger switch                            runtime_triggers_choose (gamepad_feedback.m), saved in
+                                                             dualsense-triggers.txt; Breath of the Wild 1.9.0 and Tears of
+                                                             the Kingdom 1.4.3 only; TOTK_DUALSENSE_TRIGGERS or an agent's
+                                                             test session decide first (greyed out)
      mouse                switch                             runtime_mouse_set (gamepad.m), saved
      rumble               switch                             runtime_feedback_choose (hid_feedback.c), saved in rumble.txt
      rumble strength      0.5x / 1x / 2x / 3x / 4x           runtime_rumble_gain_set (gamepad_feedback.m), rumble-gain.txt
@@ -177,6 +181,10 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   @[@(GAMEPAD_TYPE_AUTO),@(GAMEPAD_TYPE_XBOX),@(GAMEPAD_TYPE_PLAYSTATION),@(GAMEPAD_TYPE_SWITCH)],
   ^int{return runtime_gamepad_type(NULL);},^(int v){runtime_gamepad_type_set(v);});
  pad.firstTitle=^NSString *{return settings_pad_auto_text();};[rows addObject:pad];
+ NSString *bow=settings_text("DualSense 拉弓扳机（R2）","DualSense bow trigger (R2)");
+ if(!runtime_triggers_available())[rows addObject:settings_fixed(bow,settings_text("这个版本没有","Not in this version"))];
+ else if(runtime_triggers_locked())[rows addObject:settings_fixed(bow,runtime_triggers_choice()?settings_text("开","On"):settings_text("关","Off"))];
+ else [rows addObject:settings_row(bow,nil,nil,^int{return runtime_triggers_choice();},^(int v){runtime_triggers_choose(v);})];
  [rows addObject:settings_row(settings_text("鼠标操作（视角、按键）","Mouse (camera, buttons)"),nil,nil,
   ^int{return runtime_mouse_enabled();},^(int v){runtime_mouse_set(v);})];
  [rows addObject:settings_feedback_row(0)];

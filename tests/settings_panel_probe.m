@@ -45,6 +45,12 @@ void runtime_rumble_gain_set(float gain) { fakeGain = gain; }
 static int fakeLock;
 void nvn_fps_lock_set(int fps) { fakeLock = fps == 30 || fps == 40 || fps == 60 ? fps : 0; }
 int nvn_fps_lock(void) { return fakeLock; }
+/* runtime/gamepad_feedback.m's DualSense bow trigger switch without a controller. */
+static int fakeTriggers = 1, fakeTriggersLocked, fakeTriggersAvailable = 1;
+int runtime_triggers_available(void) { return fakeTriggersAvailable; }
+int runtime_triggers_locked(void) { return fakeTriggersLocked; }
+int runtime_triggers_choice(void) { return fakeTriggers; }
+void runtime_triggers_choose(int on) { fakeTriggers = !!on; }
 /* A window key is the user's input (runtime/input.c user_input): it stops a survey and an auto-load, neither here. */
 void runtime_survey_cancel_user(void) {}
 void runtime_autoload_user_input(void) {}
@@ -106,7 +112,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.rows.count == 11);
+    assert(settingsPanel.rows.count == 12);
 
     /* Overlay: all -> FPS only -> off; the corner box follows. */
     hud_publish(HUD_FPS, "FPS 60  2560x1440", 0); hud_publish(HUD_SHADER, "New shaders 3 / total 9", 0);
@@ -187,6 +193,16 @@ int main(int argc, const char **argv) { @autoreleasepool {
     flip(@"Edge smoothing", NO); assert(!taa_enabled());
     assert(!switched(@"Mouse")); flip(@"Mouse", YES); assert(fakeMouse && switched(@"Mouse")); flip(@"Mouse", NO); assert(!fakeMouse);
 
+    /* The DualSense bow trigger: a switch; greyed out while TOTK_DUALSENSE_TRIGGERS or a test session decides, and on a
+       game version without the bow's state (rows are made at each opening). */
+    assert(switched(@"DualSense bow trigger")); flip(@"DualSense bow trigger", NO); assert(!fakeTriggers && !switched(@"DualSense bow trigger"));
+    flip(@"DualSense bow trigger", YES); assert(fakeTriggers);
+    press(18); fakeTriggersLocked = 1; fakeTriggers = 0; press(18); assert(settingsOpen);
+    assert(!menu(@"DualSense bow trigger").enabled && [menu(@"DualSense bow trigger").titleOfSelectedItem isEqualToString:@"Off"]);
+    press(18); fakeTriggersLocked = 0; fakeTriggersAvailable = 0; press(18);
+    assert(!menu(@"DualSense bow trigger").enabled && [menu(@"DualSense bow trigger").titleOfSelectedItem isEqualToString:@"Not in this version"]);
+    press(18); fakeTriggersAvailable = 1; fakeTriggers = 1; press(18); assert(settingsOpen && switched(@"DualSense bow trigger"));
+
     /* Controller type: auto names the controller it sees. */
     shows(@"Controller type", @"Auto (PlayStation)");
     pick(@"Controller type", @"Switch"); assert(fakePadType == GAMEPAD_TYPE_SWITCH);
@@ -231,6 +247,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Chinese. */
     setenv("TOTK_UI_LANG", "zh", 1); press(18); assert(settingsOpen);
     shows(@"分辨率", @"1080p"); shows(@"手柄类型", @"自动（未接手柄）");
+    assert(switched(@"DualSense 拉弓扳机"));
     fakePadDetected = GAMEPAD_TYPE_SWITCH; shows(@"手柄类型", @"自动（Switch）");
     pick(@"补帧", @"50+50"); assert(mfx_requested() == MFX_50);
     shows(@"震动强度", @"1×（默认）"); assert(switched(@"震动") && switched(@"体感瞄准"));
