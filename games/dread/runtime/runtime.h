@@ -125,7 +125,8 @@ int runtime_handheld_mode(void);   /* TOTK_OPERATION_MODE=handheld (runtime/serv
 void *runtime_input_override(const char *name);
 int runtime_npdm_main_priority(void);   /* runtime/loader.c, from the verified main.npdm */
 int runtime_npdm_default_core(void);
-void *runtime_game_override(const char *name);   /* runtime/system_services.c: network and system functions answered by name */
+void *runtime_game_override(const char *name);
+void *runtime_os_trace_override(const char *name);   /* runtime/os_trace.c: DREAD_OS_TRACE diagnostic */   /* runtime/system_services.c: network and system functions answered by name */
 typedef struct { uint64_t buttons; int32_t lx,ly,rx,ry; int connected; } RuntimeGamepadState;
 void runtime_gamepad_start(void);
 void runtime_gamepad_read(RuntimeGamepadState *out);

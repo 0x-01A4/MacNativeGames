@@ -290,6 +290,21 @@ static void h_ctor(void *obj, int type, int format, int mode, int priority) {
     ((void **)obj)[0] = G.vptr; ((void **)obj)[1] = m;
     LOG("VP9 decoder %p on the host (libvpx %s), output format %d, mode %d", obj, vpx_codec_version_str(), format, mode);
 }
+static int player_trace(void) { static int on = -1; if (on < 0) on = getenv("DREAD_OS_TRACE") != NULL; return on; }
+/* Diagnostic (DREAD_OS_TRACE): Metroid Dread's movie player state (decoder = wrapper + 0x50, wrapper + 0x30 = player, player + 0x2c =
+   state), read safely; -1 when unreadable. Logged at Stop and destruction. */
+static int player_state(const void *obj) {
+    uint64_t player = 0; int32_t state = -1; mach_vm_size_t got = 0;
+    if (mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)(uintptr_t)obj - 0x50 + 0x30, 8, (mach_vm_address_t)(uintptr_t)&player, &got) != KERN_SUCCESS || !player) return -1;
+    if (mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)(player + 0x2c), 4, (mach_vm_address_t)(uintptr_t)&state, &got) != KERN_SUCCESS) return -1;
+    return state;
+}
+static int player_tracks(const void *obj) {   /* the player's track count (player + 0x68), -1 when unreadable */
+    uint64_t player = 0; int32_t n = -1; mach_vm_size_t got = 0;
+    if (mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)(uintptr_t)obj - 0x50 + 0x30, 8, (mach_vm_address_t)(uintptr_t)&player, &got) != KERN_SUCCESS || !player) return -1;
+    if (mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)(player + 0x68), 4, (mach_vm_address_t)(uintptr_t)&n, &got) != KERN_SUCCESS) return -1;
+    return n;
+}
 static void destroy(void *obj) {
     pthread_rwlock_wrlock(&g_signal);   /* no signal of this decoder is in flight or fires later */
     pthread_mutex_lock(&g_lock); Movie *m = NULL;
@@ -298,7 +313,8 @@ static void destroy(void *obj) {
     pthread_mutex_unlock(&g_lock);
     pthread_rwlock_unlock(&g_signal);
     if (!m) return;
-    LOG("decoder %p destroyed after %llu frames", obj, (unsigned long long)m->frames);
+    if (player_trace()) LOG("decoder %p destroyed after %llu frames (player state %d)", obj, (unsigned long long)m->frames, player_state(obj));
+    else LOG("decoder %p destroyed after %llu frames", obj, (unsigned long long)m->frames);
     release_codec(m); pthread_mutex_destroy(&m->mu); free(m);
     ((void **)obj)[0] = G.vptr; ((void **)obj)[1] = NULL;   /* what the library's destructor leaves (no DecoderImpl) */
 }
@@ -331,7 +347,9 @@ static int h_configure(void *obj, void *format) {
 }
 static int h_register_events(void *obj, void *events) {
     Movie *m = find(obj); if (!m) return ((md_fn)G.orig[MOVIE_REGISTER_EVENTS])(obj, events);
-    revoke_events(m); m->events = events; return ST_OK;
+    revoke_events(m); m->events = events;
+    if (events && player_trace()) LOG("decoder %p client events %p: %p %p %p %p", obj, events, ((void **)events)[0], ((void **)events)[1], ((void **)events)[2], ((void **)events)[3]);
+    return ST_OK;
 }
 static void set_format(Movie *m, void *md) {
     G.md_set_string(md, "mime", "video/raw");
@@ -365,7 +383,7 @@ static int h_start(void *obj) {
 static int h_stop(void *obj) {
     Movie *m = find(obj); if (!m) return ((int_fn)G.orig[MOVIE_STOP])(obj);
     revoke_events(m);
-    pthread_mutex_lock(&m->mu); LOG("stop after %llu frames (%llu dropped to keep time)", (unsigned long long)m->frames, (unsigned long long)m->dropped); release_codec(m); pthread_mutex_unlock(&m->mu);
+    pthread_mutex_lock(&m->mu); LOG("stop after %llu frames (%llu dropped to keep time)", (unsigned long long)m->frames, (unsigned long long)m->dropped); if (player_trace()) LOG("  player state %d, tracks %d", player_state(obj), player_tracks(obj)); release_codec(m); pthread_mutex_unlock(&m->mu);
     return ST_OK;
 }
 static int h_reset(void *obj) {

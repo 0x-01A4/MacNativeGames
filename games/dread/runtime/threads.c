@@ -113,7 +113,8 @@ static thr_t *pick(int kind, uint64_t a) {
     }
     return b;
 }
-static void wake(thr_t *t, int64_t res) { wait_unlink(t); t->wkind = 0; t->woke = 1; t->wres = res; pthread_cond_signal(&t->cv); }
+static void core_reserve_for(thr_t *w);
+static void wake(thr_t *t, int64_t res) { wait_unlink(t); t->wkind = 0; t->woke = 1; t->wres = res; pthread_cond_signal(&t->cv); core_reserve_for(t); }
 // 挂起直到被唤醒或超时（ns<0 无限、0 立即超时）；返回 wres 或 R_TIMEOUT
 // Suspend until woken or timed out (ns<0 infinite, 0 immediate timeout); returns wres or R_TIMEOUT
 static int64_t block_inner(thr_t *t, int kind, int64_t ns);
@@ -126,15 +127,29 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns);
 #define NCORE 3
 static thr_t *g_core_owner[NCORE];
 static thr_t *g_core_wait;
+/* Horizon preempts at wake time: a thread woken while a lower-priority thread holds its core runs before that thread
+   returns to guest code. The host marks the holder (it gives the core up at its next SVC exit or entry) and reserves
+   the core for the woken thread, so no thread of lower priority takes it before the woken one arrives. Metroid Dread's
+   movie player hands work to a higher-priority worker on its own core and relies on it running first. */
+static thr_t *g_core_reserved[NCORE];
 static int g_cores_on = -1;
 static int cores_enabled(void) { if (g_cores_on < 0) g_cores_on = getenv("TOTK_FREE_CORES") ? 0 : 1; return g_cores_on; }
 static int core_allowed(const thr_t *t, int c) { return (int)((t->mask >> c) & 1); }
+static int core_held_back(int c, const thr_t *t) {   // holding G: core c is reserved for a thread of higher priority than t
+    const thr_t *r = g_core_reserved[c]; return r && r != t && r->prio < t->prio;
+}
+static void core_grant(int c);
+/* t has a core now: its other reservations go, and a reserved core left free goes to the best waiter (holding G) */
+static void core_unreserve(const thr_t *t) {
+    for (int c = 0; c < NCORE; c++) if (g_core_reserved[c] == t) { g_core_reserved[c] = NULL; if (!g_core_owner[c]) core_grant(c); }
+}
 static void core_grant(int c) {   // holding G: give free core c to the best waiter
     thr_t *b = NULL, **bp = NULL;
     for (thr_t **p = &g_core_wait; *p; p = &(*p)->cnext)
         if (core_allowed(*p, c) && (!b || (*p)->prio < b->prio || ((*p)->prio == b->prio && (*p)->cseq < b->cseq))) { b = *p; bp = p; }
-    if (!b) return;
+    if (!b || core_held_back(c, b)) return;   // a reserved core waits for its woken thread
     *bp = b->cnext; b->cnext = NULL; b->cur_core = c; b->core_since = now_ns(); g_core_owner[c] = b; pthread_cond_signal(&b->cv);
+    core_unreserve(b);
 }
 static void core_put(thr_t *t) {   // holding G
     if (t->cur_core < 0) return;
@@ -143,16 +158,30 @@ static void core_put(thr_t *t) {   // holding G
 static void core_take(thr_t *t) {   // holding G; waits until a core in t's mask is handed over
     if (!cores_enabled() || t->cur_core >= 0) return;
     if (!(t->mask & ((1u << NCORE) - 1))) die("thread %#x core mask %#llx has no application core", t->handle, (unsigned long long)t->mask);
-    int c = t->core >= 0 && t->core < NCORE && core_allowed(t, t->core) && !g_core_owner[t->core] ? t->core : -1;
-    for (int i = 0; c < 0 && i < NCORE; i++) if (core_allowed(t, i) && !g_core_owner[i]) c = i;
-    if (c >= 0) { t->cur_core = c; t->core_since = now_ns(); g_core_owner[c] = t; return; }
+    int c = t->core >= 0 && t->core < NCORE && core_allowed(t, t->core) && !g_core_owner[t->core] && !core_held_back(t->core, t) ? t->core : -1;
+    for (int i = 0; c < 0 && i < NCORE; i++) if (core_allowed(t, i) && !g_core_owner[i] && !core_held_back(i, t)) c = i;
+    if (c >= 0) { t->cur_core = c; t->core_since = now_ns(); g_core_owner[c] = t; core_unreserve(t); return; }
     t->cseq = ++g_wseq; t->cnext = g_core_wait; g_core_wait = t;
     for (int i = 0; i < NCORE; i++) if (core_allowed(t, i) && g_core_owner[i] && g_core_owner[i]->prio > t->prio) g_core_owner[i]->preempt = 1;
     while (t->cur_core < 0) pthread_cond_wait(&t->cv, &G);
 }
+static void core_reserve_for(thr_t *w) {   // holding G
+    static int lazy = -1; if (lazy < 0) lazy = getenv("DREAD_LAZY_PREEMPT") != NULL;   /* A/B: preempt only at the holder's next SVC */
+    if (lazy || !cores_enabled() || w->cur_core >= 0) return;
+    for (int c = 0; c < NCORE; c++) if (core_allowed(w, c) && !g_core_owner[c] && !core_held_back(c, w)) return;   // a free core: no preemption
+    int best = -1;
+    for (int c = 0; c < NCORE; c++) {
+        thr_t *o = g_core_owner[c];
+        if (!core_allowed(w, c) || !o || o->prio <= w->prio || core_held_back(c, w)) continue;
+        if (best < 0 || o->prio > g_core_owner[best]->prio) best = c;   // the lowest-priority holder gives way
+    }
+    if (best < 0) return;
+    g_core_owner[best]->preempt = 1; g_core_reserved[best] = w;
+}
 static thr_t *me_or_null(void) { return g_keythr ? pthread_getspecific(g_keythr) : NULL; }
 void runtime_thread_note_hle(unsigned i) { thr_t *t = me_or_null(); if (t) t->last_hle = (int)i + 1; }   // hle_stack.c, while tracing
 uint32_t runtime_thread_current_handle(void) { thr_t *t = me_or_null(); return t ? t->handle : 0; }
+int runtime_thread_current_priority(void) { thr_t *t = me_or_null(); return t ? t->prio : -1; }   /* crash report */
 // Host services that wait for other threads or the GPU give the core up around the wait (no host locks held).
 int runtime_core_away(void) {
     thr_t *t = me_or_null(); if (!t || t->cur_core < 0) return 0;
