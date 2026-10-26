@@ -296,6 +296,9 @@ static void audio_observe(void) {
     // the value must be applied here. overwrite=0 keeps devicectl --environment-variables winning when testing from the Mac.
     NSString *lang = [NSUserDefaults.standardUserDefaults stringForKey:@"TOTK_LANG"];
     if (lang.length>0&&lang.length<8) setenv("TOTK_LANG",lang.UTF8String,0);
+    // Frame rate: Settings.bundle › TOTK_PHONE_FPS, or the 60 / 30 button of the touch controls, which saves it here too.
+    NSString *fps = [NSUserDefaults.standardUserDefaults stringForKey:@"TOTK_PHONE_FPS"];
+    if ([fps isEqualToString:@"30"]) setenv("TOTK_PHONE_FPS","30",0);
     setenv("TOTK_ROMFS_PATCHES",[res stringByAppendingPathComponent:@"romfs-patches"].fileSystemRepresentation,1);
     setenv("TOTK_ROMFS_PATCHES_OUT",[res stringByAppendingPathComponent:@"romfs-patches-out"].fileSystemRepresentation,1);
     setenv("TOTK_SHARED_FONTS",[res stringByAppendingPathComponent:@"shared-fonts"].fileSystemRepresentation,1);
