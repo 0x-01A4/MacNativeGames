@@ -1,23 +1,36 @@
 # Metroid Dread (work in progress)
 
-An experiment: run Metroid Dread natively the way `games/totk` runs Tears of the Kingdom. It is a fork of
-`games/by3` (itself forked from `games/totk`) and keeps its own copies of everything in this folder (`runtime/`,
-`third_party/d2r`, `third_party/d2r_gfx`, `prebuilt/`, `scripts/`), so changes here never affect another game and
-nothing here reads another game's folder. **It is not playable yet**: the code is rewritten and verified, the loader
-maps it, and the game reaches its own `nnMain`. What was done and found: [CHANGELOG.md](CHANGELOG.md).
+Metroid Dread running natively the way `games/totk` runs Tears of the Kingdom. It is a fork of `games/by3` (itself
+forked from `games/totk`) and keeps its own copies of everything in this folder (`runtime/`, `third_party/d2r`,
+`third_party/d2r_gfx`, `prebuilt/`, `scripts/`), so changes here never affect another game and nothing here reads
+another game's folder. **It is playable**: the title, the save menu, the prologue and the first area run with picture,
+sound, controller and saves. What was done and found: [CHANGELOG.md](CHANGELOG.md).
 
 You must own the game: use your own dump and the `prod.keys` dumped from your own Switch. Nothing from the game is in
-this repository; `Dread_build/` (the work folder) and `mods/` are ignored by git. `build_app.py` and the Builder do not
-offer this game yet (there is no `game.json` until there is an app).
+this repository; `Dread_build/` (the work folder) and `mods/` are ignored by git.
+
+## Build and play
+
+With the Builder (`ui/README.md`), or in one command from the top of the repository:
+
+```sh
+python3.14 build_app.py "<game>.xci" -k prod.keys [-o OUT.app]
+```
+
+`build_app.py` hands a Metroid Dread card image or NSP to `games/dread/build.py`, which runs the four steps below in
+`Dread_build/` next to the game file (reused by the next run), checks each against `assets/expected-v1.0.0.json`, and
+writes `Metroid Dread.app` next to it. The app is a small launcher (window or full screen, monitor, window size,
+MetalFX or plain scaling) that runs the game from the work folder: do not move or delete that folder. Saves:
+`~/Library/Application Support/MacNativeGames/Dread/profile`; log: `~/Library/Logs/MacNativeGames/dread.log`.
 
 ## Inputs
 
 - Base game `010093801237C000` 1.0.0 (v0), as the card image (XCI) or NSP. Updates are not supported yet.
 - `assets/expected-v1.0.0.json` pins the Program NCA, every ExeFS file, the RomFS image and the rewritten modules.
 
-## Stage 1 and the loader probe
+## By hand
 
-From `games/dread`, with Python 3.14 and the packages of `requirements.txt`; the work folder is `../Dread_build`, next
+The same steps, from `games/dread`, with Python 3.14 and the packages of `requirements.txt`; the work folder is `../Dread_build`, next
 to the card image in `games/`:
 
 ```sh
@@ -65,6 +78,5 @@ subsdk0 here, every module of the other games) keep the old layout and byte-iden
 
 ## Next
 
-Stage 3: follow each unknown service, command or NVN call it aborts on (first: `fsp-srv` over IPC) until the first
-`nvnQueuePresentTexture`. The launcher (`app/`) and `make app` are carried over from Bayonetta 3 with renamed
-identifiers and are not built yet; its presets still name Bayonetta's patches.
+Longer play beyond the first area; frame rate and audio in the areas; the 2.1.0 update (a second set of hashes and a
+rewrite of its code); iOS. Open findings are listed at the end of [CHANGELOG.md](CHANGELOG.md).

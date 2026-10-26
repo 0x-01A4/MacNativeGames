@@ -315,3 +315,18 @@ shaders are translated and compiled; the cache in `build/shader-cache` holds the
 
 Not checked yet: walking around, sustained frame rate in the area, audio in the area, the rest of the prologue frames
 (only screenshots), long play.
+
+### 2026-10-26: playing, two leaks, and the Builder
+
+- **GPU memory on the title loop** (`e6bb3f5`). The first sessions the user played stopped at the GPU budget (5000 MB)
+  after about 40 s on the title screen: GPU memory grew by about 527 MB every 5 s, 150 movie frames x 3.5 MB.
+  `mtl_write_texels` (and `mtl_read_texels`) allocate a staging buffer and an autoreleased command buffer that holds it;
+  the host movie decoder calls WriteTexels from a game thread without an autorelease pool, so both lived until the
+  thread ended (each movie switch, which is why scripted runs that left the title early never saw it). Both now drain
+  their own pool. 75 s on the title: 1753 MB at frame 300, 1756 MB at frame 3300. MetalFX was not involved.
+- The user then played a 5-minute session (title, menus, prologue) without a problem and reported that everything
+  played fine.
+- **The Builder** (`55a6cea`). `game.json`, `build.py` (from Bayonetta's: XCI or NSP of the base game, four checked
+  steps, `--inspect`, refusals), a launcher without Bayonetta's settings, tests for both, and the Builder's own tests
+  updated. `build_app.py <the XCI>` builds the app through the hand-off: 14 s with the work folder reused, 1 min 16 s
+  from an empty work folder (main's rewrite byte-identical to the reference).

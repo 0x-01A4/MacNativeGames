@@ -10,8 +10,9 @@ Status: Phase 3 of `UIPlans/ui-plan.md`. The Builder knows no game by name: it b
 `--inspect`. Today that is Tears of the Kingdom (Mac app, and the unsigned iPhone/iPad or Vision Pro IPA, which needs the full
 Xcode 26 plus `brew install xcodegen cmake ninja` and is installed with `games/totk/ios/tools/install_device.py`; a mod
 folder, `docs/mods.md`), Breath of the Wild (Mac or iPhone/iPad; 1.9.0 with its add-on content packs), Bayonetta 3
-(Mac; base NSP plus the 1.2.0 update, through `games/by3/build.py`) and Super Mario Odyssey (Mac, needs the full Xcode;
-one XCI or NSP holding 1.3.0, through `games/odyssey/build.py`, eight steps).
+(Mac; base NSP plus the 1.2.0 update, through `games/by3/build.py`), Super Mario Odyssey (Mac, needs the full Xcode;
+one XCI or NSP holding 1.3.0, through `games/odyssey/build.py`, eight steps) and Metroid Dread (Mac; the base game 1.0.0
+as one XCI or NSP, through `games/dread/build.py`).
 
 The **Library** (the switch at the top of the window) lists the game apps on this Mac: the ones Spotlight finds by
 their bundle identifier (`bundle_id` in a game.json) and the ones this Builder made. For each it shows what it was built
