@@ -1,6 +1,6 @@
 # MacNativeGames
 
-<p align="center"><b>A technical exploration: can a Nintendo Switch game's NVN graphics be ported to Metal, so the game runs natively on Apple silicon?</b><br>
+<p align="center"><b>A technical exploration: can a Nintendo Switch game's NVN graphics be ported to Metal?</b><br>
 Tested with your own copies of Tears of the Kingdom and Breath of the Wild on Mac, iPhone and iPad. Not an emulator: the game's own ARM64 code runs directly on Apple chips.</p>
 
 [English](#english) | [中文](#chinese)
