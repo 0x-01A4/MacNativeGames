@@ -16,7 +16,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 1 | Code and data out of the dump; code rewritten for Apple silicon | done 2026-10-25 |
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
-| 4 | A picture, audio, input, saves | in progress: title movies with sound, save files created, the SAMUS FILES menu |
+| 4 | A picture, audio, input, saves | in progress: a new game plays the prologue; a movie that reaches its natural end can crash |
 | 5 | Performance, shaders, packaging as an app | not started |
 
 ## Log
@@ -245,3 +245,42 @@ Verified: with the scripted press the game creates `userdata/userdata.bmssv` and
 and keeps running; a 70 s run without other input stays up and screenshots at 37, 47 and 59 s show the SAMUS FILES menu
 (file 01 from the user's earlier session: 15/15 missiles, 99 energy, 00:00:00; files 02 and 03 empty) with the animated
 background and the button prompts.
+
+### 2026-10-26: starting a game; threads on Horizon's cores
+
+Driving with scripted presses (title, SAMUS FILES, file 01, A every 4 s) starts the prologue: the movies
+`prologue_01_2` ... `prologue_11` and the narrated pages (Metroid, X Parasite, B.S.L. station) show correctly. The first
+area (`packs/maps/s010_cave`) has not been reached yet.
+
+- **Start's signal.** `h_start` signalled "input available" inside `movie::Decoder::Start`; the game links the new
+  decoder's wait holders on its worker after Start returns, so `SignalEvent` met an unlinked holder at the first movie
+  switch. It is now delivered at the next present. Commit `3dbf60a`.
+- **Cores.** Threads created with ideal core -2 ran on any of the three cores, and the main thread had TotK's priority
+  44. Horizon pins a -2 thread to the process's default core (main.npdm: 0) and starts the main thread with the npdm
+  priority (39) on that core; `SetThreadCoreMask` -2 is the default core, -1/-3 leave the ideal core. Commit
+  `19c5908`. The movie worker is thread `0x100d`, priority 30, core 0, the same core as the main thread.
+- **Preemption at wake.** The host handed a core to a woken higher-priority thread only at the holder's next SVC; Horizon
+  does it as the waking SVC returns. Now the core is reserved at wake and given up at SVC exit. Title test, 5 runs each:
+  eager (new) crashes exactly when the first movie ends naturally (3/3, 0/2 otherwise), lazy (`DREAD_LAZY_PREEMPT=1`)
+  4/5. Commit `c54be95`.
+
+Open, deterministic: **a movie that plays to its natural end leaks its wait holders.** `DREAD_OS_TRACE` shows the first
+title movie's four holders (in its `DecoderEvents`, the decoder wrapper + 0x60) initialized by the main thread and
+linked by the worker, and never unlinked before the wrapper is freed; the worker then walks freed memory in
+`nn::os::WaitAny`. When the game stops a movie early (a press during it), the worker unlinks and finalizes them first.
+What is known of the game's side:
+
+- the worker (`main+0x222624`) links and unlinks a player's holders on requests queued by `main+0x222838`, which come
+  from its message handler `main+0x21cf04`: type 5 links all (`0x224298`), type 11 unlinks all (`0x2243d8`, over the
+  player's track list at +0x60/+0x68), types 3 and 6 do other work; a call with the second argument set is ignored;
+- the player's state is at +0x2c; close (`0x21e5d0`) sets 11 only from 10 or 13 and notifies the observers at
+  +0x720/+0x728; stop moves to 10 only from 6, 7 or 9;
+- the end-of-stream handler (`0x21b5b0`, on an output buffer with flag 4) marks the wrapper finished, notifies with the
+  ignore flag, and posts command 0 to the player's own queue (`0x21fd20`);
+- at Stop after a natural end the player is in state 11 with 1 track, so the type-11 message either does not reach the
+  worker's handler or is ignored there. Next step: breakpoints (or an observer trace) on `0x21cf04` and `0x2243d8` in
+  that path. lldb works with `settings set platform.plugin.darwin.ignored-exceptions EXC_BAD_INSTRUCTION` and SIGILL
+  passed through, but main's address under lldb was not where the breakpoints were placed.
+
+Also seen: in two long runs the game stopped presenting frames for ~40 s with one thread at 100% after
+`prologue_09_10` / `prologue_11` opened (with and without the eager preemption); not investigated yet.
