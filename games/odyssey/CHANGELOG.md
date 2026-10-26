@@ -106,11 +106,25 @@ shipped. Built with `--render-res 1600x900`, key 3 turns MetalFX to the window o
   key 3 logged each state with the scene size the game then drew (1600x900, 1920x1080, 2560x1440). Game frames at the
   three sizes: mean absolute Laplacian 4.42 / 5.19 / 8.76; 60 fps at 2560x1440.
 
+### 2026-10-26: the stutter every 64th frame that grows with play time
+
+The graphics layer's sweep of cached texture-type views (`type_views_sweep_retired`, every 64th submission) walks every
+cached view, and a view only left the cache once its parent allocation left residency. Odyssey rebuilds the sampling
+view of one resident 1600x900 2D-array render target twice a frame, so every frame added keys: in the port these changes
+come from, 28,000 entries after four minutes, a sweep of 12 ms every 64th frame after five minutes and about 200 ms after
+an hour. A view no draw asked for during the last 64 submissions now leaves the cache (deferred until the GPU is done
+with it), and a `[type-views]` line about once a minute shows the cache size, views made and retired, and the sweep time.
+These are the `games/odyssey` lines of #791, which makes the same change in all three copies of `nvn_mtl.m`.
+
+- In the app (1.4.1, six minutes standing in the Wooded Kingdom after Resume, 24,860 frames): the `[type-views]` line
+  showed 130 cached views every minute while the views made rose from 2,402 to 40,802 (about two a frame) and 40,672
+  left the cache; the sweep took 0.11 to 0.27 ms. With the old code a view left only with its allocation, so those
+  views would have stayed. The longest frame per 300 after loading was 25 to 30 ms, flat to the end; 0 FATAL.
+
 ### Not brought over
 
-- The stutter fix for type views no draw has asked for since the last sweep is in its own pull request (#791), which
-  covers `games/odyssey` too.
-- A reminder to rebuild once enough new shader notes have collected: Odyssey's seed already builds every shader in its
-  default state, and all of 26 October's runs (a 20-minute session of play and the test runs, mostly in the Wooded
-  Kingdom) noted 6 new shaders (the port it comes from had 1,359 at that point), so there is little to remind of. The
-  notes go to the shared list as before.
+- A reminder to rebuild once enough new shader notes have collected. In the port it comes from, a rebuild took the
+  player's notes into the app; `build_odyssey.py` does not, and Odyssey keeps every shader it has met in the player's
+  own shader cache ("Odyssey Data/shader-cache", 92,893 files after 26 October's runs), which a rebuild leaves as it
+  is, so a rebuild would not help. All of 26 October's runs (a 20-minute session of play and the test runs, mostly in
+  the Wooded Kingdom) noted 6 new shaders.
