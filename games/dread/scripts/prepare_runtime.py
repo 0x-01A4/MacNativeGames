@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Bind the native loader to the verified Bayonetta 3 rewrite and RomFS: generated headers stay in the work folder.
+"""Bind the native loader to the verified Metroid Dread rewrite and RomFS: generated headers stay in the work folder.
 
 Writes <work>/build/runtime_tables.h (modules, symbols, relocations, gates), romfs_config.h and
-extracted/v120/romfs/runtime-index.bin (the RomFS index the runtime reads), and shared_fonts_config.h.
+extracted/v100/romfs/runtime-index.bin (the RomFS index the runtime reads), and shared_fonts_config.h.
 Adapted from games/totk/scripts/prepare_runtime.py, prepare_romfs_backend.py and prepare_shared_fonts.py; every input
-is checked against assets/expected-v1.2.0.json first.
+is checked against assets/expected-v1.0.0.json first.
 """
 import argparse
 import hashlib
@@ -14,11 +14,12 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE / 'third_party/d2r'))   # Bayonetta 3's own copy of the rewriter
+sys.path.insert(0, str(HERE / 'third_party/d2r'))   # Metroid Dread's own copy of the rewriter
 from relr import decode_relr
+import nsoimg
 
-VERSION = 'v120'
-EXPECTED = json.loads((HERE / 'assets/expected-v1.2.0.json').read_text())
+VERSION = 'v100'
+EXPECTED = json.loads((HERE / 'assets/expected-v1.0.0.json').read_text())
 
 
 def sha(path):
@@ -26,9 +27,9 @@ def sha(path):
 
 
 def module_table(work, name):
-    path = work / f'rewritten/{VERSION}/{name}.patched.bin'
-    image = path.read_bytes()
-    digest = hashlib.sha256(image).hexdigest()
+    rewritten = nsoimg.Patched(work / f'rewritten/{VERSION}', name)
+    digest = hashlib.sha256(rewritten.data).hexdigest()
+    image = rewritten.data[rewritten.lead:]   # module offset 0 onwards: a leading patch area is not read here
     assert digest == EXPECTED['rewritten_sha256'][f'{name}.patched.bin'], f'Unverified rewrite: {name}'
     assert sha(work / f'extracted/{VERSION}/exefs/{name}') == EXPECTED['exefs_sha256'][name], f'Unverified ExeFS: {name}'
     layout = {}
@@ -77,7 +78,7 @@ def module_table(work, name):
         ret, kind, arg, original = line.split()
         assert kind in ['cntpct', 'cntvct', 'svc']
         gates.append(dict(ret=int(ret, 0), timer=kind != 'svc', arg=int(arg), original=int(original, 0)))
-    return dict(name=name, sha256=digest, size=len(image), layout=layout, tags=tags, symbols=symbols,
+    return dict(name=name, sha256=digest, size=len(rewritten.data), layout=layout, tags=tags, symbols=symbols,
                 relocs=relocs, gates=gates, ctor_flag=ctor_flag(image, tags, layout, name))
 
 
@@ -108,7 +109,8 @@ def runtime_tables(work, out):
     main = modules[0]
     target = '_ZN2nn2os13GetSystemTickEv'
     slot = next(r['where'] for r in main['relocs'] if main['symbols'][r['symbol']]['name'] == target and r['kind'] == 1026)
-    image = (work / f'rewritten/{VERSION}/main.patched.bin').read_bytes()
+    rewritten = nsoimg.Patched(work / f'rewritten/{VERSION}', 'main')
+    image = rewritten.data[rewritten.lead:]
     plt = []
     for address in range(main['layout']['TEXT_END'] - 0x10000, main['layout']['TEXT_END'] - 12, 4):
         a, b, c, d = struct.unpack_from('<IIII', image, address)
@@ -132,7 +134,7 @@ def runtime_tables(work, out):
     lines.append('static Module modules[] = {')
     for n, m in enumerate(modules):
         l = m['layout']
-        lines.append('{' + f'.name={json.dumps(m["name"])},.digest={json.dumps(m["sha256"])},.file_size={m["size"]}ULL,.text_end={l["TEXT_END"]}ULL,.ro_off={l["RO_OFF"]}ULL,.data_off={l["DATA_OFF"]}ULL,.patch_off={l["PATCH_OFF"]}ULL,.key_off={l["KEY_PAGE_OFF"]}ULL,.symbols=symbol_{n},.nsym={len(m["symbols"])},.relocs=reloc_{n},.nreloc={len(m["relocs"])},.gates=gate_{n},.ngate={len(m["gates"])},.init={m["tags"].get(12,0)}ULL,.ctor_flag={m["ctor_flag"]}ULL,.init_array={m["tags"].get(25,0)}ULL,.init_size={m["tags"].get(27,0)}ULL' + '},')
+        lines.append('{' + f'.name={json.dumps(m["name"])},.digest={json.dumps(m["sha256"])},.file_size={m["size"]}ULL,.text_end={l["TEXT_END"]}ULL,.ro_off={l["RO_OFF"]}ULL,.data_off={l["DATA_OFF"]}ULL,.patch_off={l["PATCH_OFF"]}LL,.patch_lead={l["PATCH_LEAD"]}ULL,.patch_size={l["PATCH_SIZE"]}ULL,.image_size={l["IMAGE_SIZE"]}ULL,.key_off={l["KEY_PAGE_OFF"]}ULL,.symbols=symbol_{n},.nsym={len(m["symbols"])},.relocs=reloc_{n},.nreloc={len(m["relocs"])},.gates=gate_{n},.ngate={len(m["gates"])},.init={m["tags"].get(12,0)}ULL,.ctor_flag={m["ctor_flag"]}ULL,.init_array={m["tags"].get(25,0)}ULL,.init_size={m["tags"].get(27,0)}ULL' + '},')
     lines.append('};')
     lines.append(f'#define PROBE_PLT {plt[0]}ULL\n#define PROBE_SLOT {slot}ULL')
     (out / 'runtime_tables.h').write_text('\n'.join(lines) + '\n')
@@ -181,7 +183,7 @@ def shared_fonts_config(work, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--work', type=Path, default=HERE / 'BY3_build')
+    parser.add_argument('--work', type=Path, default=HERE.parent / 'Dread_build')
     work = parser.parse_args().work.resolve()
     out = work / 'build'
     out.mkdir(parents=True, exist_ok=True)

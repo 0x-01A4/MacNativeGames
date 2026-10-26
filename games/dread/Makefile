@@ -1,12 +1,13 @@
-# Bayonetta 3 native runtime. Self-contained: the Horizon host (runtime/), the rewriter (third_party/d2r), the NVN-on-Metal
+# Metroid Dread native runtime. Self-contained: the Horizon host (runtime/), the rewriter (third_party/d2r), the NVN-on-Metal
 # layer (third_party/d2r_gfx), the shader translator (prebuilt/) and the scripts are this folder's own copies, forked from
-# games/totk; nothing here reads games/totk. Everything generated goes to the work folder.
-# Inputs come from scripts/extract_code.py, scripts/merge_romfs.py and the rewrite (see README.md), then:
+# games/totk by way of games/by3; nothing here reads another game's folder. Everything generated goes to the work folder.
+# Inputs come from scripts/extract_exefs.py, scripts/extract_romfs.py and the rewrite (see README.md), then:
 #   make prepare   # scripts/prepare_runtime.py: tables, RomFS index, fonts config
-#   make runtime   # BY3_build/build/by3-native
+#   make runtime   # ../Dread_build/build/dread-native
+#   make probe     # map and link the three modules, then 4,000 cross-module calls on 4 threads (no game code runs)
 #   make boot      # run it from the work folder (cwd: extracted/ and rewritten/ are read relative to it)
 
-WORK ?= BY3_build
+WORK ?= ../Dread_build
 OUT := $(WORK)/build
 PY ?= python3
 NATIVE_OPT ?= -O2
@@ -20,7 +21,7 @@ RUNTIME_SRC := $(filter-out runtime/frontend_ios.m,$(wildcard runtime/*.c runtim
 RUNTIME_HEADERS := $(wildcard runtime/*.h)
 GENERATED := $(OUT)/runtime_tables.h $(OUT)/romfs_config.h $(OUT)/shared_fonts_config.h
 
-.PHONY: prepare runtime boot clean
+.PHONY: prepare runtime probe boot clean
 prepare:
 	"$(PY)" scripts/prepare_runtime.py --work "$(WORK)"
 
@@ -31,7 +32,7 @@ $(OUT)/obj/%.o: % $(GFX_HEADERS) Makefile
 	@mkdir -p "$(dir $@)"
 	xcrun clang $(NATIVE_OPT) -g -Wall -Wextra $(GFX_FLAGS) -c "$<" -o "$@"
 
-$(OUT)/by3-native: $(RUNTIME_SRC) $(RUNTIME_HEADERS) $(GENERATED) $(GFX_OBJECTS) Makefile
+$(OUT)/dread-native: $(RUNTIME_SRC) $(RUNTIME_HEADERS) $(GENERATED) $(GFX_OBJECTS) Makefile
 	xcrun clang -std=c11 $(NATIVE_OPT) -g -Wall -Wextra -Werror -Wno-deprecated-declarations \
 	  -Ithird_party/d2r_gfx/gfx/nvn/include -I$(OUT) -I/opt/homebrew/opt/opus/include/opus -I/opt/homebrew/opt/libvpx/include \
 	  $(RUNTIME_SRC) $(GFX_OBJECTS) /opt/homebrew/opt/opus/lib/libopus.a /opt/homebrew/opt/libvpx/lib/libvpx.a \
@@ -39,7 +40,7 @@ $(OUT)/by3-native: $(RUNTIME_SRC) $(RUNTIME_HEADERS) $(GENERATED) $(GFX_OBJECTS)
 	  -framework CoreText -framework UniformTypeIdentifiers -fobjc-arc -framework Cocoa -framework CoreVideo -framework CoreFoundation \
 	  -framework AudioToolbox -framework GameController -framework CoreHaptics -framework IOKit -o "$@"
 
-runtime: $(OUT)/by3-native
+runtime: $(OUT)/dread-native
 
 # The runtime shader translation the graphics layer starts on first use: <work>/build/shader-service/totk_xlate (the
 # repository's prebuilt NativeAOT translator, checked against its SHA-256) and <work>/build/spirv-cross/spirv-cross,
@@ -61,49 +62,50 @@ $(OUT)/spirv-cross/spirv-cross:
 	  -c "$(WORK)/src/SPIRV-Cross/$$f" -o "$(dir $@)obj/$$f.o" & done; wait
 	xcrun clang++ -arch arm64 $(addprefix $(dir $@)obj/,$(addsuffix .o,$(SPIRV_CROSS_SOURCES))) -o "$@"
 
-# BY3_LOG: where the boot's stderr goes (the host is loud on purpose; every abort names what is missing).
-BY3_LOG ?= $(WORK)/logs/boot.log
+# DREAD_LOG: where the boot's stderr goes (the host is loud on purpose; every abort names what is missing).
+DREAD_LOG ?= $(WORK)/logs/boot.log
 boot: runtime
-	@mkdir -p "$(dir $(BY3_LOG))"
-	cd "$(WORK)" && TOTK_HEADLESS=$${TOTK_HEADLESS-} ./build/by3-native rewritten/v120 boot 2> "$(abspath $(BY3_LOG))"; echo "exit $$?; log: $(BY3_LOG)"
+	@mkdir -p "$(dir $(DREAD_LOG))"
+	cd "$(WORK)" && TOTK_HEADLESS=$${TOTK_HEADLESS-} ./build/dread-native rewritten/v100 boot 2> "$(abspath $(DREAD_LOG))"; echo "exit $$?; log: $(DREAD_LOG)"
 
-# The player's mods, made into checked tables: exefs patches (mods/1.2.0/<name>/exefs/*.pchtxt) -> <work>/patches,
-# RomFS mods (mods/<name>/romfs/...) -> their manifest.tsv (sizes and SHA-256 of the replacements and the originals).
-.PHONY: patches mods app
-patches:
-	"$(PY)" scripts/prepare_patches.py --work "$(WORK)"
+probe: runtime
+	cd "$(WORK)" && ./build/dread-native rewritten/v100 probe
+
+# The player's RomFS mods (mods/<name>/romfs/...) -> their manifest.tsv (sizes and SHA-256 of the replacements and the
+# originals).
+.PHONY: mods app
 mods:
-	for d in mods/*/romfs; do [ -d "$$d" ] && "$(PY)" scripts/make_mod_manifest.py "$$d" --romfs "$(WORK)/extracted/v120/romfs"; done; true
+	for d in mods/*/romfs; do [ -d "$$d" ] && "$(PY)" scripts/make_mod_manifest.py "$$d" --romfs "$(WORK)/extracted/v100/romfs"; done; true
 
 # The app: a small launcher bundle (settings window with presets, then the game) that runs the game from the work
-# folder, which it names in Info.plist (BY3WorkFolder): nothing large is copied. Its icon comes from the game's own
-# control data (GAME=<base or update NSP> KEYS=<prod.keys>), or the app goes without one.
-APP ?= Bayonetta 3.app
+# folder, which it names in Info.plist (DreadWorkFolder): nothing large is copied. Its icon comes from the game's own
+# control data (GAME=<card image or NSP> KEYS=<prod.keys>), or the app goes without one.
+APP ?= Metroid Dread.app
 GAME ?=
 KEYS ?=
 $(OUT)/launcher: app/launcher.m Makefile
 	xcrun clang -std=gnu11 -O2 -Wall -Wextra -Werror -fobjc-arc app/launcher.m -framework Cocoa -o "$@"
 $(OUT)/AppIcon.icns:
-	@if [ -n "$(GAME)" ] && [ -n "$(KEYS)" ]; then cd scripts && "$(PY)" extract_app_icon.py "$(GAME)" --keys "$(KEYS)" --title 01004a4010fea000 --output "$(abspath $@)"; \
+	@if [ -n "$(GAME)" ] && [ -n "$(KEYS)" ]; then cd scripts && "$(PY)" extract_app_icon.py "$(GAME)" --keys "$(KEYS)" --title 010093801237c000 --output "$(abspath $@)"; \
 	 else echo "no GAME= / KEYS=: the app gets no icon"; fi
 app: runtime shader-tools $(OUT)/launcher $(OUT)/AppIcon.icns
 	rm -rf "$(APP)" && mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
-	cp "$(OUT)/launcher" "$(APP)/Contents/MacOS/Bayonetta 3"
+	cp "$(OUT)/launcher" "$(APP)/Contents/MacOS/Metroid Dread"
 	[ -f "$(OUT)/AppIcon.icns" ] && cp "$(OUT)/AppIcon.icns" "$(APP)/Contents/Resources/" || true
 	printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 	  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
 	  '<plist version="1.0"><dict>' \
-	  '<key>CFBundleExecutable</key><string>Bayonetta 3</string>' \
-	  '<key>CFBundleIdentifier</key><string>org.macnativegames.by3</string>' \
-	  '<key>CFBundleName</key><string>Bayonetta 3</string>' \
+	  '<key>CFBundleExecutable</key><string>Metroid Dread</string>' \
+	  '<key>CFBundleIdentifier</key><string>org.macnativegames.dread</string>' \
+	  '<key>CFBundleName</key><string>Metroid Dread</string>' \
 	  '<key>CFBundlePackageType</key><string>APPL</string>' \
-	  '<key>CFBundleShortVersionString</key><string>1.2.0</string>' \
+	  '<key>CFBundleShortVersionString</key><string>1.0.0</string>' \
 	  '<key>CFBundleVersion</key><string>1</string>' \
 	  '<key>CFBundleIconFile</key><string>AppIcon</string>' \
 	  '<key>LSMinimumSystemVersion</key><string>26.0</string>' \
 	  '<key>LSApplicationCategoryType</key><string>public.app-category.action-games</string>' \
 	  '<key>NSHighResolutionCapable</key><true/>' \
-	  '<key>BY3WorkFolder</key><string>$(abspath $(WORK))</string>' \
+	  '<key>DreadWorkFolder</key><string>$(abspath $(WORK))</string>' \
 	  '</dict></plist>' > "$(APP)/Contents/Info.plist"
 	codesign --force --sign - "$(APP)"
 	@echo "built $(APP) (game data stay in $(abspath $(WORK)))"
@@ -117,4 +119,4 @@ install: app
 	@echo "installed $(INSTALL_DIR)/$(APP)"
 
 clean:
-	rm -rf "$(OUT)/obj" "$(OUT)/by3-native"
+	rm -rf "$(OUT)/obj" "$(OUT)/dread-native"

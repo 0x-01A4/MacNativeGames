@@ -11755,7 +11755,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
         cx = crop[0]; cy = crop[1]; cw = crop[2]; ch = crop[3];
     }
     if (crop) atomic_store(&g_pic_big, cw > 1920 || ch > 1080);   // a game frame (interpolated frames come without the crop)
-    if (crop) atomic_store(&g_pic_src, (uint64_t)ch << 32 | cw);   // the game frame's size, for the HUD (BY3_HUD_RENDER)
+    if (crop) atomic_store(&g_pic_src, (uint64_t)ch << 32 | cw);   // the game frame's size, for the HUD (DREAD_HUD_RENDER)
     present_pipeline(dst.pixelFormat);
     double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
     MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};

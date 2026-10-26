@@ -60,7 +60,7 @@ static unsigned char *module_permissions[NM];
 static unsigned module_page_permission(unsigned i,uint64_t off){
  Module *m=&modules[i];
  if(off<m->data_off)return off<page_up(m->text_end)?5:1;
- if(off>=m->key_off)return off>=m->patch_off?5:1;
+ if(off>=m->key_off)return m->patch_off>=0&&off>=(uint64_t)m->patch_off?5:1;
  return module_permissions[i]?module_permissions[i][(off-m->data_off)/4096]:3;
 }
 uint64_t runtime_module_permission(uint64_t address,uint64_t size,unsigned permission){
@@ -119,12 +119,23 @@ int runtime_module_query(uint64_t address,uint64_t *base,uint64_t *size,unsigned
  }
  return 0;
 }
-void runtime_describe_address(uint64_t a,char *out,size_t n){for(unsigned i=0;i<NM;i++)if(a>=(uintptr_t)modules[i].base&&a<(uintptr_t)modules[i].base+modules[i].size){snprintf(out,n,"%s+0x%llx",modules[i].name,(unsigned long long)(a-(uintptr_t)modules[i].base));return;}Dl_info di;if(dladdr((void *)(uintptr_t)a,&di)&&di.dli_sname){snprintf(out,n,"%s+0x%llx",di.dli_sname,(unsigned long long)(a-(uintptr_t)di.dli_saddr));return;}snprintf(out,n,"0x%llx",(unsigned long long)a);}
+/* The module holding a, or its leading patch area (named "<module>.patch", offset from the patch area's start). Plain
+   arithmetic, so the signal handler can use it. */
+static char patch_names[NM][32];
+static const char *module_at(uint64_t a,uint64_t *off){
+ for(unsigned i=0;i<NM;i++){Module *m=&modules[i];uintptr_t b=(uintptr_t)m->base;
+  if(!b)continue;
+  if(a>=b&&a<b+m->size){*off=a-b;return m->name;}
+  if(m->patch_lead&&a>=b-m->patch_lead&&a<b){*off=a-(b-m->patch_lead);return patch_names[i];}
+ }
+ return NULL;
+}
+void runtime_describe_address(uint64_t a,char *out,size_t n){uint64_t off;const char *name=module_at(a,&off);if(name){snprintf(out,n,"%s+0x%llx",name,(unsigned long long)off);return;}Dl_info di;if(dladdr((void *)(uintptr_t)a,&di)&&di.dli_sname){snprintf(out,n,"%s+0x%llx",di.dli_sname,(unsigned long long)(a-(uintptr_t)di.dli_saddr));return;}snprintf(out,n,"0x%llx",(unsigned long long)a);}
 /* Guest frame-pointer chain. Guest threads run on guest stacks (not the host pthread stack), so frames are read with
    mach_vm_read_overwrite (a bad pointer ends the walk instead of faulting); the chain must grow upwards. */
 void runtime_trace_guest(uint64_t fp,uint64_t lr) {
  for(unsigned n=0;n<16;n++) {
-  for(unsigned i=0;i<NM;i++)if(lr>=(uintptr_t)modules[i].base&&lr<(uintptr_t)modules[i].base+modules[i].size)fprintf(stderr,"[totk] caller %s+0x%llx\n",modules[i].name,(unsigned long long)(lr-(uintptr_t)modules[i].base));
+  {uint64_t off;const char *name=module_at(lr,&off);if(name)fprintf(stderr,"[totk] caller %s+0x%llx\n",name,(unsigned long long)off);}
   if(!fp||fp%8)break;uint64_t f[2];mach_vm_size_t got=0;
   if(mach_vm_read_overwrite(mach_task_self(),fp,16,(uintptr_t)f,&got)!=KERN_SUCCESS||got!=16)break;
   lr=f[1];if(f[0]<=fp||f[0]-fp>(64u<<20))break;fp=f[0];
@@ -150,13 +161,14 @@ static void remap_at(Module *m,uintptr_t to,const void *from,size_t size,boolean
 static void digest_hex(const void *p,size_t n,char hex[65]){unsigned char d[32];CC_SHA256(p,(CC_LONG)n,d);for(unsigned i=0;i<32;i++)snprintf(hex+i*2,3,"%02x",d[i]);}
 static void map_module(Module *m,const char *dir) {
  (void)dir;
+ need(!m->patch_lead,"a leading patch area is not supported on iOS yet");
  const IosEmbed *e=NULL;for(unsigned i=0;i<sizeof(ios_embed)/sizeof(*ios_embed);i++)if(!strcmp(ios_embed[i].name,m->name))e=&ios_embed[i];
  need(e!=NULL,"module missing from ios_embed.h");
  char sx0[17],sx1[17],sw[17];snprintf(sx0,sizeof sx0,"__%sx0",m->name);snprintf(sx1,sizeof sx1,"__%sx1",m->name);snprintf(sw,sizeof sw,"__TOTK%sW",m->name);
  unsigned long z0=0,zw=0,z1=0;
  const uint8_t *x0=getsectiondata(&_mh_execute_header,"__TOTKX",sx0,&z0),*w=getsectiondata(&_mh_execute_header,sw,"__img",&zw),*x1=getsectiondata(&_mh_execute_header,"__TOTKX",sx1,&z1);
  need(x0&&w&&x1,"embedded module sections missing");
- need(z0==page_up(m->text_end)&&z0+zw==m->patch_off&&m->patch_off+z1==page_up(m->file_size),"embedded module layout");
+ need(z0==page_up(m->text_end)&&z0+zw==(uint64_t)m->patch_off&&(uint64_t)m->patch_off+z1==page_up(m->file_size),"embedded module layout");
  need(!((uintptr_t)x0&0x3fff)&&!((uintptr_t)w&0x3fff)&&!((uintptr_t)x1&0x3fff),"embedded sections not 16 KiB aligned");
  char hex[65];
  digest_hex(x0,z0,hex);need(!strcmp(hex,e->x0),"embedded text SHA256 differs from the exported patched text");
@@ -168,7 +180,7 @@ static void map_module(Module *m,const char *dir) {
  remap_at(m,base+z0,w,zw,TRUE,VM_PROT_READ|VM_PROT_WRITE);
  remap_at(m,base+m->patch_off,x1,z1,FALSE,VM_PROT_READ|VM_PROT_EXECUTE);
  m->base=(uint8_t *)(uintptr_t)base;
- need(m->key_off%0x4000==0&&m->key_off+0x4000<=m->patch_off&&m->patch_off<m->size,"key and patch layout");
+ need(m->key_off%0x4000==0&&m->key_off+0x4000<=(uint64_t)m->patch_off&&(uint64_t)m->patch_off<m->size,"key and patch layout");
  uint64_t *key=(void *)(m->base+m->key_off);
  for(unsigned i=0;i<8;i++)key[i]=runtime_keys[i]*8;
  make_hash(m);
@@ -180,14 +192,20 @@ static void map_module(Module *m,const char *dir) {
  FILE *f=fopen(path,"rb");need(f!=NULL,"open patched module");
  struct stat st;need(fstat(fileno(f),&st)==0&&(size_t)st.st_size==m->file_size,"patched module size");
  /* The main module gets one private, writable page after its rewritten image. The
-    real-time frame-step patch reads its two floats from this page via ADRP. */
- m->size=page_up(m->file_size)+(!strcmp(m->name,"main")?0x4000:0);
- m->base=mmap(NULL,m->size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
- need(m->base!=MAP_FAILED,"map module");need(fread(m->base,1,m->file_size,f)==m->file_size,"read image");fclose(f);
- unsigned char digest[32];CC_SHA256(m->base,(CC_LONG)m->file_size,digest);char hex[65];
+    real-time frame-step patch reads its two floats from this page via ADRP.
+    A leading patch area (patch_lead > 0) is mapped right before the module: the file starts there, holds the image up
+    to the end of data, and the rest of the image (.bss, key page) is the reservation's zero fill. */
+ if(m->patch_lead)need(m->patch_lead%0x4000==0&&m->patch_off==-(int64_t)m->patch_lead&&m->patch_size<=m->patch_lead&&
+                       m->file_size>m->patch_lead&&m->file_size-m->patch_lead<=m->key_off&&m->image_size==m->key_off+0x4000,"leading patch layout");
+ m->size=page_up(m->patch_lead?m->image_size:m->file_size)+(!strcmp(m->name,"main")?0x4000:0);
+ uint8_t *reserved=mmap(NULL,m->patch_lead+m->size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+ need(reserved!=MAP_FAILED,"map module");need(fread(reserved,1,m->file_size,f)==m->file_size,"read image");fclose(f);
+ m->base=reserved+m->patch_lead;
+ unsigned char digest[32];CC_SHA256(reserved,(CC_LONG)m->file_size,digest);char hex[65];
  for(unsigned i=0;i<32;i++)snprintf(hex+i*2,3,"%02x",digest[i]);
  need(!strcmp(hex,m->digest),"image SHA256 differs from verified rewrite");
- need(m->key_off%0x4000==0&&m->key_off+0x4000<=m->patch_off&&m->patch_off<m->size,"key and patch layout");
+ need(m->key_off%0x4000==0&&m->key_off+0x4000<=m->size&&(m->patch_lead||(m->key_off+0x4000<=(uint64_t)m->patch_off&&(uint64_t)m->patch_off<m->size)),"key and patch layout");
+ snprintf(patch_names[m-modules],sizeof patch_names[0],"%s.patch",m->name);
  uint64_t *key=(void *)(m->base+m->key_off);
  for(unsigned i=0;i<8;i++)key[i]=runtime_keys[i]*8;
  make_hash(m);
@@ -248,21 +266,22 @@ static void seal(Module *m) {
  need(mprotect(m->base,rx,PROT_READ|PROT_EXEC)==0,"text RX");
  if(ro_end>rx)need(mprotect(m->base+rx,ro_end-rx,PROT_READ)==0,"rodata R");
  need(mprotect(m->base+m->key_off,0x4000,PROT_READ)==0,"key page R");
- size_t patch_end=page_up(m->file_size);
- need(mprotect(m->base+m->patch_off,patch_end-m->patch_off,PROT_READ|PROT_EXEC)==0,"patch RX");
- sys_icache_invalidate(m->base,rx);sys_icache_invalidate(m->base+m->patch_off,patch_end-m->patch_off);
+ uint8_t *patch=m->base+m->patch_off,*patch_end=m->patch_lead?m->base:m->base+page_up(m->file_size);
+ need(mprotect(patch,patch_end-patch,PROT_READ|PROT_EXEC)==0,"patch RX");
+ sys_icache_invalidate(m->base,rx);sys_icache_invalidate(patch,patch_end-patch);
 }
 static void check_permissions(Module *m) {
- mach_vm_address_t a=(uintptr_t)m->base,end=a+m->size;
+ mach_vm_address_t a=(uintptr_t)m->base-m->patch_lead,end=(uintptr_t)m->base+m->size;
  while(a<end) {
   mach_vm_size_t size=0;vm_region_basic_info_data_64_t info;mach_msg_type_number_t count=VM_REGION_BASIC_INFO_COUNT_64;mach_port_t obj=0;
   mach_vm_address_t requested=a;
   need(mach_vm_region(mach_task_self(),&a,&size,VM_REGION_BASIC_INFO_64,(vm_region_info_t)&info,&count,&obj)==KERN_SUCCESS&&a==requested&&size>0,"mapped region query");
   if(obj)mach_port_deallocate(mach_task_self(),obj);
+  if(a<(uintptr_t)m->base){need(info.protection==(VM_PROT_READ|VM_PROT_EXECUTE),"module permission mismatch");a+=size;continue;}   /* leading patch area */
   uint64_t off=a-(uintptr_t)m->base;
-  vm_prot_t expected=off>=page_up(m->file_size)?(VM_PROT_READ|VM_PROT_WRITE):
-   (off<page_up(m->text_end)||off>=m->patch_off)?(VM_PROT_READ|VM_PROT_EXECUTE):
-   ((off>=page_up(m->text_end)&&off<(m->data_off&~0x3fffULL))||off==m->key_off)?VM_PROT_READ:(VM_PROT_READ|VM_PROT_WRITE);
+  vm_prot_t expected=off==m->key_off?VM_PROT_READ:off>=page_up(m->file_size-m->patch_lead)?(VM_PROT_READ|VM_PROT_WRITE):
+   (off<page_up(m->text_end)||(!m->patch_lead&&off>=(uint64_t)m->patch_off))?(VM_PROT_READ|VM_PROT_EXECUTE):
+   (off>=page_up(m->text_end)&&off<(m->data_off&~0x3fffULL))?VM_PROT_READ:(VM_PROT_READ|VM_PROT_WRITE);
   need(info.protection==expected,"module permission mismatch");a+=size;
  }
 }
@@ -323,9 +342,9 @@ static void crash(int num,siginfo_t *info,void *context) {
  signal_hex("[totk] signal=",num);signal_hex("fault=",(uintptr_t)info->si_addr);signal_hex("esr=",u->uc_mcontext->__es.__esr);
  {mach_vm_address_t ra=(uintptr_t)info->si_addr;mach_vm_size_t rs=0;vm_region_basic_info_data_64_t ri;mach_msg_type_number_t rc=VM_REGION_BASIC_INFO_COUNT_64;mach_port_t ro=0;
   if(mach_vm_region(mach_task_self(),&ra,&rs,VM_REGION_BASIC_INFO_64,(vm_region_info_t)&ri,&rc,&ro)==KERN_SUCCESS){signal_hex("region=",ra);signal_hex("region size=",rs);signal_hex("region prot=",(uint64_t)ri.protection|((uint64_t)ri.max_protection<<8));}}signal_hex("pc=",pc);signal_hex("lr=",u->uc_mcontext->__ss.__lr);signal_hex("fp=",fp);
- for(unsigned i=0;i<NM;i++)if(pc>=(uintptr_t)modules[i].base&&pc<(uintptr_t)modules[i].base+modules[i].size){write(2,modules[i].name,strlen(modules[i].name));signal_hex(" offset=",pc-(uintptr_t)modules[i].base);}
+ {uint64_t off;const char *name=module_at(pc,&off);if(name){write(2,name,strlen(name));signal_hex(" offset=",off);}}
  for(unsigned i=0;i<29;i++)signal_hex("x=",u->uc_mcontext->__ss.__x[i]);signal_hex("sp=",u->uc_mcontext->__ss.__sp);
- for(unsigned depth=0;depth<24&&fp&&!(fp&15);depth++){uint64_t frame[2];mach_vm_size_t got=0;if(mach_vm_read_overwrite(mach_task_self(),fp,16,(uintptr_t)frame,&got)!=KERN_SUCCESS||got!=16)break;signal_hex("frame lr=",frame[1]);for(unsigned i=0;i<NM;i++)if(frame[1]>=(uintptr_t)modules[i].base&&frame[1]<(uintptr_t)modules[i].base+modules[i].size){write(2,modules[i].name,strlen(modules[i].name));signal_hex(" offset=",frame[1]-(uintptr_t)modules[i].base);}if(frame[0]==fp)break;fp=frame[0];   /* host-stack switch: frames may move between stacks */}
+ for(unsigned depth=0;depth<24&&fp&&!(fp&15);depth++){uint64_t frame[2];mach_vm_size_t got=0;if(mach_vm_read_overwrite(mach_task_self(),fp,16,(uintptr_t)frame,&got)!=KERN_SUCCESS||got!=16)break;signal_hex("frame lr=",frame[1]);{uint64_t off;const char *name=module_at(frame[1],&off);if(name){write(2,name,strlen(name));signal_hex(" offset=",off);}}if(frame[0]==fp)break;fp=frame[0];   /* host-stack switch: frames may move between stacks */}
  /* TOTK_CRASH_MEM=<reg>[:<signed offset>[:<bytes>]]: dump words at register+offset; TOTK_CRASH_MEM_FOLLOW=k1,k2,...: for each
     listed word index, dump 0x100 bytes at that pointer and the ASCII of every readable pointer inside it (data-structure faults). */
  {const char *e=getenv("TOTK_CRASH_MEM");if(e){unsigned r=(unsigned)strtoul(e,NULL,0);const char *c=strchr(e,':');int64_t off=c?strtoll(c+1,NULL,0):0;const char *c2=c?strchr(c+1,':'):NULL;
@@ -386,11 +405,10 @@ static void probe(void) {
  puts("],\"scope\":\"cross-module calls; constructors and game entry not run\"}");
 }
 int runtime_module_offset(uint64_t pc,const char **name,uint64_t *off) {
- for(unsigned i=0;i<NM;i++)if(pc>=(uintptr_t)modules[i].base&&pc<(uintptr_t)modules[i].base+modules[i].size){*name=modules[i].name;*off=pc-(uintptr_t)modules[i].base;return 1;}
- return 0;
+ *name=module_at(pc,off);return *name!=NULL;
 }
 uintptr_t runtime_frame_controller_return_pc(void) {
- return 0; /* The graphics diagnostic reads TotK's frame controller; Bayonetta 3 has none. */
+ return 0; /* The graphics diagnostic reads TotK's frame controller; Metroid Dread has none. */
 }
 uint64_t runtime_image_bytes(void) { uint64_t total=0;for(unsigned i=0;i<NM;i++)total+=modules[i].key_off;return page_up(total); }
 static void loader_ready(void) { fprintf(stderr,"[totk] rtld callback: modules linked\n"); }

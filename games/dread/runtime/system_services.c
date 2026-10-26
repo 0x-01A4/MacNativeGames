@@ -1,4 +1,5 @@
-/* Horizon services Bayonetta 3 reaches that TotK never did, answered in-process over IPC (ipc.c). Command numbers and
+/* Horizon services Bayonetta 3 reached that TotK never did (carried into the Metroid Dread fork; which of them Dread uses
+   is found in stage 3), answered in-process over IPC (ipc.c). Command numbers and
    layouts follow the public switchbrew descriptions. Unknown commands still stop the runtime with their id. */
 #include "runtime.h"
 #include "ipc.h"
@@ -68,7 +69,7 @@ static void bsd_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     }
 }
 
-/* ---------- SDK functions answered by name (runtime_by3_override) ----------
+/* ---------- SDK functions answered by name (runtime_game_override) ----------
    Network-facing libraries answer as a Switch without a connection. The failure results are generic ones of each
    library's module (nifm 110, ssl 123, account 124), not a specific console error: the game only needs "unavailable". */
 #define RESULT(module, description) ((uint32_t)(module) | ((uint32_t)(description) << 9))
@@ -86,7 +87,7 @@ static int64_t network_clock_now(void) { return (int64_t)time(NULL); }   /* time
 static void environment_identifier(char *out) { if (!out) runtime_fail("nsd environment output"); memset(out, 0, 8); memcpy(out, "lp1", 3); }
 static void execute_program(int index, const void *param, uint64_t size) {
     (void)param; fprintf(stderr, "[totk] nn::oe::ExecuteProgram(%d, %llu bytes)\n", index, (unsigned long long)size);
-    runtime_fail("the game asked to start its program index 1 (title 01004A4010FEA001), which is not supported yet");
+    runtime_fail("the game asked to start another program of its title, which is not supported");
 }
 /* Open users kept across a program jump (PushOpenUsers before ExecuteProgram, PopOpenUsers in the next program). A
    fresh start has none; the game then opens its user the usual way (runtime/account.c). */
@@ -94,7 +95,7 @@ static void push_open_users(void) {}
 static uint32_t pop_open_users(int32_t *count, void *handles, int32_t max) {
     (void)handles; (void)max; if (!count) runtime_fail("PopOpenUsers count pointer"); *count = 0; return 0;
 }
-void *runtime_by3_override(const char *name) {
+void *runtime_game_override(const char *name) {
     static const struct { const char *name; void *fn; } entries[] = {
         {"_ZN2nn2oe13MuteRecordingEv", nop}, {"_ZN2nn2oe15UnmuteRecordingEv", nop},
         {"_ZN2nn2oe15EnableRecordingEv", nop}, {"_ZN2nn2oe16DisableRecordingEv", nop},
@@ -125,7 +126,8 @@ void *runtime_by3_override(const char *name) {
 }
 
 __attribute__((constructor)) static void register_system_services(void) {
-    /* Bayonetta 3 makes one 1348 MiB NVN memory pool at start; the shared graphics layer refuses zero-copy GPU buffers
+    /* The defaults below are Bayonetta 3's, kept until Metroid Dread's own needs are measured (stage 3).
+       Bayonetta 3 makes one 1348 MiB NVN memory pool at start; the shared graphics layer refuses zero-copy GPU buffers
        above 1 GiB unless told otherwise (nvn_mtl.m pool_buffer_max). A value the user set wins. */
     setenv("DM_POOL_BUFFER_MAX_MIB", "2048", 0);
     /* Present pacing as on the Switch: a 60 Hz base, the game's present interval on top (1 = 60 fps, 2 = 30 fps). The
