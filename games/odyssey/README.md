@@ -106,6 +106,25 @@ translated into Metal libraries ahead of time; then run the build command again 
   start in a window, or `no-metalfx` to turn off MetalFX upscaling.
 - The app is built from your own game files: do not share it.
 
+### The settings window
+
+| Setting | Choices | What it does |
+|---|---|---|
+| Resolution (render size) | 1600 × 900 (the game's own) / 1920 × 1080 / 2240 × 1260 | How many pixels the game draws: sharper and the best edge smoothing higher up, at the most GPU time |
+| Anti-aliasing | Off / FXAA / SMAA | Smooths jagged edges before the upscale; SMAA looks better, FXAA is nearly free |
+| Upscaler | MetalFX / FSR 1 / Lanczos / Bilinear | How the picture is enlarged to the screen; bilinear is the cheapest and softest |
+| Texture filtering | Game default / 4× / 8× / 16× anisotropic | Keeps floors and walls sharp at an angle |
+| Sharpen the picture (CAS) | on / off | Counters softness from upscaling and 60+60 |
+| Frame rate | 60 fps / 60+60 frame generation | 60+60 adds a generated picture between game frames on a 120 Hz screen |
+| Display | Full screen / Window | How the game starts |
+| Session limit | 20 / 60 / 90 / 120 minutes / No limit | Closes the game after this time (it saves first) |
+| Controller A / B / X / Y | By label / By position | "By position" makes an Xbox-style layout match the printed letters on a Nintendo controller |
+
+Return plays, Esc quits. Everything is kept in `Odyssey Data`: `graphics.txt` (`aa`, `cas`, `upscaler`, `textures`,
+`resolution`, `frame_generation`, `launcher`, one `name=value` per line), `windowed`, `session-minutes.txt` and
+`face-buttons.txt`; editing them by hand works too. If the game stutters, watch the GPU line in the overlay and try, in
+order: resolution back to 1600 × 900, sharpening off, FSR 1 instead of MetalFX.
+
 ### Graphics keys
 
 The settings window's choices are kept in `Odyssey Data/graphics.txt`; in game the number keys change them, and the
