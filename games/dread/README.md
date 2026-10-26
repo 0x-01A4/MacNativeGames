@@ -1,82 +1,70 @@
-# Bayonetta 3 (work in progress)
+# Metroid Dread (work in progress)
 
-An experiment: run Bayonetta 3 natively the way `games/totk` runs Tears of the Kingdom. It started from that code
-(rewriter, loader, Horizon host, NVN on Metal) and keeps its own copies of all of it in this folder (`runtime/`,
+An experiment: run Metroid Dread natively the way `games/totk` runs Tears of the Kingdom. It is a fork of
+`games/by3` (itself forked from `games/totk`) and keeps its own copies of everything in this folder (`runtime/`,
 `third_party/d2r`, `third_party/d2r_gfx`, `prebuilt/`, `scripts/`), so changes here never affect another game and
-nothing here reads `games/totk`. **It is playable**: title, menus and the story run with picture,
-sound, keyboard input and saves, from a small app with a settings window. Known gaps are listed in CHANGELOG.md.
+nothing here reads another game's folder. **It is not playable yet**: the code is rewritten and verified, the loader
+maps it, and the game reaches its own `nnMain`. What was done and found: [CHANGELOG.md](CHANGELOG.md).
 
-How the work was done, what was found and what went wrong on the way: [CHANGELOG.md](CHANGELOG.md).
-
-You must own the game: use your own NSPs and the `prod.keys` dumped from your own Switch. Nothing from the game is in
-this repository; `BY3_build/` (the work folder) and `mods/` are ignored by git.
+You must own the game: use your own dump and the `prod.keys` dumped from your own Switch. Nothing from the game is in
+this repository; `Dread_build/` (the work folder) and `mods/` are ignored by git. `build_app.py` and the Builder do not
+offer this game yet (there is no `game.json` until there is an app).
 
 ## Inputs
 
-- Base `01004A4010FEA000` (v65536) and update 1.2.0 `01004A4010FEA800` (v131072), both NSP.
-- The base Program NCA is **sparse**: its ExeFS is empty and the RomFS parts the update replaces are not stored.
-  The code always comes from the update, and the pinned hactool cannot read the base RomFS.
+- Base game `010093801237C000` 1.0.0 (v0), as the card image (XCI) or NSP. Updates are not supported yet.
+- `assets/expected-v1.0.0.json` pins the Program NCA, every ExeFS file, the RomFS image and the rewritten modules.
 
-## Build and play
+## Stage 1 and the loader probe
 
-In one command, from the top of the repository (or with the Builder, `ui/README.md`):
-
-```sh
-python3.14 build_app.py "<base>.nsp" --update "<update>.nsp" -k prod.keys [--firmware <firmware folder>]
-```
-
-`build_app.py` hands a Bayonetta 3 NSP to `games/by3/build.py`, which runs the steps below in `BY3_build/` next to the
-base NSP (reused by the next run), checks each against `assets/expected-v1.2.0.json`, and writes `Bayonetta 3.app` next
-to it. By hand, from `games/by3`, with a Python environment made from `requirements.txt` in this folder (`PY=<that python>`):
+From `games/dread`, with Python 3.14 and the packages of `requirements.txt`; the work folder is `../Dread_build`, next
+to the card image in `games/`:
 
 ```sh
-python scripts/extract_code.py "<update>.nsp" --keys prod.keys --output BY3_build/extracted/v120/exefs
-python scripts/merge_romfs.py "<base>.nsp" "<update>.nsp" --keys prod.keys --output BY3_build/extracted/v120/romfs
+cd scripts
+python3.14 extract_exefs.py "<game>.xci" --keys prod.keys --output ../../Dread_build/extracted/v100/exefs
+python3.14 extract_romfs.py --keys prod.keys --manifest ../../Dread_build/extracted/v100/extraction-manifest.json \
+  --output ../../Dread_build/extracted/v100/romfs
+cd ..
 for m in sdk subsdk0 main; do
-  DM_RULESET=native DM_PRIVATE_GATES=0 $PY third_party/d2r/patch_nso.py BY3_build/extracted/v120/exefs/$m BY3_build/rewritten/v120 $m
+  DM_RULESET=native DM_PRIVATE_GATES=0 python3.14 third_party/d2r/patch_nso.py \
+    ../Dread_build/extracted/v100/exefs/$m ../Dread_build/rewritten/v100 $m
 done
-$PY scripts/prepare_modules.py BY3_build/extracted/v120/exefs --output BY3_build/extracted/v120/elf
-make prepare patches mods app PY=$PY GAME="<update>.nsp" KEYS=prod.keys
-open "Bayonetta 3.app"
+make prepare probe PY=python3.14
 ```
 
-Optional mods go in `mods/`: exefs patches as `mods/1.2.0/<name>/exefs/*.pchtxt`, RomFS mods as `mods/<name>/romfs/`.
-The app keeps running the game from `BY3_build`; do not move or delete it.
-
-## Stage 1 (done)
-
-From `games/by3`, with the Python environment of `requirements.txt`:
+Checks of the rewrite (developer tools: LLVM for `structck.py`, `brew install llvm`, then
+`LLVM_BIN=/opt/homebrew/opt/llvm/bin`; unicorn for `equiv.py`, `games/totk/requirements-dev.txt`):
 
 ```sh
-python scripts/extract_code.py "<update>.nsp" --keys prod.keys --output BY3_build/extracted/v120/exefs
-python scripts/merge_romfs.py "<base>.nsp" "<update>.nsp" --keys prod.keys --output BY3_build/extracted/v120/romfs
-for m in sdk subsdk0 main; do
-  DM_RULESET=native DM_PRIVATE_GATES=0 python third_party/d2r/patch_nso.py BY3_build/extracted/v120/exefs/$m BY3_build/rewritten/v120 $m
-done
+python3.14 third_party/d2r/structck.py ../Dread_build/rewritten/v100 main ../Dread_build/extracted/v100/exefs/main
+python3.14 third_party/d2r/equiv.py ../Dread_build/rewritten/v100 main ../Dread_build/extracted/v100/exefs/main
 ```
-
-`assets/expected-v1.2.0.json` pins every resulting hash.
 
 | Check | Result |
 |---|---|
 | ExeFS (main, sdk, subsdk0, rtld, main.npdm) | FS header, hash table and every block verified |
-| Merged RomFS (sparse base + BKTR update) | all six IVFC levels: 918,430 / 918,430 data blocks; 552 files, 15.0 GB; one flipped byte is caught |
+| RomFS | all six IVFC levels: 268,575 data blocks; 9,654 files, 4.4 GB; one flipped byte is caught |
 | Rewrite structure (`structck.py`) | OK for all three modules, 0 violations |
-| Rewrite semantics (`equiv.py`, emulator, random states) | 36,627 sites, 0 divergent; all 600 mutation controls caught |
+| Rewrite semantics (`equiv.py`, emulator, random states) | main 1,085, sdk 11,975, subsdk0 10,486 sites, 0 divergent |
+| Loader (`make probe`) | three modules mapped and sealed, 4,000 cross-module calls on 4 threads; a tampered image is refused |
 
-The rewrite needed one new block kind: `main` sets `sp` from x18 for a variable-length stack array
-(`mov sp, x18` at `0x12874f4`). `site_spset` in `patch_nso.py` keeps the old sp in a scratch register and restores the
-scratch pair from it; `structck.py` accepts that one restore form only when the register is an untouched copy of the
-entry sp. The TotK rewrites never contain such a site, so their output bytes do not change.
+## The leading patch area
+
+`main` has a 1.8 GiB `.bss`. The rewriter normally puts its patch area after the whole image, which here is about
+1.9 GB past the code, out of reach of a branch (±128 MiB). For such a module `patch_nso.py` puts the patch area
+4 MiB before the module instead (`PATCH_LEAD` in `fixups.tsv`), and the loader maps it there. Smaller modules (sdk,
+subsdk0 here, every module of the other games) keep the old layout and byte-identical output.
 
 ## What the game uses
 
-- NVN (SDK 13.3.2). Of the 533 NVN names it loads, 419 are implemented here and 5 are intentional no-ops; most of the
-  rest are getters. Unimplemented ones abort with their name when called.
-- Wwise audio (through `audren:u` / `audout:u`), Nintendo's online SDK (NPLN: needs offline answers for `nifm`,
-  sockets, `ssl`, `friends`, `bcat`), movies as WebM (478 files), data in Platinum `.pkz` archives.
+- NVN (SDK 11.4.3): 524 names loaded, 523 in the graphics layer's table, 424 implemented (417 + 7 no-ops). Unimplemented
+  ones abort with their name when called.
+- NintendoWare Atk audio through `nn::audio`, Nintendo's movie library with WebM movies (the title screen is one),
+  Lua 5.1 scripts, data in `packs/*.pkg`.
 
 ## Next
 
-Stage 2: a runtime target with every TotK-specific patch, address and overlay compiled out, booting to `nnMain`.
-Stage 3: follow each unknown service, command or NVN call it aborts on until the first `nvnQueuePresentTexture`.
+Stage 3: follow each unknown service, command or NVN call it aborts on (first: `fsp-srv` over IPC) until the first
+`nvnQueuePresentTexture`. The launcher (`app/`) and `make app` are carried over from Bayonetta 3 with renamed
+identifiers and are not built yet; its presets still name Bayonetta's patches.
