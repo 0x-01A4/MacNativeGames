@@ -34,6 +34,24 @@ class ButtonGuideTextures(unittest.TestCase):
         self.assertEqual(at(1, 1), 0)        # the margin stays empty
         self.assertEqual(at(6, 65), 255)     # rows run top down: the bottom-left corner is filled too
 
+    def test_hud_textures_of_any_square_size(self):
+        # 1.2.1 stores the eight Nt_KeyTex* as 72x72, 1.4.3 as 108x108: a minimal BNTX with each BRTI header the tool reads
+        import struct
+        for size in (72, 108):
+            blob, data_at = bytearray(), {}
+            for name in self.icons.HUD_TEXTURES:
+                i = len(blob); blob += b'BRTI' + bytes(0x100 - 4)
+                struct.pack_into('<H', blob, i + 0x16, 1); struct.pack_into('<I', blob, i + 0x1C, self.icons.R8_UNORM)
+                struct.pack_into('<II', blob, i + 0x24, size, size); struct.pack_into('<I', blob, i + 0x34, 3)   # 8-GOB blocks
+                n = len(blob); blob += struct.pack('<H', len(name)) + name.encode() + bytes(6); struct.pack_into('<Q', blob, i + 0x60, n)
+                p = len(blob); blob += bytes(8); struct.pack_into('<Q', blob, i + 0x70, p); data_at[name] = p
+            for name, p in data_at.items():
+                struct.pack_into('<Q', blob, p, len(blob)); blob += bytes(((size + 63) // 64) * 512 * 8 * ((size + 63) // 64))
+            square = lambda pen: self.icons.polygon(pen, [(0, 0), (100, 0), (100, 100), (0, 100)])
+            out = self.icons.redraw_hud(bytes(blob), {cp: (100, square) for cp in self.icons.HUD_TEXTURES.values()})
+            centre = struct.unpack_from('<Q', out, next(iter(data_at.values())))[0] + self.icons.gob_offset(size // 2, size // 2, (size + 63) // 64, 8)
+            self.assertEqual(out[centre], 255, size)
+
 
 if __name__ == '__main__':
     unittest.main()

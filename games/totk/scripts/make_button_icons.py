@@ -390,7 +390,7 @@ STYLES = {'keyboard': keyboard_style, 'azerty': lambda g: keyboard_style(g, AZER
 
 # ---- the HUD's button guide: images, not glyphs ----
 # The button guide in play (bottom right) draws its keys from textures of the common layout archive, not from the font:
-# 72x72 R8_UNORM masks (white key, black letter), block-linear, one mip, in timg/__Combined.bntx. Each is redrawn from the
+# Square R8_UNORM masks (white key, black letter; 72x72 up to 1.2.1, 108x108 in 1.4.3), block-linear, one mip, in timg/__Combined.bntx. Each is redrawn from the
 # style's icon for the same Switch button, fitted into the same square, and written back in place: the BNTX keeps its size.
 LAYOUT_PREFIX, BNTX = 'UI/LayoutArchive/Common.', 'timg/__Combined.bntx'
 HUD_TEXTURES = {'Nt_KeyTexA_00': 0xE040, 'Nt_KeyTexB_00': 0xE041, 'Nt_KeyTexX_00': 0xE042, 'Nt_KeyTexY_00': 0xE043,
@@ -467,7 +467,7 @@ def redraw_hud(bntx, icons):
             continue
         mips, fmt, (w, h), layout = (struct.unpack_from('<H', bntx, i + 0x16)[0], struct.unpack_from('<I', bntx, i + 0x1C)[0],
                                      struct.unpack_from('<II', bntx, i + 0x24), struct.unpack_from('<I', bntx, i + 0x34)[0])
-        assert (fmt, w, h, mips) == (R8_UNORM, 72, 72, 1), f'{name}: format {fmt:#x}, {w}x{h}, {mips} mips'
+        assert fmt == R8_UNORM and w == h and mips == 1, f'{name}: format {fmt:#x}, {w}x{h}, {mips} mips'   # 72x72 to 1.2.1, 108x108 in 1.4.3
         data = struct.unpack_from('<Q', bntx, struct.unpack_from('<Q', bntx, i + 0x70)[0])[0]
         mask = rasterize(icons[HUD_TEXTURES[name]][1], w)
         for y in range(h):
