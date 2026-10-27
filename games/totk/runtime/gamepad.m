@@ -42,8 +42,8 @@ static int toggleOn[CONTROLLER_BUTTONS];        /* for toggle */
 static int toggleMoved[CONTROLLER_BUTTONS];     /* the stick moved since the toggle went on */
 static __weak GCController *rawLeftController, *rawRightController;
 static SwitchLeftFallback rawLeft, rawRight;
-static uint64_t gamepadRawLeftAt;
-static int32_t gamepadNativeLx, gamepadNativeLy;
+static uint64_t gamepadRawLeftAt, gamepadRawRightAt;
+static int32_t gamepadNativeLx, gamepadNativeLy, gamepadNativeRx, gamepadNativeRy;   /* the sticks as GameController reads them */
 static void refresh_gamepads(void);
 
 /* Called on the main run loop by the already-open Switch HID motion stream. */
@@ -455,8 +455,8 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 static void refresh_gamepads(void) {
     RuntimeGamepadState next = {0};
     uint64_t physical = (uint64_t)mouseButtons << CONTROLLER_MOUSE_FIRST;
-    int32_t nativeLx = 0, nativeLy = 0;
-    uint64_t rawAt = 0;
+    int32_t nativeLx = 0, nativeLy = 0, nativeRx = 0, nativeRy = 0;
+    uint64_t rawAt = 0, rawRightAt = 0;
     for (GCController *controller in GCController.controllers) {
         GCExtendedGamepad *pad = controller.extendedGamepad;
         if (!pad) continue;
@@ -475,10 +475,13 @@ static void refresh_gamepads(void) {
         next.lx = stronger_axis(next.lx, stick_axis(lx));
         next.ly = stronger_axis(next.ly, stick_axis(ly));
         float rx = pad.rightThumbstick.xAxis.value, ry = pad.rightThumbstick.yAxis.value;
+        nativeRx = stronger_axis(nativeRx, stick_axis(rx));
+        nativeRy = stronger_axis(nativeRy, stick_axis(ry));
         int rightWasActive = rawRight.active;
         float rawRX, rawRY;
         if (controller == rawRightController && switch_left_get(&rawRight, rx, ry, runtime_now_ns(), &rawRX, &rawRY)) {
             rx = rawRX; ry = rawRY;
+            rawRightAt = rawRight.at;
             if (!rightWasActive) fprintf(stderr, "[totk-input] Switch right stick: native axes stuck at zero; using live HID input\n");
         }
         next.rx = stronger_axis(next.rx, stick_axis(rx));
@@ -533,8 +536,8 @@ static void refresh_gamepads(void) {
     textPad = next; textPad.buttons = physical & 0x1ffffu;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
     gamepadState = next;
-    gamepadRawLeftAt = rawAt;
-    gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy;
+    gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
+    gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
 }
 
@@ -611,7 +614,7 @@ void runtime_gamepad_clear(void) {
     memset(toggleMoved, 0, sizeof toggleMoved);
     pthread_mutex_lock(&gamepadLock);
     gamepadState = (RuntimeGamepadState){0};
-    gamepadRawLeftAt = 0;
+    gamepadRawLeftAt = 0; gamepadRawRightAt = 0;
     gamepadNativeLx = gamepadNativeLy = 0;
     pressedEdges = 0; textEdges = 0; textPad = (RuntimeGamepadState){0};
     settingsShortcutDown = settingsShortcutPending = 0;
@@ -665,6 +668,9 @@ static RuntimeGamepadState text_state_locked(void) {
     if (gamepadRawLeftAt && runtime_now_ns() - gamepadRawLeftAt > 250000000ULL) {
         state.lx = gamepadNativeLx; state.ly = gamepadNativeLy;
     }
+    if (gamepadRawRightAt && runtime_now_ns() - gamepadRawRightAt > 250000000ULL) {   /* the right stick's HID fallback too (after PR #844) */
+        state.rx = gamepadNativeRx; state.ry = gamepadNativeRy;
+    }
     return state;
 }
 void runtime_gamepad_text_read(RuntimeGamepadState *out) {
@@ -677,6 +683,9 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     *out = gamepadState;
     if (gamepadRawLeftAt && runtime_now_ns() - gamepadRawLeftAt > 250000000ULL) {
         out->lx = gamepadNativeLx; out->ly = gamepadNativeLy;
+    }
+    if (gamepadRawRightAt && runtime_now_ns() - gamepadRawRightAt > 250000000ULL) {   /* the HID reports stopped: GameController's right stick */
+        out->rx = gamepadNativeRx; out->ry = gamepadNativeRy;
     }
     out->buttons |= touchState.buttons | pressedEdges;
     out->lx = stronger_axis(out->lx, touchState.lx); out->ly = stronger_axis(out->ly, touchState.ly);
