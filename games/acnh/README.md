@@ -8,7 +8,7 @@ The project delivers a fully runnable native host (`acnh-native`), an offline Me
 | Component | Status | Details |
 |---|---|---|
 | **Base/Update Verification** | Verified | Title `01006F8002326000`, CNMT versions 0 and 458752; hash chains verified |
-| **Instruction Rewriter** | Verified | `rtld`, `main`, `subsdk0`, `sdk`; zero game-specific cuts, parameter patches or observation gates |
+| **Instruction Rewriter** | Verified | `rtld`, `main`, `subsdk0`, `sdk`; no game-specific cuts, parameter patches or observation gates in the rewriter. The runtime patches two places of `main`, each instruction checked first: one thread at a time rebuilds a graphics context's dirty list (`acnh_ctx_lock.c`, `ACNH_CTX_LOCK=0` turns it off) and null guards for ui2d's LocationAdjuster (`acnh_ui_patch.c`, `ACNH_UI_PATCH=0`) |
 | **Static Loader Preflight** | Verified | 367,682 relocations across `main`, `subsdk0`, `sdk`; 129 host gates |
 | **Update RomFS** | Verified | All six IVFC levels passed; 6,817,228,144 bytes and 69,268 files |
 | **System Services HLE** | Verified | Stubs for `nn::friends`, `nn::bcat`, `nn::ldn`, `nn::nfp`, `nn::oe`, `nn::hid` touch screens & controller input |
