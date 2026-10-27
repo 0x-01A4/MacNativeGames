@@ -79,7 +79,7 @@ While `BUILDER_SCRIPT` is set, a yellow "Test mode" strip says so and no app is 
 
 - In its preferences (`org.macnativegames.builder`): the checkout folder, and the location of `prod.keys` only if you
   turn on "Remember this location". The keys themselves are never copied or read.
-- Nothing else. The work folder (`TOTK_build/`, `BotW_build/` or `BY3_build/` next to the game file;
+- Nothing else. The work folder (`TOTK_build/`, `BotW_build/`, `BY3_build/` or `Dread_build/` next to the game file;
   `games/odyssey/Odyssey_build/` for Super Mario Odyssey) is the build script's, and it is reused by the next build, which is how a cancelled build resumes.
 - "Copy Full Log" copies the build's messages, which include the paths of your files but no key material.
 
@@ -119,7 +119,7 @@ The versions in the error text come from `versions`, or else the `display_versio
 
 ## The `build_app.py` contract (event schema 2)
 
-Every build script (`build_app.py`, `games/by3/build.py`) takes the game file first, then `-k <prod.keys>`, `--update`, `--firmware`/`--shared-fonts`, `-o`, `--platform`, `--inspect` and `--json-progress`, and
+Every build script (`build_app.py`, `games/by3/build.py`, `games/odyssey/build.py`, `games/dread/build.py`) takes the game file first, then `-k <prod.keys>`, `--update`, `--firmware`/`--shared-fonts`, `-o`, `--platform`, `--inspect` and `--json-progress`, and
 refuses an option its game doesn't take with an `input` or `platform` error. With `--json-progress`, `build_app.py` writes one JSON object per line on stdout instead of its text, and its error text
 still goes to stderr. Each object has `type` and `time` (Unix seconds):
 
