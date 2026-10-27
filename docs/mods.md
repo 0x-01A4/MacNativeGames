@@ -126,6 +126,19 @@ carries on, its code half is in the app, and its data half takes effect once the
 (`--install-mod-romfs`, or by hand). With `--update` the patch is merged into the updated module, which is the one
 the app runs.
 
+### Code patches at launch (`TOTK_PCHTXT`, Mac)
+
+A main `.pchtxt` can also be applied when the game starts, without a build:
+
+```bash
+open --env TOTK_PCHTXT="/path/to/mods.pchtxt" "/path/to/Tears of the Kingdom.app"
+```
+
+It is read the way `--mod` reads it, and its `@nsobid` must match main's build ID, which a built app keeps in
+`extracted/<version>/exefs/main.build-id`. The rewriter doesn't see these bytes, so a patch that makes system calls,
+uses the thread-pointer or counter registers, or uses x18 still needs a build with `--mod`. A line on a site the app
+patches itself stops the start.
+
 <a id="data"></a>
 ### The mod's RomFS files: `--install-mod-romfs`
 
@@ -498,6 +511,18 @@ App 没有模块加载器：启动时它映射的是构建时的那三个代码�
 就是没有代码要合并，没有 `romfs/` 时构建不会碰版本目录。`exefs/` 里没有可合并进 main 的东西（只有
 `subsdk9`、只有 `main.npdm`，甚至空的 `exefs/`）只算提示、不算失败：构建照常往下走，只是这个 mod 只生效数据
 那一半。带 `--update` 时补丁合并进更新后的模块，也就是 App 实际运行的那个。
+
+### 启动时的代码补丁（`TOTK_PCHTXT`，Mac）
+
+main 的 `.pchtxt` 也可以在游戏启动时应用，无需重新构建：
+
+```bash
+open --env TOTK_PCHTXT="/path/to/mods.pchtxt" "/path/to/Tears of the Kingdom.app"
+```
+
+读法与 `--mod` 相同，`@nsobid` 必须与 main 的构建 ID 一致；构建好的 App 把它存放在 `extracted/<版本>/exefs/main.build-id`。
+改写器看不到这些字节，所以含系统调用、使用线程指针或计数器寄存器、或使用 x18 的补丁仍需在构建时用 `--mod`。补丁行落在 App
+自己修改的位置时启动会停止。
 
 <a id="data-zh"></a>
 ### 模组的 RomFS 文件：`--install-mod-romfs`

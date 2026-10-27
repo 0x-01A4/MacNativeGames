@@ -512,9 +512,16 @@ static void patch_pchtxt(Module *m) {
     char nso[256], want[41] = {0}; uint8_t id[20];
     snprintf(nso, sizeof nso, "extracted/%s/exefs/main", TOTK_GAME_DIR);
     FILE *n = fopen(nso, "rb");
-    if (!n || fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
-    fclose(n);
-    for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    if (n) {
+        if (fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
+        fclose(n);
+        for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    } else {
+        snprintf(nso, sizeof nso, "extracted/%s/exefs/main.build-id", TOTK_GAME_DIR);
+        FILE *b = fopen(nso, "r");
+        if (!b || fscanf(b, "%40[0-9A-Fa-f]", want) != 1 || strlen(want) != 40) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main or main.build-id");
+        fclose(b);
+    }
     char line[1024]; int enabled = 0, matched = 0, shifted = 0; unsigned count = 0, bytes = 0;
     while (fgets(line, sizeof line, f)) {
         if (!strncmp(line, "@nsobid-", 8)) {
