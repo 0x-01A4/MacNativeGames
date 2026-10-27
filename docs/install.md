@@ -34,6 +34,8 @@ xcode-select --install
 brew install opus libvpx python@3.14
 ```
 
+Or run `make` in the repository folder: it checks these, asks before installing what is missing, and opens the [Builder](../ui/README.md).
+
 Alternatively, use [uv](https://docs.astral.sh/uv/) to provide Python 3.14. Install the native dependencies with `brew install opus libvpx`, then use `uv run --python 3.14 build_app.py` in place of `python3.14 build_app.py` in the commands below. For example, from the repository folder:
 
 ```sh

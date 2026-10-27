@@ -233,8 +233,9 @@ extension View {
 }
 
 /// A file or folder chosen with an open panel; the Builder is not sandboxed, so the path is all it keeps.
-func choose(_ types: [UTType], folder: Bool = false, message: String) -> URL? {
+func choose(_ types: [UTType], folder: Bool = false, in directory: URL? = nil, message: String) -> URL? {
     let panel = NSOpenPanel()
+    panel.directoryURL = directory
     panel.canChooseFiles = !folder
     panel.canChooseDirectories = folder
     panel.allowsMultipleSelection = false
@@ -286,15 +287,13 @@ struct KeysPage: View {
             SetupStatus()
             Form {
                 FileRow(label: "prod.keys", url: wizard.keys, placeholder: "not chosen") {
-                    if let url = choose([.data], message: String(localized: "Choose your prod.keys")) { wizard.setKeys(url) }
-                }
-                if let moved = wizard.keysMoved {
-                    Text("The remembered prod.keys is no longer at \(moved). Choose it where it is now.")
-                        .foregroundStyle(.orange).wrapping()
+                    if let url = choose([.data], in: wizard.keysFolder, message: String(localized: "Choose your prod.keys")) {
+                        wizard.setKeys(url)
+                    }
                 }
                 Toggle("Remember this location", isOn: $wizard.rememberKeys)
                     .onChange(of: wizard.rememberKeys) { wizard.saveKeysChoice() }
-                    .help("Only the path is kept, in this app's preferences; the keys themselves are never copied or read by the Builder.")
+                    .help("Choose… opens in this folder next time. Only the path is kept, in this app's preferences; the keys themselves are never copied or read by the Builder.")
             }
             .formStyle(.grouped)
             .dropDestination(for: URL.self) { urls, _ in
@@ -520,7 +519,8 @@ struct TargetPage: View {
                 }
                 LabeledContent("Save as") {
                     HStack {
-                        Text(wizard.out?.path ?? "").lineLimit(1).truncationMode(.middle).help(wizard.out?.path ?? "")
+                        Text(wizard.out?.path ?? String(localized: "not chosen")).lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(wizard.out == nil ? .secondary : .primary).help(wizard.out?.path ?? "")
                         Spacer()
                         Button("Change…") {
                             let panel = NSSavePanel()

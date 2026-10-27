@@ -40,7 +40,7 @@ final class Wizard {
     var preflight: Preflight
     var keys: URL?
     var rememberKeys: Bool
-    var keysMoved: String?   // the remembered prod.keys location, when nothing is there any more
+    var keysFolder: URL?     // where the remembered prod.keys was: the keys chooser opens there
     var game: URL?
     var update: URL?
     var fonts: URL?
@@ -52,7 +52,7 @@ final class Wizard {
     var inspectFailure: Outcome?
     var inspecting = false
     var out: URL?
-    var platform = "macos" { didSet { if platform != oldValue { matchOutToPlatform() } } }
+    var platform = "" { didSet { if platform != oldValue { matchOutToPlatform() } } }
     var dlc: [URL] = []      // when inspect says the game takes them: up to two add-on content packs
     var mod: URL?             // when inspect says the game takes one: a folder with exefs/ and/or romfs/ (docs/mods.md)
     var installModRomfs = false
@@ -75,11 +75,10 @@ final class Wizard {
     init() {
         let defaults = UserDefaults.standard
         preflight = Preflight.check(repo: Preflight.findRepo(chosen: defaults.string(forKey: Defaults.repo)))
+        // nothing is chosen for the player: the remembered location only opens the keys chooser in its folder
         let saved = defaults.string(forKey: Defaults.keys)
         rememberKeys = saved != nil
-        if let saved {
-            if FileManager.default.fileExists(atPath: saved) { keys = URL(fileURLWithPath: saved) } else { keysMoved = saved }
-        }
+        keysFolder = saved.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
     }
 
     // MARK: setup
@@ -98,7 +97,7 @@ final class Wizard {
 
     func setKeys(_ url: URL) {
         keys = url
-        keysMoved = nil
+        keysFolder = url.deletingLastPathComponent()
         saveKeysChoice()
     }
 
@@ -134,7 +133,7 @@ final class Wizard {
     /// What belongs to one game file: the file, what --inspect named in it, and the choices made for it. The keys and
     /// the fonts folder stay, since another game can use them too.
     private func clearChoices() {
-        platform = "macos"   // first: its didSet would make an output from the old report's default
+        platform = ""   // nothing chosen until the player picks, or inspect finds only one platform
         game = nil
         identified = nil
         fontsNeeded = nil
@@ -153,6 +152,7 @@ final class Wizard {
                                       isMod: Self.isMod,
                                       size: { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
         guard d != Dropped() else { return false }
+        if let k = d.keys { setKeys(k) }   // before the --inspect below, which reads the game with them
         if let g = d.game { choose(game: g) }
         if let u = d.update { update = u }
         if let f = d.fonts { fonts = f }
@@ -212,7 +212,7 @@ final class Wizard {
     var platforms: [String] { report?.platforms ?? ["macos"] }
 
     /// An iPhone / iPad or Vision Pro build: an IPA made with ios/tools/build_ipa.py, with no mod folder.
-    var isDevice: Bool { platform != "macos" }
+    var isDevice: Bool { !platform.isEmpty && platform != "macos" }
 
     static func platformName(_ platform: String) -> String {
         switch platform {
@@ -223,9 +223,9 @@ final class Wizard {
         }
     }
 
-    /// .app for the Mac, .ipa for iPhone/iPad, in the same folder and with the same name.
+    /// .app for the Mac, .ipa for iPhone/iPad, in the same folder and with the same name, once the player chose one.
     private func matchOutToPlatform() {
-        guard let current = out ?? report?.defaultOut.map({ URL(fileURLWithPath: $0) }) else { return }
+        guard let current = out else { return }
         out = current.deletingPathExtension().appendingPathExtension(isDevice ? "ipa" : "app")
         if isDevice { installModRomfs = false }
     }
@@ -248,7 +248,7 @@ final class Wizard {
         switch step {
         case .keys: ready && keys != nil
         case .game: report != nil && !inspecting && fontsSatisfied && (report?.needsUpdate != true || update != nil)
-        case .target: out.map(Disk.canWrite) == true && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
+        case .target: !platform.isEmpty && out.map(Disk.canWrite) == true && (!isDevice || preflight.iosMissing.isEmpty) && gameMissing.isEmpty
         case .build, .result: false
         }
     }
@@ -293,11 +293,11 @@ final class Wizard {
                 self.report = event
                 self.identified = event.game
                 self.fontsNeeded = event.needsFonts
-                if !(event.platforms ?? ["macos"]).contains(self.platform) { self.platform = "macos" }
-                if self.out == nil, let path = event.defaultOut {
-                    let url = URL(fileURLWithPath: path)
-                    self.out = self.isDevice ? url.deletingPathExtension().appendingPathExtension("ipa") : url
-                }
+                // no default output or platform: the player picks them on the Output page. A game that builds for
+                // one platform only has nothing to pick.
+                let platforms = event.platforms ?? ["macos"]
+                if platforms.count == 1 { self.platform = platforms[0] }
+                else if !platforms.contains(self.platform) { self.platform = "" }
             case "error": self.inspectFailure = .failed(code: event.code, message: event.message ?? "", log: event.log)
             default: break
             }
@@ -480,7 +480,7 @@ final class Wizard {
     }
 
     /// The wizard filled in with what `app` was built from (its build-info.json), writing over the same app. The keys
-    /// are never in it: the remembered location is used, or the Keys page asks.
+    /// are never in it: the ones chosen in this session are used, or the Keys page asks.
     func rebuild(_ app: BuiltApp) {
         guard let info = app.info, let gamePath = info.inputs.game else { return }
         let path = { (p: String?) in p.map { URL(fileURLWithPath: $0) } }
@@ -491,6 +491,7 @@ final class Wizard {
         installModRomfs = info.inputs.installModRomfs ?? false
         fonts = path(info.inputs.firmware ?? info.inputs.sharedFonts)
         fontsAreFirmware = info.inputs.sharedFonts == nil
+        platform = "macos"   // only Mac apps carry a build record; set before out, whose extension its didSet keeps
         out = app.url
         outcome = nil
         mode = .build

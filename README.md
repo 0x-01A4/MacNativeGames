@@ -65,6 +65,8 @@ Everything from building the app to playing is in **[docs/install.md](docs/insta
 - [Controls](docs/install.md#controls) · [Where things are](docs/install.md#where-things-are) · [Known issues](docs/install.md#known-issues)
 - [Local testing](docs/install.md#local-testing) · [Audio fix](docs/install.md#audio-fix)
 
+**One command:** run `make` in the repository folder. It checks the tools the build needs and asks before it installs any that are missing (Homebrew's `python@3.14`, `opus`, `libvpx`), builds the Builder and opens it. `make KEYS=~/keys/prod.keys GAME=~/Games/totk.xci` opens it with your keys and game file already filled in.
+
 Prefer a window to a terminal? The **[Builder](ui/README.md)** is a Mac app that runs the same build for you: pick your keys and game file, and it shows each step as it runs. It builds Tears of the Kingdom, Breath of the Wild, Bayonetta 3, Super Mario Odyssey and Metroid Dread, and its Library lists the apps you built and whether the checkout has changed since.
 
 ## How it works
@@ -148,6 +150,8 @@ Apple、Mac、iPhone、iPad、Apple Vision Pro 和 Metal 是 Apple Inc. 的商�
 - [需要准备](docs/install.zh-CN.md#需要准备) · [打包 App](docs/install.zh-CN.md#打包-app) · [旷野之息](docs/install.zh-CN.md#旷野之息-160-和-190早期) · [iPhone 和 iPad](docs/install.zh-CN.md#iphone-和-ipad) · [Apple Vision Pro](docs/install.zh-CN.md#apple-vision-pro)
 - [操作](docs/install.zh-CN.md#操作) · [文件位置](docs/install.zh-CN.md#文件位置) · [已知问题](docs/install.zh-CN.md#已知问题)
 - [本机测试](docs/install.zh-CN.md#本机测试) · [音频修复](docs/install.zh-CN.md#音频修复)
+
+**一条命令：** 在仓库目录里运行 `make`。它会检查打包需要的工具，缺少的（Homebrew 的 `python@3.14`、`opus`、`libvpx`）先询问再安装，然后构建并打开 Builder。`make KEYS=~/keys/prod.keys GAME=~/Games/totk.xci` 打开时已经填好密钥和游戏文件。
 
 不想用终端？**[Builder](ui/README.md)** 是一个替你跑同一套打包流程的 Mac App：选好密钥和游戏文件，它会显示每一步的进度。它能打包王国之泪、旷野之息、猎天使魔女 3、超级马力欧 奥德赛和密特罗德 生存恐惧；它的“资料库”列出你打包过的 App，以及之后代码是否有改动。
 

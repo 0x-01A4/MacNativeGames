@@ -17,7 +17,7 @@ as one XCI or NSP, through `games/dread/build.py`).
 The **Library** (the switch at the top of the window) lists the game apps on this Mac: the ones Spotlight finds by
 their bundle identifier (`bundle_id` in a game.json) and the ones this Builder made. For each it shows what it was built
 from, and whether the files its game is built from (`sources`) changed in the checkout since, local changes not committed yet included (an app built with local changes reads "Can't tell"). **Rebuild** fills in the Build page with the same files
-and output (the keys come from the remembered location, or the Keys page asks). **Move to Trash** keeps saves and
+and output (the keys chosen in this session are used, or the Keys page asks). **Move to Trash** keeps saves and
 settings. Below the apps, each game's shader list contribution file shows how many rows it holds, with **Send…** (the
 GitHub form and the file in Finder) and the game's own reminder switch: the Builder writes the same `.reminded` file the
 game's launcher reads, so the two always agree. Nothing is sent unless you send it.
@@ -34,6 +34,18 @@ Game File (⌘O).
 ## Build and run
 
 Needs macOS 26 on Apple silicon and the Xcode command line tools (`swiftc`); no Xcode project or SwiftPM.
+
+From the repository folder, one command checks the tools (`ui/Builder/setup.sh`, which asks before it runs
+`brew install` or `xcode-select --install`; `YES=1` doesn't ask), builds the app when its sources changed, and opens it:
+
+```sh
+make                                                # or, with the Keys and Game pages filled in:
+make KEYS=~/keys/prod.keys GAME=~/Games/totk.xci    # UPDATE=<update.nsp> too; it reads the game file at once
+```
+
+The files reach the Builder as if opened in Finder, so this works with a Builder that is already open too. A `.keys`
+file opened or dropped on it is taken as the keys (never `title.keys`). Nothing else is filled in for the player:
+the keys, the game, the platform (when the game builds for more than one) and "Save as" stay blank until chosen. The developer commands underneath:
 
 ```sh
 ui/Builder/make_app.sh          # -> ui/Builder/build/MacNativeGames Builder.app (ad-hoc signed)
@@ -78,7 +90,8 @@ While `BUILDER_SCRIPT` is set, a yellow "Test mode" strip says so and no app is 
 ## What the Builder keeps
 
 - In its preferences (`org.macnativegames.builder`): the checkout folder, and the location of `prod.keys` only if you
-  turn on "Remember this location". The keys themselves are never copied or read.
+  turn on "Remember this location", and then only so that Choose… opens in its folder: the field itself starts blank.
+  The keys themselves are never copied or read.
 - Nothing else. The work folder (`TOTK_build/`, `BotW_build/`, `BY3_build/` or `Dread_build/` next to the game file;
   `games/odyssey/Odyssey_build/` for Super Mario Odyssey) is the build script's, and it is reused by the next build, which is how a cancelled build resumes.
 - "Copy Full Log" copies the build's messages, which include the paths of your files but no key material.

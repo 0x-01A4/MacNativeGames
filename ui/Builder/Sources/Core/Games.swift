@@ -113,10 +113,13 @@ extension Array where Element == Game {
 
     /// Where files dropped on the Game page go. `game` is the game file chosen so far and `identified` the game
     /// --inspect named in it (nil while it hasn't); `takesMod` says whether that game takes a mod; `isMod` tells a mod
-    /// folder (exefs/ or romfs/ in it) from a fonts one.
+    /// folder (exefs/ or romfs/ in it) from a fonts one. A `.keys` file is the player's keys (`make KEYS=…` hands them over
+    /// this way), except title.keys, which no build takes.
     func route(_ urls: [URL], game: URL?, identified: String?, takesMod: Bool,
                isFolder: (URL) -> Bool, isMod: (URL) -> Bool, size: (URL) -> Int64) -> Dropped {
         var dropped = Dropped()
+        dropped.keys = urls.first { !isFolder($0) && $0.pathExtension.lowercased() == "keys"
+            && $0.lastPathComponent.lowercased() != "title.keys" }
         let known = Set(gameExtensions + updateExtensions)
         let files = urls.filter { !isFolder($0) && known.contains($0.pathExtension.lowercased()) }
         if files.count > 1 {
@@ -144,6 +147,7 @@ extension Array where Element == Game {
 
 /// What a drop on the Game page sets (Array<Game>.route); nil leaves that choice as it is.
 struct Dropped: Equatable {
+    var keys: URL?
     var game: URL?
     var update: URL?
     var fonts: URL?

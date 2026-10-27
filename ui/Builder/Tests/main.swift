@@ -345,6 +345,9 @@ expect(drop(["/d/mod"], game: "/d/base.nsp", takesMod: true) == Dropped(mod: u("
 expect(drop(["/d/mod"], game: "/d/base.nsp") == Dropped(), "a mod for a game that takes none is ignored")
 expect(drop(["/d/base.nsp", "/d/mod"]) == Dropped(game: u("/d/base.nsp"), mod: u("/d/mod")), "a mod with a new game file is kept for it")
 expect(drop(["/d/mod"]) == Dropped(), "a mod alone, before a game file, is ignored")
+expect(drop(["/k/prod.keys", "/d/card.xci"]) == Dropped(keys: u("/k/prod.keys"), game: u("/d/card.xci")), "the keys with a game file")
+expect(drop(["/k/Prod.KEYS"]) == Dropped(keys: u("/k/Prod.KEYS")), "the keys alone")
+expect(drop(["/k/title.keys"]) == Dropped(), "title.keys is not the keys")
 
 print(failures == 0 ? "builder tests: all passed" : "builder tests: \(failures) failed")
 exit(failures == 0 ? 0 : 1)
