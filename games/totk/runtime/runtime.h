@@ -137,6 +137,7 @@ void *runtime_input_override(const char *name);
 typedef struct { uint64_t buttons; int32_t lx,ly,rx,ry; int connected; } RuntimeGamepadState;
 void runtime_gamepad_start(void);
 void runtime_gamepad_switch_left(void *controller, int x, int y);
+void runtime_gamepad_switch_right(void *controller, int x, int y);
 void runtime_gamepad_read(RuntimeGamepadState *out);
 /* Mac software keyboard: exclusive controller capture; UI reads physical positions (controller_map.h),
    independent of gameplay remaps. Main-thread only. Closing waits for release before gameplay resumes. */
