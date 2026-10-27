@@ -67,7 +67,7 @@ def contribution_rows(text):
         if not line.strip() or line.startswith('#'):
             continue
         fields = line.split('\t')
-        if fields[0] in ('R', 'B') and warm_row(fields):   # a render pipeline: contribution_pipelines
+        if fields[0] in ('R', 'B', 'T') and warm_row(fields):   # a render pipeline: contribution_pipelines
             continue
         deps = None
         if len(fields) == 3 and fields[0] == 'V' and KEY.match(fields[1]):
@@ -83,12 +83,12 @@ def contribution_rows(text):
 
 
 def contribution_pipelines(text):
-    """The render pipeline rows (R, and B with its border recipe) of a contribution file, in order, without repeats
+    """The render pipeline rows (R, B with its border recipe, T with its tile reads) of a contribution file, in order, without repeats
     (nvn_mtl.m pso_contribute; user 2026-10-22: collected with the shaders)."""
     rows = []
     for line in text.splitlines():
         fields = line.split('\t')
-        row = warm_row(fields) if fields[0] in ('R', 'B') else None
+        row = warm_row(fields) if fields[0] in ('R', 'B', 'T') else None
         if row and row not in rows:
             rows.append(row)
     return rows
@@ -257,7 +257,7 @@ def main():
         issues = [i for i in issues if i['number'] in args.issue]
     token = subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip()
     lists = {game: ShaderList.load(path) for game, (path, _, _) in GAMES.items()}
-    before = {game: (len(s.variants), sum(1 for row in s.warm if row[0] in 'RB')) for game, s in lists.items()}
+    before = {game: (len(s.variants), sum(1 for row in s.warm if row[0] in 'RBT')) for game, s in lists.items()}
     merged = []
     for issue in issues:
         line, per_game = merge_issue(issue, lists, keys, seeds, token, args.drop_unknown)
@@ -266,12 +266,12 @@ def main():
             merged.append((issue, per_game))
     for game, s in lists.items():
         print(f'{game} shared shader list: {before[game][0]} -> {len(s.variants)} variants, '
-              f'{before[game][1]} -> {sum(1 for row in s.warm if row[0] in "RB")} render pipeline rows')
+              f'{before[game][1]} -> {sum(1 for row in s.warm if row[0] in "RBT")} render pipeline rows')
     if not args.apply:
         print('dry run: nothing written (--apply writes the lists)')
         return
     for game, s in lists.items():
-        if (len(s.variants), sum(1 for row in s.warm if row[0] in 'RB')) != before[game]:
+        if (len(s.variants), sum(1 for row in s.warm if row[0] in 'RBT')) != before[game]:
             s.save(GAMES[game][0])
             print(f'written: {GAMES[game][0]}')
     for issue, per_game in merged if args.close else []:

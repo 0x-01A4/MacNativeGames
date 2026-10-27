@@ -31,6 +31,7 @@
 #include "nvn_dirty.h"
 #include "totk_vpool.h"
 #include "totk_lifelog.h"
+#include "totk_state_report.h"
 #include <mach/mach_time.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -2411,15 +2412,20 @@ __attribute__((weak)) int runtime_game_fps_limit(void) { return 0; }
 /* TOTK_PHONE_FPS=30: the phone holds 30 fps the same way, presenting every second refresh of its 60 Hz screen, frame
    step and present interval agreeing (lowering the uncapped clock to 30 Hz instead left the game's interval in 60 Hz
    units: it raised it to 3 and the title ran at about 10 fps). The default is the screen's rate, at most 60 on an iPhone
-   14 (user 2026-10-23: 30 for an hour, then "iphone 改成锁60"). */
+   14 (user 2026-10-23: 30 for an hour, then "iphone 改成锁60"). The touch controls' 60 / 30 button switches it while
+   playing (runtime_phone_fps_set): every pacing decision reads it per frame. */
+static _Atomic int g_phone_hold30 = -1;   /* -1: TOTK_PHONE_FPS not read yet */
 static int phone_holds_30(void) {
 #if TARGET_OS_IPHONE
-    static int v = -1; if (v < 0) { const char *e = getenv("TOTK_PHONE_FPS"); v = e && atoi(e) == 30; }
+    int v = atomic_load(&g_phone_hold30);
+    if (v < 0) { const char *e = getenv("TOTK_PHONE_FPS"); v = e && atoi(e) == 30; atomic_store(&g_phone_hold30, v); }
     return v;
 #else
     return 0;
 #endif
 }
+int runtime_phone_fps(void) { return phone_holds_30() ? 30 : 60; }
+void runtime_phone_fps_set(int fps) { atomic_store(&g_phone_hold30, fps == 30); fprintf(stderr, "[totk] phone frame rate: %s\n", fps == 30 ? "held at 30" : "up to 60"); }
 /* The frame lock (the Mac settings panel, runtime/settings_panel.h; user 2026-10-25 "锁帧"): 0 off, 30, 40 or 60. The game is
    then paced at exactly that rate as the 30 fps hold above does it (display ticks where the rate divides the display's,
    our own clock otherwise), with the uncapped clock suspended; the real-time frame step keeps game speed right. A movie
@@ -2840,6 +2846,18 @@ static uint64_t present_period(const win_t *o) {
     { int hold = game_hold_fps(); if (hold) return 1000000000ull / (uint64_t)hold; }   /* exactly the held rate, by display ticks or by our own clock */
     return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 }
+/* TOTK_STATE_REPORTING (totk_state_report.m): this frame's cap as the pacing applies it (present_ticks / present_period):
+   a held rate and why (and whether our own clock paces it, mfx_own_clock), else the uncapped ceiling (divided by the
+   game's present interval unless that is ignored), else the game's interval at the display's rate. Game thread. */
+static void sr_frame(const win_t *o) {
+    int hold = game_hold_fps(), src, cap = hold;
+    if (hold) src = runtime_game_fps_limit() == 30 ? SR_CAP_MOVIE : phone_holds_30() ? SR_CAP_PHONE : mfx_hold_fps(mfx_enabled()) ? SR_CAP_INTERP : SR_CAP_LOCK;
+    else if (!g_hz) src = SR_CAP_NONE;
+    else if (g_display_mode) { src = SR_CAP_DISPLAY; cap = g_hz; }
+    else if (uncapped_now()) { cap = g_hz; src = !dm_detclock_enabled() && uncapped_interval_on() ? SR_CAP_UNCAPPED : SR_CAP_UNCAPPED_INTERVAL; }
+    else { cap = g_hz; src = SR_CAP_GAME; }
+    totk_sr_frame(cap, src, hold && mfx_own_clock(), g_paced_hz, present_ticks(o));
+}
 /* Exercise production policy, including the shrine's interval=2 and the
    legacy 30 FPS path. No sleep, present or GPU allocation is involved. */
 void dm_nvn_probe_present_interval(void) {
@@ -3086,6 +3104,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     // 真机语义：出图只入队、立即返回；本帧显示时刻按节拍器排，该贴图到「显示时刻 + 一个周期」才可再获取（阻塞在 AcquireTexture）
     // Real-device semantics: present only enqueues and returns immediately; this frame's display time is scheduled by the pacer, and the texture can be acquired again only at "display time + one period" (blocking in AcquireTexture)
     uint64_t period = present_period(o), now = dm_detclock_enabled() ? guest_ns() : now_ns();
+    if (totk_sr_on()) sr_frame(o);
     nvn_pacer pc = {o->pace};
     uint64_t slot = now + nvn_pace(&pc, now, period);
     o->pace = pc.target;

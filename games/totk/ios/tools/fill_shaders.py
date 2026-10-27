@@ -8,9 +8,9 @@ cache, compiles device metallibs, and pushes one pack in the startup-seed format
 checks and merges the pack on its next start (totk_fill_import) and warms the new variants in the background.
 --from-cache <Mac cache> --seed <the IPA's seed> packs what the Mac's own cache (the game played on the Mac) has and the
 IPA lacks, already translated, so the device has them before it misses them.
-usage: fill_shaders.py --tree <work tree> --device <id> [--bundle-id <id>] [--game totk|botw] [--requests <dir>] [--with-done] [--no-push]
+usage: fill_shaders.py --tree <work tree> --device <id> [--bundle-id <id>] [--game totk|botw] [--requests <dir>] [--with-done] [--no-push] [--update-list]
        fill_shaders.py --tree <work tree> --from-cache <Mac cache rt-folder> [--seed <dir>] [--game botw] --no-push"""
-import argparse, concurrent.futures, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, concurrent.futures, hashlib, json, os, platform, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 from xcode_dir import developer_dir
 from compile_seed import METAL_FLAGS
@@ -19,9 +19,47 @@ TOTK = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(TOTK/'scripts'))
 from shader_list import ShaderList   # noqa: E402
 SHADER_LISTS = {'totk': TOTK/'assets/shader_list.tsv', 'botw': TOTK.parent/'botw/assets/shader_list.tsv'}   # one per game
+CONTRIBUTION = Path(os.environ.get('MNG_CONTRIB_FOLDER') or TOTK.parent.parent/'shader-list-contribution')
+CONTRIBUTION_HEADER = (
+    '# Shaders and render pipelines this Mac and its iPhones / iPads met that the shared shader list does not have yet\n'
+    '# (docs/shader-list.md). Only shader keys, bind states and pipeline descriptors: no game data or personal information.\n'
+    '# Send it in a GitHub issue: https://github.com/ly05010419/MacNativeGames/issues/new?template=shader-list.yml\n')
 VARIANT = re.compile(r'^([0-9a-f]{64})-[0-9a-f]{12}$')
 HEX = re.compile(r'^(?:[0-9a-f]{2})+$')
 MAX_CODE = 16 << 20   # the runtime's own limit on a shader's code area
+
+
+def translator_service(tree):
+    """The native translator: the work tree's build, else the checked-in binary for this Mac."""
+    # platform.machine() follows the interpreter: a Python running under Rosetta reports x86_64 on an arm64 Mac.
+    # The shipped binary is arm64 and the kernel runs it natively, so always consider arm64 as well.
+    arches = [platform.machine()] + (['arm64'] if platform.machine() != 'arm64' else [])
+    candidates = [tree/'build/shader-service/totk_xlate'] + \
+                 [root/f'prebuilt/macos-{arch}/totk_xlate' for arch in arches for root in (tree, TOTK)]
+    for path in candidates:
+        if os.access(path, os.X_OK): return path
+    raise RuntimeError('missing shader translator; looked for ' + ', '.join(str(p) for p in candidates))
+
+
+
+def contribution_file():
+    CONTRIBUTION.mkdir(parents=True, exist_ok=True)
+    return CONTRIBUTION/'shader-list-contribution.txt'
+
+
+def append_contribution(contrib, rows):
+    """Append the rows the contribution file does not hold yet; returns how many were written.
+
+    Rerunning for the same requests (--with-done rebuilds them on purpose) must not grow the file again: it is what
+    players attach to an issue, and the row text is what shader_contrib_watch.merge_rows compares.
+    """
+    exists = contrib.exists()
+    have = set(contrib.read_text(errors='replace').splitlines()) if exists else set()
+    fresh = [row for row in dict.fromkeys(rows) if row not in have]
+    if fresh:
+        with contrib.open('a') as f:
+            f.write(('' if exists else CONTRIBUTION_HEADER) + ''.join(f'{row}\n' for row in fresh))
+    return len(fresh)
 
 
 def chain():
@@ -38,6 +76,11 @@ def devicectl(env, args, direction, src, dst):
     cmd = ['xcrun', 'devicectl', 'device', 'copy', direction, '--device', args.device, '--domain-type', 'appDataContainer',
            '--domain-identifier', args.bundle_id, '--source', str(src), '--destination', str(dst)]
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
+
+
+def missing_on_device(result):
+    """The source path does not exist yet (no miss has been recorded): not a failed copy."""
+    return 'Failed to retrieve the file node' in (result.stderr or '')
 
 
 def load_requests(folder):
@@ -60,9 +103,11 @@ def translate(rqs, tree, out, ch):
     todo = [rq for rq in rqs if not (out/f"{rq['variant']}_b.metal").is_file()]
     print(f'{len(rqs)} requests, {len(todo)} not yet translated on this Mac')
     if not todo: return set()
-    service = tree/'build/shader-service/totk_xlate'
-    if not os.access(service, os.X_OK): raise RuntimeError(f'missing {service} (make shader-service)')
-    svc = subprocess.Popen([str(service), '--service', '--spirv-cross', str(tree/'build/spirv-cross/spirv-cross'), '--out', str(out),
+    service = translator_service(tree)
+    spirv_cross = tree/'build/spirv-cross/spirv-cross'
+    if not os.access(spirv_cross, os.X_OK): raise RuntimeError(f'missing {spirv_cross}')
+    print(f'translator: {service}')
+    svc = subprocess.Popen([str(service), '--service', '--spirv-cross', str(spirv_cross), '--out', str(out),
                             '--chain', ch], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     failed = set()
     try:
@@ -125,7 +170,7 @@ def main():
     ap.add_argument('--device', default=os.environ.get('TOTK_IOS_DEVICE'), help='devicectl device id (or TOTK_IOS_DEVICE)')
     ap.add_argument('--bundle-id', default=os.environ.get('TOTK_BUNDLE_ID', 'org.macnativegames.totk'),
                     help='the app on the device (install_device.py installs it as <IPA bundle id>.<team>)')
-    ap.add_argument('--game', choices=sorted(SHADER_LISTS), help="whose shared shader list gets the new variants "
+    ap.add_argument('--game', choices=sorted(SHADER_LISTS), help="whose shared shader list decides which variants are new "
                     "(default: botw for a bundle id with .botw, else totk)")
     ap.add_argument('--from-cache', type=Path, metavar='DIR', help="pack the variants of this Mac cache folder (rt-<chain>, "
                     "e.g. ~/Library/Application Support/MacNativeGames/BotW/shader-cache/rt-...) instead of device requests")
@@ -133,6 +178,9 @@ def main():
                     '<work>/totk/build/shader-seed/<version>)')
     ap.add_argument('--requests', type=Path, help='use requests already copied from the device instead of pulling them')
     ap.add_argument('--no-push', action='store_true', help='translate and build the pack, but do not send it')
+    ap.add_argument('--update-list', action='store_true',
+                    help="also write the new variants into the game's shipped list (games/<game>/assets/shader_list.tsv); "
+                         'by default they only go to the contribution file')
     ap.add_argument('--with-done', action='store_true', help='also rebuild the variants filled before (shader-requests/done),'
                     ' e.g. after a change of the compile options; the game replaces their libraries')
     args = ap.parse_args()
@@ -145,28 +193,50 @@ def main():
     work = Path(tempfile.mkdtemp(prefix='totk-shader-fill-'))
     try:
         folder = args.requests
+        incomplete = False
         if not folder:
             folder = work/'requests'
             r = devicectl(env, args, 'from', 'Documents/shader-requests', folder)
-            if r.returncode: print(f"pull was incomplete, using what arrived: {r.stderr.strip().splitlines()[-1:] }")
+            if r.returncode:
+                if missing_on_device(r):
+                    print('no shader requests from the device'); return
+                incomplete = True
+                print(f"pull was incomplete, using what arrived: {r.stderr.strip().splitlines()[-1:]}")
         rqs = load_requests(folder)
         if args.with_done:
             done = folder/'done'
             if not args.requests and not done.is_dir():
                 r = devicectl(env, args, 'from', 'Documents/shader-requests/done', done)
-                if r.returncode: print(f"pull of done requests was incomplete: {r.stderr.strip().splitlines()[-1:] }")
+                if r.returncode and not missing_on_device(r):
+                    incomplete = True   # a disconnect here must not read as "nothing to do"
+                    print(f"pull of done requests was incomplete: {r.stderr.strip().splitlines()[-1:]}")
             seen = {rq['variant'] for rq in rqs}
             rqs += [rq for rq in load_requests(done) if rq['variant'] not in seen]
-        if not rqs: print('no shader requests from the device'); return
+        if not rqs:
+            # An incomplete pull that recovered nothing is a connection problem, not "the device has no requests":
+            # the wrapper would otherwise report success and the user would never retry.
+            if incomplete: raise RuntimeError('could not read Documents/shader-requests; unlock the device, keep it connected and retry')
+            print('no shader requests from the device'); return
         failed = translate(rqs, tree, out, ch)
         variants = sorted({rq['variant'] for rq in rqs} - failed)
         if not variants: raise RuntimeError('no variant could be translated')
         name = time.strftime('%Y%m%d-%H%M%S'); pack = work/name; pack.mkdir()
         count = build_pack(pack, out, variants, ch, env)
-        # What this device needed goes into the one shared list, so every later build carries it (docs/shader-list.md).
+        # What this device needed leaves the repository alone by default: the rows go to the contribution file the
+        # project already submits through a GitHub issue (shader_contrib_watch.py). --update-list also writes the
+        # shipped list, which every build reads, for someone who wants the next local build to carry the variant.
         # The pack's index rows are written by build_pack, so the list is merged from the pack after it is built.
-        shared = ShaderList.load(shader_list); before = len(shared.variants); shared.add_cache(pack); shared.save(shader_list)
-        print(f'shared shader list: {len(shared.variants) - before} new variants ({shader_list}; send them in a pull request)')
+        # The contribution file is shared by both games (collect_shader_issues.py sorts each row by its shader key); the
+        # game's own list decides which variants are new.
+        shared = ShaderList.load(shader_list); before = set(shared.variants); shared.add_cache(pack)
+        new = sorted(shared.variants - before)
+        if new:
+            added = append_contribution(contribution_file(), [f'V\t{key}\t{deps}' for key, deps in new])
+            if added:
+                print(f'contribution file: {added} new variants ({CONTRIBUTION}; shader_contrib_watch.py sends it in an issue)')
+        if args.update_list:
+            shared.save(shader_list)
+            print(f'shared shader list: {len(new)} new variants ({shader_list})')
         print(f'pack {name}: {len(variants)} variants, {count} files' + (f', {len(failed)} failed' if failed else ''))
         deliver(args, env, tree, pack, name)
     finally:
