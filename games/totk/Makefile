@@ -250,6 +250,14 @@ probe-input: build/input-probe
 	@cat analysis/native-input-probe.json
 	@if TOTK_PROBE_NEGATIVE=20 build/input-probe > /dev/null 2> analysis/native-input-probe-negative.log; then echo "negative control 20 passed: the orientation check cannot see a reference-frame integration"; exit 1; else echo "negative control 20 (reference-frame integration) failed as expected: $$(cat analysis/native-input-probe-negative.log)"; fi
 
+# TOTK_INPUT_FILE (runtime/input.c): lines at start, a line appended in place, the file replaced by a longer copy of the
+# list (devicectl device copy to an iPhone) and by a new, shorter list.
+.PHONY: probe-input-file
+build/input-file-probe: scripts/input_file_probe.c runtime/input.c runtime/hid_feedback.c runtime/feedback_settings.h runtime/motion_fusion.c runtime/autoload.c runtime/autoload.h runtime/runtime.h
+	xcrun clang -std=c11 -O1 -Wall -Wextra -Werror scripts/input_file_probe.c runtime/input.c runtime/hid_feedback.c runtime/motion_fusion.c runtime/autoload.c -o "$@"
+probe-input-file: build/input-file-probe
+	build/input-file-probe
+
 # TOTK_AUTOLOAD (runtime/autoload.c) through the production controller state; the last run is the negative control
 # (auto-load off while presses are expected) and must fail.
 .PHONY: probe-autoload
