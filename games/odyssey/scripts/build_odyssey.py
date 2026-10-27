@@ -140,7 +140,7 @@ def build(args, py, step=step, done=done, run=run, note=print):
         shutil.rmtree(patches, ignore_errors=True)
         if want != "1600x900":
             run([py, "scripts/make_render_res_overlay.py", want, "--romfs", ext / "local/romfs", "--out", patches, "--flat"])
-    print(f"   key 3 render size up to {want}")
+    note(f"   key 3 render size up to {want}")
     done(t)
 
     t = step(3, "System fonts")
