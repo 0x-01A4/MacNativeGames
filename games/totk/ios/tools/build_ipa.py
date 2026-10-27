@@ -27,11 +27,12 @@ def clone_folder(src,dst):
     dst.parent.mkdir(parents=True,exist_ok=True)
     return libc.clonefile(os.fsencode(src),os.fsencode(dst),0)==0
 
-def discard(path):
+def discard(path,beside=None):
     """Out of the way at once (a rename), deleted in the background: tens of thousands of files take minutes to delete on
-    an external disk, and the build does not need to wait for it."""
+    an external disk, and the build does not need to wait for it. `beside`: the folder to rename it into, when its own
+    folder is copied or zipped next (a folder inside the app, the app inside Payload)."""
     if not path.exists(): return
-    old=path.with_name(f'.{path.name}.old-{os.getpid()}-{time.time_ns()}')
+    old=(beside or path.parent)/f'.{path.name}.old-{os.getpid()}-{time.time_ns()}'
     os.rename(path,old); subprocess.Popen(['/bin/rm','-rf',str(old)],start_new_session=True)
 
 def copy_tree(src,dst):
@@ -163,9 +164,12 @@ def main():
     # The game data goes into a copy of Xcode's product, never into the product itself: it then stays small (its own
     # files only), and each build copies it once instead of three times (product -> Payload -> output, ~27,000 seed
     # files each, 5 of the 7 minutes of a build, 2026-10-23). Products of earlier builds still carry GameData.
-    if (app/'GameData').exists(): discard(app/'GameData')
+    # Renamed beside the product, not inside it: inside, the copy below took the half-deleted folder along (a 33 GB IPA,
+    # zip stopped at files the background delete had removed, 2026-10-25).
+    if (app/'GameData').exists(): discard(app/'GameData',beside=app.parent)
     dest=out if out.suffix=='.app' else tree/'build/ios-payload/Payload/TOTK.app'
-    discard(dest); copy_tree(app,dest)
+    discard(dest,beside=dest.parent.parent if out.suffix!='.app' else None)   # not in Payload, which is zipped whole
+    copy_tree(app,dest)
     res=dest/'GameData';res.mkdir(exist_ok=True)
     copy_tree(game_data,res/'game-data')   # TOTK_GAME_DATA (Sources/main.m)
     romfs=tree/f'extracted/{a.version}/romfs'
