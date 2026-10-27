@@ -1,5 +1,7 @@
 #pragma once
-/* Odyssey graphics settings (user, 26 October): keys 3-7 and the graphics lines of the HUD (nvn_mtl.m includes this once).
+/* Odyssey picture settings (user, 26 October): set in the settings window before the game (after PR #910 and #1076 keys
+   3-7 are TOTK's: picture size, aspect ratio, MetalFX edge smoothing, controller type, mouse) and shown in the HUD
+   (nvn_mtl.m includes this once). The list below is the order of the settings, no longer keys:
      3  anti-aliasing  off / FXAA / SMAA / TAA       at the game picture's size, before the upscale (TAA: not yet)
      4  sharpen (CAS)  off / on                      on the final picture, after the upscale
      5  upscaler       MetalFX / FSR 1 / Lanczos / bilinear   the game picture to the window
@@ -33,7 +35,7 @@ static const char *const gx_label[GX_N][4] = {
     {"game default", "4x anisotropic", "8x anisotropic", "16x anisotropic"}, {"1600x900", "1920x1080", "2240x1260"}};
 static const int gx_ready[GX_N] = {3, 2, 4, 4, 3};   // values a key cycles through (TAA joins when it exists)
 static _Atomic int g_gx[GX_N];
-static int g_gx_res_now;                             // the resolution this launch runs at (ODYSSEY_RENDER_RES)
+static int g_gx_res_now;                             // the resolution this launch runs at (TOTK_RENDER_RES, set by the launcher)
 static _Atomic int g_samp_flush;                      // key 6: the sampler cache rebuilds with the new filtering
 static pthread_mutex_t g_gx_file_mu = PTHREAD_MUTEX_INITIALIZER;
 
@@ -42,7 +44,7 @@ static int gx_find(int w, const char *v) {
     return -1;
 }
 static void gx_init(void) {
-    const char *path = getenv("ODYSSEY_GFX_SETTINGS"), *rr = getenv("ODYSSEY_RENDER_RES");
+    const char *path = getenv("ODYSSEY_GFX_SETTINGS"), *rr = getenv("TOTK_RENDER_RES");
     int now = rr ? gx_find(GX_RES, rr) : 0; g_gx_res_now = now < 0 ? 0 : now; atomic_store(&g_gx[GX_RES], g_gx_res_now);
     FILE *f = path ? fopen(path, "r") : NULL;
     char line[128];

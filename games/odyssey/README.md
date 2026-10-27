@@ -161,6 +161,13 @@ overlay (key 1) lists them with the GPU load and the GPU time of the picture wor
 | 6 | controller type: auto, Xbox, PlayStation, Switch (how the face buttons map to the Switch's A, B, X, Y; kept for the next start) |
 | 7 | mouse mode: the mouse turns the camera and its buttons act as controller buttons; Command-Tab frees the pointer |
 
+Anti-aliasing, sharpening and the upscaler act while 60+60 is on (key 2); with it off the picture is the default (MetalFX,
+no filter). A resolution picked in the window uses key 3's render size patch (`runtime/game_patches.c`: framework,
+canvas, console viewport, and the render target pool and memory heap grown with it) with the game's own quality table
+rewritten for that size (`scripts/make_resolution_overlay.py`, run from your dump at packaging); the game starts at it and
+key 3 still steps down to 1600x900. SMAA uses the area and search tables from [iryoku/smaa](https://github.com/iryoku/smaa)
+(MIT, `third_party/smaa`).
+
 Measured on an M-series Mac with 8 GB (Seaside Kingdom, output 3024x1700; GPU time of the picture work per presented
 frame): MetalFX 1.81 ms, FSR 1 1.68 ms, Lanczos 1.89 ms, bilinear 0.26 ms; FXAA +0.03 ms, SMAA +0.18 ms, CAS +0.4 ms;
 16x texture filtering no measurable picture cost. 1920x1080 and 2240x1260 hold 16.7 ms frames; at 1920x1080 with 60+60,

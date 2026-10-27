@@ -32,7 +32,7 @@ static const char *gx_msl =
     "  float3 ra = 0.5 * (tap(t, s, c, uv, dir * (1.0 / 3.0 - 0.5)) + tap(t, s, c, uv, dir * (2.0 / 3.0 - 0.5)));\n"
     "  float3 rb = ra * 0.5 + 0.25 * (tap(t, s, c, uv, dir * -0.5) + tap(t, s, c, uv, dir * 0.5));\n"
     "  float lb = luma(rb); return float4((lb < lmin || lb > lmax) ? ra : rb, o.a); }\n"
-    // CAS (after AMD FidelityFX CAS): taps one input texel apart
+    // CAS (after AMD FidelityFX CAS, MIT: third_party/licenses/AMD-FidelityFX-MIT.txt): taps one input texel apart
     "fragment float4 fs_cas(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant GP& c [[buffer(0)]]) {\n"
     "  float2 uv = in_uv(in, c), px = 1.0 / float2(t.get_width(), t.get_height());\n"
     "  float4 o = t.sample(s, uv); float3 e = o.rgb;\n"
@@ -41,7 +41,7 @@ static const char *gx_msl =
     "  float3 amp = sqrt(saturate(min(mn, 2.0 - mx) / max(mx, 1e-5)));\n"
     "  float3 w = amp * (-1.0 / mix(8.0, 5.0, saturate(c.sharp)));\n"
     "  return float4(saturate(((a + b + f + h) * w + e) / (1.0 + 4.0 * w)), o.a); }\n"
-    // FSR 1 EASU (after AMD FidelityFX Super Resolution 1.0, MIT): 12 taps, a direction and a length from the four
+    // FSR 1 EASU (after AMD FidelityFX Super Resolution 1.0, MIT: third_party/licenses/AMD-FidelityFX-MIT.txt): 12 taps, a direction and a length from the four
     // centre quads, a stretched Lanczos-2 approximation along the edge, the result clamped to the centre 2x2 (no ringing)
     "static float3 rd(texture2d<float> t, constant GP& c, int2 p) { int2 lo = int2(c.region.xy), hi = lo + int2(c.region.zw) - 1; return t.read(uint2(clamp(p, lo, hi))).rgb; }\n"
     "static float lum2(float3 v) { return v.b * 0.5 + (v.r * 0.5 + v.g); }\n"
@@ -332,14 +332,16 @@ static double gx_picture_ms(void) {
 /* The HUD's graphics lines (frontend.m shortcut_text): keys 3-7 with their values, then the GPU line. */
 void dm_gfx_panel_text(char *out, size_t n) {
     size_t o = 0; int live = gx_live();
+    /* after PR #910: keys 3-7 are TOTK's (runtime/input.c); these are set in the window before the game */
+    o += (size_t)snprintf(out + o, n - o, "%s", TOTK_UI("画质（在启动前的设置窗口里改）\n", "Picture (set in the window before the game)\n"));
     for (int w = 0; w < GX_N && o < n; w++) {
         int v = gx_get(w);
-        o += (size_t)snprintf(out + o, n - o, "%d  %s: %s", w + 3, gx_title[w], gx_label[w][v]);
+        o += (size_t)snprintf(out + o, n - o, "   %s: %s", gx_title[w], gx_label[w][v]);
         if (w == GX_RES && v != g_gx_res_now && o < n) o += (size_t)snprintf(out + o, n - o, " at next launch (now %s)", gx_label[GX_RES][g_gx_res_now]);
         if (w == GX_UP && v == GX_UP_METALFX && !(mfxup_enabled() && mfxup_output_enabled()) && o < n) o += (size_t)snprintf(out + o, n - o, " (off in this build: bilinear)");
         if (o < n) o += (size_t)snprintf(out + o, n - o, "\n");
     }
-    if (!live && o < n) o += (size_t)snprintf(out + o, n - o, "   (3-5 apply while 60+60 is on)\n");
+    if (!live && o < n) o += (size_t)snprintf(out + o, n - o, "   (anti-aliasing, sharpen and upscaler apply while 60+60 is on)\n");
     sysload_start();
     sysload_info li; int have = sysload_get(&li);
     double ms = gx_picture_ms();

@@ -3,7 +3,7 @@
    executable again with --settings and waits: this process shows the window and exits 0 for Play, 1 for Quit, so the
    game itself starts from a process that never opened a window (one Dock icon, the game's).
    Everything is kept in "Odyssey Data", in the files the launcher and the game already read:
-     graphics.txt         aa, cas, upscaler, textures, resolution (keys 3-7 in game, third_party/d2r_gfx/gfx/nvn/odyssey_gfx.h),
+     graphics.txt         aa, cas, upscaler, textures, resolution (third_party/d2r_gfx/gfx/nvn/odyssey_gfx.h; keys 3-7 are TOTK's),
                           frame_generation (60+60 at start), launcher (show / skip this window)
      windowed             present: start in a window
      session-minutes.txt  the session limit (0 = none)
@@ -98,8 +98,8 @@ static void set_graphics(NSString *k, NSString *v) { if (!g_gfx[k]) [g_gfx_order
     [self row:@"Controller A / B / X / Y" key:@"face" titles:@[@"By label (as printed)", @"By position (Xbox layout)"] tokens:@[@"label", @"position"]
        current:face in:v y:y]; y -= 40;
 
-    NSTextField *note = [NSTextField wrappingLabelWithString:@"In game, keys 3–7 change anti-aliasing, sharpening, the upscaler, texture filtering and the resolution (the "
-                         "resolution at the next launch); 2 turns 60+60 on or off, 1 shows or hides the overlay. Anti-aliasing, sharpening and the upscaler apply while 60+60 is on."];
+    NSTextField *note = [NSTextField wrappingLabelWithString:@"In game: 1 shows or hides the overlay, 2 turns 60+60 on or off, 3 steps the picture size, 4 the aspect ratio, "
+                         "5 edge smoothing, 6 the controller type, 7 mouse mode. Anti-aliasing, sharpening and the upscaler apply while 60+60 is on."];
     note.font = [NSFont systemFontOfSize:11]; note.textColor = NSColor.secondaryLabelColor; note.frame = NSMakeRect(40, y - 24, 480, 48); [v addSubview:note];
 
     self.showAtLaunch = [NSButton checkboxWithTitle:@"Show this window at every launch (otherwise hold ⌥ Option)" target:nil action:nil];

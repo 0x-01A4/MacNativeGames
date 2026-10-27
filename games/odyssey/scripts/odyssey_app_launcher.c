@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
     setenv("TOTK_SHADER_ASYNC", "1", 0);
     /* Key 3's bigger render size (build_odyssey.py --render-res): the scaled graphics table and render-res.txt in the
        bundle; without that folder the game runs as shipped. */
+    const int user_patches = getenv("TOTK_ROMFS_PATCHES") != NULL, user_res = getenv("TOTK_RENDER_RES") != NULL;
     { char patches[PATH_MAX]; join(patches, game, "romfs-patches");
       setenv("TOTK_ROMFS_PATCHES", stat(patches, &st) == 0 && S_ISDIR(st.st_mode) ? patches : "0", 0); }
     /* The update's version the app was built from (package_native_app.py), for the window title: 1.3.0 and 1.4.1 share
@@ -144,9 +145,12 @@ int main(int argc, char **argv) {
        "Odyssey Data/windowed" exists. */
     char windowed[PATH_MAX]; join(windowed, data, "windowed");
     if (stat(windowed, &st)) setenv("BY3_FULLSCREEN", "1", 0);
-    /* Graphics settings, keys 3-7 (third_party/d2r_gfx/gfx/nvn/odyssey_gfx.h), kept in "Odyssey Data/graphics.txt". The
-       render size (key 7) applies here, at launch: the code patch (ODYSSEY_RENDER_RES) together with that size's quality
-       table in the bundle (romfs-res/<w>x<h>, scripts/package_native_app.py); a size without its table stays 1600x900. */
+    /* Picture settings of the settings window (third_party/d2r_gfx/gfx/nvn/odyssey_gfx.h), kept in "Odyssey Data/graphics.txt";
+       keys 3-7 are TOTK's (after PR #910 and #1076). The render size applies here, at launch: key 3's render size patch
+       (runtime/game_patches.c, TOTK_RENDER_RES, with the render target pool and memory heap grown) together with that
+       size's quality table in the bundle (romfs-res/<w>x<h>, scripts/package_native_app.py); the game starts at it
+       (ODYSSEY_SCENE_START=max) and key 3 still cycles down to 1600x900. A size without its table, or a TOTK_RENDER_RES /
+       TOTK_ROMFS_PATCHES set outside, leaves key 3's build-time size (romfs-patches) as it is. */
     setenv("ODYSSEY_GFX_SETTINGS", gfx_path, 0);
     FILE *gf = fopen(gfx_path, "r");
     if (gf) {
@@ -157,7 +161,9 @@ int main(int argc, char **argv) {
             if (sscanf(line, "resolution=%ux%u", &w, &h) != 2 || (w == 1600 && h == 900)) continue;
             snprintf(line, sizeof line, "romfs-res/%ux%u", w, h); join(res_dir, game, line); join(manifest, res_dir, "manifest.tsv");
             if (stat(manifest, &st)) continue;
-            snprintf(line, sizeof line, "%ux%u", w, h); setenv("ODYSSEY_RENDER_RES", line, 0); setenv("TOTK_ROMFS_PATCHES", res_dir, 0);
+            if (user_patches || user_res) continue;
+            snprintf(line, sizeof line, "%ux%u", w, h); setenv("TOTK_RENDER_RES", line, 1); setenv("TOTK_ROMFS_PATCHES", res_dir, 1);
+            setenv("ODYSSEY_SCENE_START", "max", 0);
         }
         fclose(gf);
     }

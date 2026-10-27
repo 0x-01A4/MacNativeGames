@@ -84,7 +84,7 @@ def main():
     for font in sorted((BUILD / "extracted/firmware/shared-fonts").glob("*.bfttf")):
         clone(font, game / "fonts" / font.name)
     # Key 7's render sizes (odyssey_gfx.h): the game's quality table for each, made from this dump's RomFS
-    # (scripts/make_resolution_overlay.py); the launcher passes the chosen one as TOTK_ROMFS_PATCHES with ODYSSEY_RENDER_RES.
+    # (scripts/make_resolution_overlay.py); the launcher passes the chosen one as TOTK_ROMFS_PATCHES with TOTK_RENDER_RES.
     for size in ("1920x1080", "2240x1260"):
         out = BUILD / "romfs-res" / size
         if not (out / "manifest.tsv").is_file():

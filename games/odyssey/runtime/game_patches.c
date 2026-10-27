@@ -175,7 +175,11 @@ static void patch_scene_pick(Module *m) {
     const uint32_t veneer[2] = {0x58000051, 0xd61f0220};   /* ldr x17, #8; br x17 (the 8-byte target follows) */
     memcpy(m->base + 0x5efc20, veneer, sizeof veneer);
     memcpy(m->base + 0x5efc28, &target, sizeof target);
-    atomic_store(&g_scene_cap, 1600u | 900u << 16);   /* SCENE_ORIGINAL until key 3 */
+    /* SCENE_ORIGINAL until key 3; a render size picked in the settings window (the launcher sets ODYSSEY_SCENE_START=max,
+       after PR #910) starts at that size instead */
+    const char *start = getenv("ODYSSEY_SCENE_START");
+    if (start && !strcmp(start, "max")) { g_scene_mode = scene_states() - 1; atomic_store(&g_scene_cap, 0); }
+    else atomic_store(&g_scene_cap, 1600u | 900u << 16);
 }
 /* Present thread: one line when the picked scene size changes (the first 40 changes, then every 500th), so a test log says
    which size the game draws after key 3. */
