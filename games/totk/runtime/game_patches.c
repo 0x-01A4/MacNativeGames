@@ -579,6 +579,58 @@ static void patch_slowmo_bounce(Module *m) {
             TOTK_GAME_VERSION, (unsigned long long)stub);
 }
 
+#if defined(TOTK_GAME_V121)
+/* 1.2.1 cursors and aim that moved a fixed step per frame (#285). Both updates already read the game's 30 Hz frame ratio
+   (1 at 30 fps, 0.5 at 60, 0.25 at 120) for their smoothing but leave it out of the step itself, so the map cursor and
+   the vertical Ultrahand aim ran twice as fast at 60 fps and four times as fast at 120 as at the shipping 30 fps. Each
+   veneer multiplies the step by that ratio, which gives the shipping speed at any frame rate. The veneers sit in main's
+   text padding after the cloth veneers (which end at +384); each checks the instruction it replaces and its padding.
+   Map cursor (main+0xec3d9c): the map update eases its pan speed s0 with 1 - 0.75^ratio, reading the ratio from
+   [[x23] + 8], then moves the map centre by stick * s0 (ldr s1, [x27]; fmul s1, s1, s0; ...; fmul s2, s0, s2). The
+   veneer scales s0 by the same [[x23] + 8]; x9 and s16 are free there (the call at main+0xec3d6c clobbers them).
+   Ultrahand aim, vertical (main+0x1d48d64): the aim camera keeps the pitch as a position normalized over its range and
+   adds stick * sensitivity / range (fdiv s12, s12, s10) to it each frame at main+0x1d48c80. The horizontal aim and the
+   gyro path of the same update (main+0x1d48ccc) multiply by the update's frame ratio at [x20 + 8]; the veneer applies it
+   to the vertical step too; s16 is unused in that function. 1.0.0 has its own Ultrahand fix (TOTK_ULTRAHAND_REALTIME).
+   Aim gyro, vertical (main+0x1d484e4, used by Recall's aim): the same update copies the gyro's angular velocity each
+   frame (main+0xd184cc) and subtracts velocity * sensitivity from its vertical gyro accumulator once per frame (fmul
+   s3, s9, s0); the horizontal gyro uses the change of attitude and was right. The veneer multiplies by [x20 + 8] too.
+   TOTK_MAP_CURSOR_REALTIME=0 / TOTK_ULTRAHAND_REALTIME=0 leave each one as shipped. */
+static void cursor_veneer(Module *m, const char *what, const char *env, uint64_t site, uint32_t original,
+                          unsigned at, const uint32_t *code, unsigned n) {
+    const char *e = getenv(env);
+    if (e && !strcmp(e, "0")) { fprintf(stderr, "[totk] 1.2.1 %s: as shipped (%s=0)\n", what, env); return; }
+    const uint64_t stub = ((m->text_end + 15) & ~15ULL) + at;
+    if (stub + 4 * (n + 1) > ((m->text_end + 0xfff) & ~0xfffULL)) runtime_fail("1.2.1 cursor veneer layout");
+    if (!CODE_PATCHED_AT_BUILD) {
+        uint32_t w; memcpy(&w, m->base + site, 4);
+        if (w != original) {
+            fprintf(stderr, "[totk] %s main+%#llx: found %08x expected %08x\n", what, (unsigned long long)site, w, original);
+            runtime_fail("1.2.1 cursor: original instruction mismatch");
+        }
+        for (unsigned i = 0; i < 4 * (n + 1); i++) if (m->base[stub + i]) runtime_fail("1.2.1 cursor veneer padding not empty");
+    }
+    for (unsigned i = 0; i < n; i++) put_word(m, stub + 4 * i, code[i], "1.2.1 cursor veneer");
+    put_word(m, stub + 4 * n, branch_to(stub + 4 * n, site + 4), "1.2.1 cursor veneer");
+    put_word(m, site, branch_to(site, stub), "1.2.1 cursor step");
+    fprintf(stderr, "[totk] 1.2.1 %s: one speed at any frame rate, veneer +%#llx\n", what, (unsigned long long)stub);
+}
+static void patch_cursor_speed(Module *m) {
+    static const uint32_t map[] = {0xf94002e9,    /* ldr x9, [x23]: the frame-rate object */
+                                   0xbd400930,    /* ldr s16, [x9, #8]: its 30 Hz ratio */
+                                   0x1e300800,    /* fmul s0, s0, s16 */
+                                   0xbd400361};   /* ldr s1, [x27]: the replaced instruction */
+    cursor_veneer(m, "map cursor", "TOTK_MAP_CURSOR_REALTIME", 0xec3d9c, 0xbd400361, 512, map, 4);
+    static const uint32_t aim[] = {0x1e2a198c,    /* fdiv s12, s12, s10: the replaced instruction */
+                                   0xbd400a90,    /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
+                                   0x1e30098c};   /* fmul s12, s12, s16 */
+    cursor_veneer(m, "Ultrahand vertical aim", "TOTK_ULTRAHAND_REALTIME", 0x1d48d64, 0x1e2a198c, 544, aim, 3);
+    static const uint32_t gyro[] = {0x1e200923,   /* fmul s3, s9, s0: the replaced instruction (velocity * sensitivity) */
+                                    0xbd400a90,   /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
+                                    0x1e300863};  /* fmul s3, s3, s16 */
+    cursor_veneer(m, "aim gyro, vertical", "TOTK_ULTRAHAND_REALTIME", 0x1d484e4, 0x1e200923, 576, gyro, 3);
+}
+#endif
 void runtime_game_patches(Module *m) {
     runtime_survey_init(m);
     const size_t n = sizeof fps60_sites / sizeof fps60_sites[0];
@@ -607,6 +659,9 @@ void runtime_game_patches(Module *m) {
     patch_render_res(m);
     patch_output_res(m);
     patch_slowmo_bounce(m);
+#if defined(TOTK_GAME_V121)
+    patch_cursor_speed(m);
+#endif
     patch_trap(m);
 #if defined(TOTK_GAME_V121)
     { static const uint64_t sites[] = {0xcb4b10, 0x12521cc, 0x19b36f0, 0x1ecdf68};   /* camera x2, viewport x2 (aspect_patch.h) */
