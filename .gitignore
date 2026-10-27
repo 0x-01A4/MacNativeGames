@@ -16,6 +16,7 @@ __pycache__/
 TOTK_build/
 BotW_build/
 BY3_build/
+Dread_build/
 *.app/
 games/totk/.venv
 games/totk/build/

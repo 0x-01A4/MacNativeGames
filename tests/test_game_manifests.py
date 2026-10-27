@@ -1,5 +1,5 @@
 """games/<name>/game.json, which the Builder reads to know the games; build_app.py's hand-off to a game's own build
-script (games/by3/build.py); and that script's --inspect and argument checks. Synthetic PFS0 files only; no game data
+script (games/by3/build.py, games/dread/build.py); and those scripts' --inspect and argument checks. Synthetic PFS0 files only; no game data
 and no keys.
 """
 import contextlib
@@ -26,6 +26,7 @@ def load(name, path):
 
 by3 = load('by3_build', 'games/by3/build.py')
 smo = load('odyssey_build', 'games/odyssey/build.py')
+dread = load('dread_build', 'games/dread/build.py')
 
 FIELDS = {'schema', 'id', 'name', 'title_id', 'bundle_id', 'build', 'sources'}   # and data_folder or data_beside_app
 
@@ -67,7 +68,7 @@ def events(argv, script=None):
 
 class Manifests(unittest.TestCase):
     def test_every_game_folder(self):
-        self.assertEqual({g['id'] for g in build_app.GAMES}, {'totk', 'botw', 'by3', 'odyssey'})
+        self.assertEqual({g['id'] for g in build_app.GAMES}, {'totk', 'botw', 'by3', 'odyssey', 'dread'})
         for g in build_app.GAMES:
             self.assertLessEqual(FIELDS, set(g), g['id'])
             self.assertTrue({'data_folder', 'data_beside_app'} & set(g), g['id'])
@@ -189,6 +190,61 @@ class By3Inspect(unittest.TestCase):
         self.assertEqual((info['game'], info['version'], info['platform']), ('by3', 'v120', 'macos'))
         self.assertEqual(info['inputs'], {'game': str(self.base), 'update': str(self.update)})
         self.assertEqual(info['work'], str(self.tmp / 'BY3_build'))
+        self.assertNotIn('keys', json.dumps(info))
+
+
+class DreadBuild(unittest.TestCase):
+    """games/dread/build.py: one card image or NSP of the base game 1.0.0, no update."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.keys = self.tmp / 'prod.keys'
+        self.keys.write_text('')
+        self.nsp = nsp(self.tmp / 'dread.nsp', dread.EXPECTED['title_id'])
+        self.xci = self.tmp / 'dread.xci'
+        self.xci.write_bytes(bytes(0x100) + b'HEAD' + bytes(0x100))
+
+    def test_manifest_agrees(self):
+        g = dread.GAME
+        self.assertEqual(g['title_id'], dread.EXPECTED['title_id'])
+        self.assertIn(f"<string>{g['bundle_id']}</string>", (ROOT / 'games/dread/Makefile').read_text())
+        self.assertIn(f"MacNativeGames/{g['data_folder']}", (ROOT / 'games/dread/app/launcher.m').read_text())
+
+    def test_build_app_hands_it_over(self):
+        argv = [str(self.nsp), '-k', 'prod.keys', '--json-progress']
+        with mock.patch.object(build_app.os, 'execve') as execve:
+            build_app.hand_off(build_app.parse_args(argv), argv)
+        self.assertEqual(execve.call_args[0][1][1], str(ROOT / 'games/dread/build.py'))
+        report = {'titles': [dread.EXPECTED['title_id']]}   # a card image: identify_game reads the title with the keys
+        with mock.patch.object(build_app, 'run'), mock.patch.object(build_app, 'last_json', return_value=report):
+            self.assertEqual(build_app.identify_game(self.tmp, self.xci, self.keys, self.tmp), 'dread')
+
+    def test_inspect(self):
+        for game, kind in ((self.nsp, 'nsp'), (self.xci, 'xci')):
+            got, error = events([str(game), '-k', str(self.keys), '--inspect'], dread)
+            self.assertIsNone(error)
+            i = got[-1]
+            self.assertEqual((i['type'], i['game'], i['kind'], i['version'], i['display_version']), ('inspect', 'dread', kind, 'v100', '1.0.0'))
+            self.assertEqual((i['needs_update'], i['needs_fonts'], i['platforms'], i['dlc'], i['mod']), (False, False, ['macos'], False, False))
+            self.assertEqual((i['work'], i['default_out']), (str(self.tmp / 'Dread_build'), str(self.tmp / 'Metroid Dread.app')))
+
+    def test_refused(self):
+        update = nsp(self.tmp / 'up.nsp', '010093801237C800')
+        dlc = nsp(self.tmp / 'dlc.nsp', '010093801237D001')
+        other = nsp(self.tmp / 'other.nsp', '0100F2C0115B6000')
+        junk = self.tmp / 'junk.xci'
+        junk.write_bytes(b'not a game' * 100)
+        for argv, code in (([str(update)], 'wrong_game'), ([str(dlc)], 'wrong_game'), ([str(other)], 'wrong_game'),
+                           ([str(junk)], 'input'), ([str(self.nsp), '--update', str(update)], 'unsupported_version'),
+                           ([str(self.nsp), '--dlc', str(dlc)], 'input'), ([str(self.nsp), '--mod', str(self.tmp)], 'input'),
+                           ([str(self.nsp), '--platform', 'ios'], 'platform')):
+            _, error = events(argv + ['-k', str(self.keys), '--inspect'], dread)
+            self.assertEqual(error.code if error else None, code, argv)
+
+    def test_build_info_never_names_the_keys(self):
+        with mock.patch.object(dread, 'checkout_commit', return_value=(None, None)):
+            info = dread.build_info(dict(game=self.xci, firmware=None, shared_fonts=None), self.tmp / 'Dread_build')
+        self.assertEqual((info['game'], info['version'], info['display_version'], info['platform']), ('dread', 'v100', '1.0.0', 'macos'))
+        self.assertEqual(info['inputs'], {'game': str(self.xci)})
         self.assertNotIn('keys', json.dumps(info))
 
 

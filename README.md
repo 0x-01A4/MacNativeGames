@@ -36,6 +36,7 @@ How it works: bring your game file (XCI or NSP) and your `prod.keys`; one script
 | Ori and the Blind Forest: Definitive Edition | 1.0.1 | Mac | Community port | [`games/ori`](games/ori/README.md) |
 | Super Mario Party Jamboree | 2.3.0 | Mac | Community port, experimental | [`games/jamboree`](games/jamboree/README.md) |
 | Mario vs. Donkey Kong | 1.0.1 | Mac | Community port, early | [`games/mvdk`](games/mvdk/README.md) |
+| Metroid Dread | 1.0.0 | Mac | Community port, early (playable through the first area) | [`games/dread`](games/dread/README.md) |
 
 Community ports keep their own runtime, graphics layer and scripts in their folder and are built with the steps there.
 
@@ -63,6 +64,8 @@ Everything from building the app to playing is in **[docs/install.md](docs/insta
 - [What you need](docs/install.md#what-you-need) · [Build the app](docs/install.md#build-the-app) · [Breath of the Wild](docs/install.md#breath-of-the-wild-160-and-190-early) · [iPhone and iPad](docs/install.md#iphone-and-ipad) · [Apple Vision Pro](docs/install.md#apple-vision-pro)
 - [Controls](docs/install.md#controls) · [Where things are](docs/install.md#where-things-are) · [Known issues](docs/install.md#known-issues)
 - [Local testing](docs/install.md#local-testing) · [Audio fix](docs/install.md#audio-fix)
+
+Prefer a window to a terminal? The **[Builder](ui/README.md)** is a Mac app that runs the same build for you: pick your keys and game file, and it shows each step as it runs. It builds Tears of the Kingdom, Breath of the Wild, Bayonetta 3, Super Mario Odyssey and Metroid Dread, and its Library lists the apps you built and whether the checkout has changed since.
 
 ## How it works
 
@@ -117,6 +120,7 @@ Apple、Mac、iPhone、iPad、Apple Vision Pro 和 Metal 是 Apple Inc. 的商�
 | 奥日与黑暗森林 终极版 | 1.0.1 | Mac | 社区移植 | [`games/ori`](games/ori/README.md) |
 | 超级马力欧派对 空前盛会 | 2.3.0 | Mac | 社区移植，实验 | [`games/jamboree`](games/jamboree/README.md) |
 | 马力欧 vs. 大金刚 | 1.0.1 | Mac | 社区移植，早期 | [`games/mvdk`](games/mvdk/README.md) |
+| 密特罗德 生存恐惧 | 1.0.0 | Mac | 社区移植，早期（可玩到第一个区域） | [`games/dread`](games/dread/README.md) |
 
 社区移植的游戏各自在自己的目录里带一份运行时、图形层和脚本，按那里的步骤构建。
 
@@ -144,6 +148,8 @@ Apple、Mac、iPhone、iPad、Apple Vision Pro 和 Metal 是 Apple Inc. 的商�
 - [需要准备](docs/install.zh-CN.md#需要准备) · [打包 App](docs/install.zh-CN.md#打包-app) · [旷野之息](docs/install.zh-CN.md#旷野之息-160-和-190早期) · [iPhone 和 iPad](docs/install.zh-CN.md#iphone-和-ipad) · [Apple Vision Pro](docs/install.zh-CN.md#apple-vision-pro)
 - [操作](docs/install.zh-CN.md#操作) · [文件位置](docs/install.zh-CN.md#文件位置) · [已知问题](docs/install.zh-CN.md#已知问题)
 - [本机测试](docs/install.zh-CN.md#本机测试) · [音频修复](docs/install.zh-CN.md#音频修复)
+
+不想用终端？**[Builder](ui/README.md)** 是一个替你跑同一套打包流程的 Mac App：选好密钥和游戏文件，它会显示每一步的进度。它能打包王国之泪、旷野之息、猎天使魔女 3、超级马力欧 奥德赛和密特罗德 生存恐惧；它的“资料库”列出你打包过的 App，以及之后代码是否有改动。
 
 ## 工作原理
 
