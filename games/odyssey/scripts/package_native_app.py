@@ -76,6 +76,11 @@ def main():
     os.symlink("../rewritten", game / "rewritten/local")   # the module directory the runtime is given, as in Odyssey_build
     for name in ("romfs.bin", "runtime-index.bin"):
         clone(BUILD / "extracted/local/romfs" / name, game / "romfs" / name)
+    # key 3's bigger render size (build_odyssey.py --render-res): the scaled graphics table and render-res.txt, which the
+    # launcher hands the runtime as TOTK_ROMFS_PATCHES
+    for item in sorted((BUILD / "extracted/local/romfs-patches").rglob("*")):
+        if item.is_file():
+            clone(item, game / "romfs-patches" / item.relative_to(BUILD / "extracted/local/romfs-patches"))
     for font in sorted((BUILD / "extracted/firmware/shared-fonts").glob("*.bfttf")):
         clone(font, game / "fonts" / font.name)
     # Key 7's render sizes (odyssey_gfx.h): the game's quality table for each, made from this dump's RomFS
@@ -118,6 +123,9 @@ def main():
                     "-framework", "Cocoa", "-framework", "CoreGraphics"], check=True)
     subprocess.run(["sips", "-s", "format", "icns", str(ICON), "--out", str(resources / "OdysseyIcon.icns")],
                    check=True, stdout=subprocess.DEVNULL)
+    version = ICON.with_name("game-version.txt")   # extract_app_icon.py: the update's version, for the window title
+    if version.is_file():
+        shutil.copyfile(version, resources / "game-version.txt")
     info = {
         "CFBundleDevelopmentRegion": "en", "CFBundleDisplayName": "Odyssey", "CFBundleName": "Odyssey",
         "CFBundleExecutable": "Odyssey", "CFBundleIconFile": "OdysseyIcon",

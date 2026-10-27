@@ -106,6 +106,16 @@ int main(int argc, char **argv) {
     setenv("TOTK_ROMFS", romfs, 1); setenv("TOTK_SHARED_FONTS", fonts, 1); setenv("TOTK_INPUT_FILE", commands, 1);
     setenv("TOTK_GAME_SLOT_DIR", slot, 1); setenv("TOTK_SLOT_OWNER", "user", 1); setenv("TOTK_SLOT_PURPOSE", "Odyssey.app", 1);
     setenv("TOTK_SHADER_ASYNC", "1", 0);
+    /* Key 3's bigger render size (build_odyssey.py --render-res): the scaled graphics table and render-res.txt in the
+       bundle; without that folder the game runs as shipped. */
+    { char patches[PATH_MAX]; join(patches, game, "romfs-patches");
+      setenv("TOTK_ROMFS_PATCHES", stat(patches, &st) == 0 && S_ISDIR(st.st_mode) ? patches : "0", 0); }
+    /* The update's version the app was built from (package_native_app.py), for the window title: 1.3.0 and 1.4.1 share
+       their executables, so the runtime itself cannot tell them apart. */
+    { char path[PATH_MAX], version[32] = ""; join(path, resources, "game-version.txt");
+      FILE *vf = fopen(path, "r");
+      if (vf) { if (fgets(version, sizeof version, vf)) version[strcspn(version, "\r\n")] = 0; fclose(vf); }
+      if (*version) setenv("ODYSSEY_GAME_VERSION", version, 1); }
     /* The RomFS check's proof file (runtime/romfs.c) goes next to the data, not into the bundle: written beside the
        bundled RomFS it broke the app's code signature after the first launch (23 October). */
     setenv("TOTK_ROMFS_PROOF_DIR", data, 1);
