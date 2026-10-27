@@ -105,16 +105,29 @@ static void unprotect_page(range_t *r, uintptr_t p) {   // 调用方已把状态
     atomic_fetch_add(&g_now, 1);
     atomic_store(&r->state[p], PG_NONE);
 }
+/* EoW: ranges of destroyed pools (a ring, written under g_slot_mu). A protect that raced the destruction (it found the range
+   live, the destruction unprotected the pages, then the protect landed) leaves read-only pages nobody tracks; the game's
+   next write there (in EoW: the host's nvnBufferFinalize on an object in reused pool memory, entering the first cave) was
+   reported as a crash. A write fault in such a range just makes the page writable again. */
+#define NDEAD 1024
+static struct { _Atomic uintptr_t base, end; } g_dead[NDEAD]; static _Atomic unsigned g_dead_n; static _Atomic uint64_t g_dead_fix;
+static int dead_fix(uintptr_t a) {
+    for (unsigned i = 0; i < NDEAD; i++) if (a >= atomic_load(&g_dead[i].base) && a < atomic_load(&g_dead[i].end)) {
+        mp(a & ~(g_pg - 1), g_pg, PROT_READ | PROT_WRITE); atomic_fetch_add(&g_dead_fix, 1); return 1; }
+    return 0;
+}
+uint64_t nvn_dirty_dead_fixes(void) { return atomic_load(&g_dead_fix); }
 static int on_fault(void *addr, int is_write, void *uc) {
     (void)uc;
     range_t *r = is_write ? find((uintptr_t)addr) : NULL;
-    if (!r) return 0;
+    if (!r) return is_write && dead_fix((uintptr_t)addr);
     uintptr_t p = ((uintptr_t)addr - r->base) >> g_shift;
     uint8_t st = PG_PROT;
     if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_faults, 1);
         if (g_drec_on && uc) { _STRUCT_MCONTEXT64 *mc = ((ucontext_t *)uc)->uc_mcontext; drec_add(r->base + (p << g_shift), mc->__ss.__pc, mc->__ss.__lr, 0); }
         return 1; }
     if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
+    if (!atomic_load(&r->gen[p]) && dead_fix((uintptr_t)addr)) return 1;   // EoW: a new pool over stale protected pages of a destroyed one
     return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
 static void prep_write(void *addr, size_t len) {
@@ -211,7 +224,13 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
 void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = find((uintptr_t)mem);
-    if (r) { prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); }
+    /* EoW: a pool inside another pool's range is tracked by that range (nvn_dirty_add_range); destroying the inner pool
+       must not end tracking of the outer one. */
+    if (r && r->base != ((uintptr_t)mem & ~(g_pg - 1))) r = NULL;
+    if (r) { prep_write((void *)r->base, r->end - r->base);
+        unsigned d = atomic_fetch_add(&g_dead_n, 1) % NDEAD; atomic_store(&g_dead[d].end, 0); atomic_store(&g_dead[d].base, r->base); atomic_store(&g_dead[d].end, r->end);
+        atomic_store_explicit(&r->live, 0, memory_order_seq_cst); atomic_fetch_sub(&g_live, 1);
+        mp(r->base, r->end - r->base, PROT_READ | PROT_WRITE); }   // EoW: pages a racing protect set read-only after prep_write
     pthread_mutex_unlock(&g_slot_mu);
 }
 int nvn_dirty_tracked(const void *addr, size_t len) {
@@ -235,7 +254,8 @@ void nvn_dirty_protect(const void *addr, size_t len) {
         uint8_t st = PG_NONE;
         int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
-        if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
+        if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0;
+            if (!atomic_load_explicit(&r->live, memory_order_seq_cst)) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ | PROT_WRITE); return; } }   // EoW: the pool was destroyed meanwhile
         if (!took && st == PG_BUSY && busy_wait(r, i)) i--;   // this page again
     }
 }

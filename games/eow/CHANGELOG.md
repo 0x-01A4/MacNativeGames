@@ -395,3 +395,25 @@ the SDK went to the real file system service. The game accepts success or path-n
 (through the same path mapping, so it can only touch the save / cache folders in the work folder). `probe` and
 `probe-audio` pass after the change; the later sessions in the logs (up to 142,500 frames, about 40 minutes) never
 reached that call, so it has not been seen answered in play yet.
+
+### 2026-10-27 (evening): crash entering the first cave
+
+The user's game closed on entering a cave in the first dungeon (log `play-20261027-193240.err`, frame ~8,100). SIGBUS,
+a write permission fault at 0x7958bcf5c8, pc in the host's `nvnBufferFinalize` (`memset` of the game's NVNbuffer),
+called from a destructor at main+0x325fec during the area change. (The host's load slide was found by matching the
+thread-entry return address in the backtrace against `otool` output, then `atos`.) The fault handler did not know the
+page, so it was not one of the dirty tracker's live pages.
+
+Likely cause, in the dirty-page tracker (`nvn_dirty.c`), which write-protects NVN pool memory: (1) a protect that races a
+pool's destruction can leave pages read-only after the destruction unprotected them, with no live range; the memory goes
+back to the game's heap and the next write there faults; (2) a pool created inside another pool's range is tracked by
+that range (the log shows one at start), and destroying the inner pool removed the outer pool's range. Changes:
+destruction only removes the pool's own range, unprotects the whole range again after marking it dead, and records it
+in a ring of 1,024 destroyed ranges; a protect re-checks that the range is still live after its `mprotect`; a write fault
+in a destroyed range (or on a never-written page of a new range over one) makes the page writable and continues. The
+periodic texture line counts these repairs. Not confirmed: when the crash report was written the page was already
+writable again (region protection rw), so the exact interleaving is not proven; the cave is the test.
+
+Result (`play-20261027-195130.err`): the user went into the cave again, no crash, 12,300 frames. The repair counter
+stayed at 0, so the fallback was never needed in that session: either the two structural fixes (destruction removing
+only its own range; the protect re-check) removed the cause, or the race did not occur this time. Kept all three.
