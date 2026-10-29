@@ -142,8 +142,8 @@ patches itself stops the start.
 <a id="data"></a>
 ### The mod's RomFS files: `--install-mod-romfs`
 
-A build does not write to the version folder (`~/Library/Application Support/MacNativeGames/TOTK/mods/<version>`)
-unless this flag is given: the folder may hold another mod's files, or files copied by hand. With the flag, the
+A build does not write to the version folder (`~/Library/Application Support/MacNativeGames/TOTK/mods/<version>`;
+Breath of the Wild's is `BotW/mods/botw160` or `botw190`, see [below](#breath-of-the-wild)) unless this flag is given: the folder may hold another mod's files, or files copied by hand. With the flag, the
 build replaces it with the mod's `romfs/` and writes its `manifest.tsv`:
 
 ```bash
@@ -277,15 +277,15 @@ from them and follow their terms). Played on the Mac with 1.4.3:
    `ゲームグラフィックス` and `草`), and 1.4.3's `ResourceSizeTable.Product.143` with every replaced texture's entry grown
    by as much as the file grew. Then write the manifest with `make_mod_manifest.py` as usual. Run both again whenever
    the folder changes.
-3. Start the game in 8 GB mode, with a larger GPU memory budget:
+3. Start the game in 8 GB mode:
 
    ```sh
-   open --env TOTK_DRAM_8GB=1 --env TOTK_GPU_BUDGET_MB=11264 "Tears of the Kingdom.app"
+   open --env TOTK_DRAM_8GB=1 "Tears of the Kingdom.app"
    ```
 
    `TOTK_DRAM_8GB` reports a 6.8 GiB application pool to the game (as the emulators' 8 GB mode does) and lets one
    memory pool be a zero-copy GPU buffer of up to 4 GiB (the pack's `TextureHeap` pool is about 3.8 GiB; the limit is
-   1 GiB otherwise). The budget's default (30 % of the Mac's memory) is too small for the pack outdoors.
+   1 GiB otherwise).
 
 Checked on a 24 GB M-series Mac: about 8.7 GB resident in play and the GPU near full load (the GPU is the
 bottleneck). A Mac with less memory than that is not expected to run it.
@@ -635,14 +635,14 @@ mod 的 `exefs/` 里可能还有这些文件，构建这样处理：
    它写出 1.4.3 自己的 `HeapDef`，只把材质包加大的堆调大（HDPacks 的包：`TextureHeap`、`ゲームグラフィックス`、`草`），
    并写出 1.4.3 的 `ResourceSizeTable.Product.143`，每个被替换贴图的条目按文件变大的量加大。然后照常用
    `make_mod_manifest.py` 生成清单。文件夹有变化时两步都要重跑。
-3. 用 8 GB 模式和更大的显存预算启动：
+3. 用 8 GB 模式启动：
 
    ```sh
-   open --env TOTK_DRAM_8GB=1 --env TOTK_GPU_BUDGET_MB=11264 "Tears of the Kingdom.app"
+   open --env TOTK_DRAM_8GB=1 "Tears of the Kingdom.app"
    ```
 
    `TOTK_DRAM_8GB` 向游戏报告 6.8 GiB 的应用内存池（和模拟器的 8 GB 模式一样），并允许单个内存池做成最大 4 GiB 的零拷贝
-   GPU 缓冲（材质包的 `TextureHeap` 池约 3.8 GiB，平时上限 1 GiB）。默认预算（本机内存的 30%）在野外不够用。
+   GPU 缓冲（材质包的 `TextureHeap` 池约 3.8 GiB，平时上限 1 GiB）。
 
 在 24 GB 的 Apple 芯片 Mac 上验证：游玩时常驻内存约 8.7 GB，GPU 接近满载（瓶颈在 GPU）。内存更小的 Mac 预计跑不动。
 

@@ -197,6 +197,84 @@ static void patch_slowmo_bounce(Module *m){
 #endif
     fprintf(stderr,"[totk] 1.4.3 high-FPS fix: trampoline slow-motion check uses the time scale, veneer +%#llx\n",(unsigned long long)stub);
 }
+/* High frame rates (#466, #556, #538: translucent rocks, stone lanterns and walls above 60 FPS):
+   TOTK advances distance/LOD mesh fades (0x0a7ac4, 0x95dd24) and pre-actor fades (0x6155e4, 0x615660)
+   using a byte counter divided by 20. The increment added to the counter each frame is
+   trunc(2.1 * ratio30). At 30 FPS ratio30 is 1.0 (increment 2), at 60 FPS ratio30 is 0.5 (increment 1).
+   Above ~63.5 FPS (ratio30 < 1/2.1 ≈ 0.476), including 90, 100, 120 and 144 FPS, trunc(2.1 * ratio30)
+   evaluates to ZERO. The counter stalls indefinitely, leaving objects either completely invisible (stuck at 0)
+   or translucent (stuck midway).
+   Clamp the increment to at least 1 at all four sites: max(trunc(2.1 * ratio30), 1).
+   Text padding stub at +928 (after Vert+ stubs, 20 words = 80 bytes). TOTK_FADE_FIX=0 or TOTK_HIGHFPS_FIX=0
+   disables this patch. */
+static void patch_fade_increment(Module *m){
+    const char *e=getenv("TOTK_HIGHFPS_FIX");if(e&&!strcmp(e,"0"))return;
+    const char *f=getenv("TOTK_FADE_FIX");if(f&&!strcmp(f,"0"))return;
+    uint64_t stub=((m->text_end+15)&~15ULL)+928;
+    if(stub+80>((m->text_end+0xfff)&~0xfffULL))runtime_fail("1.4.3 fade veneer layout");
+    uint32_t veneer[]={
+        /* stub + 0 (28 bytes): site 1 (mesh LOD fade 0x0a7ac4) */
+        0x1e380008,   /* fcvtzs w8, s0 */
+        0x7100011f,   /* cmp w8, #0 */
+        0x1a9f1508,   /* csinc w8, w8, wzr, ne */
+        0x3942792a,   /* ldrb w10, [x9, #0x9e] */
+        0x0b080148,   /* add w8, w10, w8 */
+        0x39027928,   /* strb w8, [x9, #0x9e] */
+        branch(stub+24,0x0a7ad4),
+
+        /* stub + 28 (20 bytes): site 2 (mesh LOD fade 0x95dd24) */
+        0x1e380008,   /* fcvtzs w8, s0 */
+        0x7100011f,   /* cmp w8, #0 */
+        0x1a9f1508,   /* csinc w8, w8, wzr, ne */
+        0x0b080128,   /* add w8, w9, w8 */
+        branch(stub+28+16,0x95dd2c),
+
+        /* stub + 48 (16 bytes): site 3 (pre-actor fade 0x6155e4) */
+        0x1e38000a,   /* fcvtzs w10, s0 */
+        0x7100015f,   /* cmp w10, #0 */
+        0x1a9f154a,   /* csinc w10, w10, wzr, ne */
+        branch(stub+48+12,0x6155e8),
+
+        /* stub + 64 (16 bytes): site 4 (pre-actor fade 0x615660) */
+        0x1e38000a,   /* fcvtzs w10, s0 */
+        0x7100015f,   /* cmp w10, #0 */
+        0x1a9f154a,   /* csinc w10, w10, wzr, ne */
+        branch(stub+64+12,0x615664),
+    };
+    const Patch guards[]={
+        {0x0a7ac4,0x1e380008,0},{0x0a7ac8,0x3942792a,0},
+        {0x0a7acc,0x0b080148,0},{0x0a7ad0,0x39027928,0},
+        {0x95dd24,0x1e380008,0},{0x95dd28,0x0b080128,0},
+        {0x6155e4,0x1e38000a,0},
+        {0x615660,0x1e38000a,0},
+    };
+    uint32_t jump_s1[]={branch(0x0a7ac4,stub),0xd503201f,0xd503201f,0xd503201f};
+    uint32_t jump_s2[]={branch(0x95dd24,stub+28),0xd503201f};
+    uint32_t jump_s3=branch(0x6155e4,stub+48);
+    uint32_t jump_s4=branch(0x615660,stub+64);
+#if TARGET_OS_IPHONE
+    uint32_t got[8];
+    for(unsigned i=0;i<4;i++)memcpy(got+i,m->base+0x0a7ac4+4*i,4);
+    for(unsigned i=0;i<2;i++)memcpy(got+4+i,m->base+0x95dd24+4*i,4);
+    memcpy(got+6,m->base+0x6155e4,4);
+    memcpy(got+7,m->base+0x615660,4);
+    if(memcmp(got,jump_s1,16)||memcmp(got+4,jump_s2,8)||got[6]!=jump_s3||got[7]!=jump_s4||
+       memcmp(m->base+stub,veneer,sizeof veneer))
+        runtime_fail("1.4.3 embedded fade patch mismatch");
+#else
+    for(unsigned i=0;i<sizeof guards/sizeof *guards;i++){
+        uint32_t w;memcpy(&w,m->base+guards[i].off,4);
+        if(w!=guards[i].original)runtime_fail("1.4.3 fade check: original instruction mismatch");
+    }
+    for(unsigned i=0;i<sizeof veneer;i++)if(m->base[stub+i])runtime_fail("1.4.3 fade veneer padding not empty");
+    memcpy(m->base+stub,veneer,sizeof veneer);
+    memcpy(m->base+0x0a7ac4,jump_s1,sizeof jump_s1);
+    memcpy(m->base+0x95dd24,jump_s2,sizeof jump_s2);
+    memcpy(m->base+0x6155e4,&jump_s3,4);
+    memcpy(m->base+0x615660,&jump_s4,4);
+#endif
+    fprintf(stderr,"[totk] 1.4.3 high-FPS fix: LOD/actor fade counters clamped to >= 1 at 4 sites (prevents translucent objects above 60 FPS), veneer +%#llx\n",(unsigned long long)stub);
+}
 /* Benchmark camera (survey sessions only, 2026-10-20). The look-at camera update stores the frame's eye (doubles +0x60,
    floats +0x38), target (doubles +0x78, floats +0x44) and normalised up (+0x50) into the camera in x20 at
    main+0x6287b4..0x628824, then builds the view matrix from d1,d2,d0 / d3,d4,d5 / s7,s16,s17. The adrp at main+0x628828
@@ -318,6 +396,7 @@ void runtime_game_patches(Module *m) {
     patch_render_res(m);
     patch_fixed_res(m);
     patch_slowmo_bounce(m);
+    patch_fade_increment(m);
 #if !TARGET_OS_IPHONE
     diag_main=m;   /* frmwatch / xpoke */
 #endif
