@@ -224,8 +224,11 @@ class DreadBuild(unittest.TestCase):
             self.assertIsNone(error)
             i = got[-1]
             self.assertEqual((i['type'], i['game'], i['kind'], i['version'], i['display_version']), ('inspect', 'dread', kind, 'v100', '1.0.0'))
-            self.assertEqual((i['needs_update'], i['needs_fonts'], i['platforms'], i['dlc'], i['mod']), (False, False, ['macos'], False, False))
+            self.assertEqual((i['needs_update'], i['needs_fonts'], i['platforms'], i['dlc'], i['mod']), (False, False, ['macos', 'ios'], False, False))
             self.assertEqual((i['work'], i['default_out']), (str(self.tmp / 'Dread_build'), str(self.tmp / 'Metroid Dread.app')))
+        got, error = events([str(self.xci), '-k', str(self.keys), '--platform', 'ios', '--inspect'], dread)   # the iPhone / iPad app
+        self.assertIsNone(error)
+        self.assertEqual(got[-1]['default_out'], str(self.tmp / 'Metroid Dread.ipa'))
 
     def test_refused(self):
         update = nsp(self.tmp / 'up.nsp', '010093801237C800')
@@ -236,7 +239,8 @@ class DreadBuild(unittest.TestCase):
         for argv, code in (([str(update)], 'wrong_game'), ([str(dlc)], 'wrong_game'), ([str(other)], 'wrong_game'),
                            ([str(junk)], 'input'), ([str(self.nsp), '--update', str(update)], 'unsupported_version'),
                            ([str(self.nsp), '--dlc', str(dlc)], 'input'), ([str(self.nsp), '--mod', str(self.tmp)], 'input'),
-                           ([str(self.nsp), '--platform', 'ios'], 'platform')):
+                           ([str(self.nsp), '--platform', 'visionos'], 'platform'),
+                           ([str(self.nsp), '--platform', 'ios', '-o', str(self.tmp / 'x.zip')], 'input')):
             _, error = events(argv + ['-k', str(self.keys), '--inspect'], dread)
             self.assertEqual(error.code if error else None, code, argv)
 

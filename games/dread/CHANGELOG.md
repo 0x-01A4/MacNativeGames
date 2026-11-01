@@ -17,7 +17,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
 | 4 | A picture, audio, input, saves | in progress: a new game reaches the first area (Artaria) with HUD and minimap |
-| 5 | Performance, shaders, packaging as an app | not started |
+| 5 | Performance, shaders, packaging as an app | in progress: Mac app and Builder; iPhone / iPad app (2026-11-01) |
 
 ## Log
 
@@ -350,3 +350,58 @@ machinery were flat colour with no normal-map detail, and the lit picture had Sa
 Verified: same save, same room. Samus is lit in her suit colours, and walls and machinery have reflections and surface
 detail. No new errors in the log; memory 2,888 MB vs 2,883 MB before. Not checked: other areas, the title-screen visor
 (it looked blown out before this change).
+
+### 2026-11-01: iPhone / iPad
+
+**Goal.** The game on an iPhone 16 Pro Max (iOS 26.6.1, 8 GB), built from the same work folder as the Mac app.
+
+**What iOS needs that the Mac does not.** Code written into memory at run time cannot execute, so the rewritten modules
+are compiled into the app (Tears of the Kingdom's method: `loader.c export-ios` writes the text as the game patches leave
+it, `ios/tools/gen_embed.py` puts text and patch area into the r-x segment `__TOTKX` and the rest of the file into a rw
+segment per module, and the iOS `map_module` `vm_remap`s them back into one reservation, checking each part's SHA-256).
+That path refused the leading patch area. Now:
+
+- `map_module` (iOS) reserves `patch_lead + image` as on the Mac, remaps the patch area (`x1`, the file's first 4 MiB)
+  r-x before the module base, the text r-x at the base and the rest of the file (rodata and data, `w`) copy-on-write
+  after it. `.bss` and the key page stay the reservation's zero fill, so main's 1.8 GiB `.bss` is not in the app.
+- `gen_embed.py` (Dread's copy) reads `PATCH_LEAD` from `fixups.tsv`: `x0` is the file from `PATCH_LEAD` on, `x1` the
+  patch area at its start.
+- `export_ios_text` read the "original" text from the start of the file, which with a leading patch area is the patch
+  area: it now seeks to `PATCH_LEAD`. Dread has no game patches, so the export reports `patched_words=0` for all three
+  modules (and so equals the verified image).
+- `movie_host.c` included `<mach/mach_vm.h>`, an `#error` in the iOS SDK: it uses `mach_vm_compat.h` like the other
+  files. `frontend_ios.m` gains `runtime_shortcut_help_toggle` (a no-op: the shortcut list is Mac only).
+
+**The app** (`ios/`): `Sources/main.m` is a full-screen Metal view, the Mac launcher's player environment with every path
+in the app (`GameData/romfs`) or its Documents (profile, game slot, RomFS proof, shader cache, `dread.log`), and the
+loader's `main` (built as `dread_host_main`) on a 64 MiB game thread; no touch controls or settings pane yet. The device
+cannot translate shaders, so the app carries the Mac's translations (`build/shader-cache/rt-<chain>`) and copies them into
+its cache at start (`TOTK_SHADER_SEED=off`: there is no prepared seed). `Dread.entitlements` asks for the increased memory
+limit. `tools/build_ipa.py` writes an Xcode project into the work folder (absolute paths to this folder's sources and the
+work folder's tables) and builds with xcodegen / xcodebuild; Opus and libvpx are built for the device
+(`build_deps.py`, a copy of TotK's). `nvn_bctc.metal` is left out: the runtime compiles its copy from source
+(`k_bctc_msl`), and including it made the build need the separately downloaded Metal toolchain. `install_device.py` is
+TotK's without its game-data and shader-seed pushes. `build.py --platform ios` (and so `build_app.py` and the Builder)
+runs the four steps, compiles the Mac runtime (export-ios runs it) and calls `build_ipa.py`; it warns when the Mac has
+translated no shaders.
+
+**On the way.** `xcodebuild` needs `DEVELOPER_DIR` when `xcode-select` points at the command line tools
+(`xcode_dir.py` finds `/Applications/Xcode.app`). A pyenv `ninja` shim that names no installed version breaks CMake's
+Ninja generator; Homebrew's `ninja` first in `PATH` fixes it. The Mac had the player's Apple Development certificate but
+not Apple's WWDR G3 intermediate (only the expired 2023 one), so `find-identity -v` listed no valid identity until G3
+(from apple.com/certificateauthority, chained to Apple Root CA) was added to the login keychain. The Simulator build
+(`build_ipa.py --simulator`) stops at MetalFX, which the Simulator SDK does not have; not pursued.
+
+**Verified.** Mac: `make probe` passes after the loader change; `python3.14 -m unittest discover -s tests` passes after
+updating `test_game_manifests.DreadBuild` for the iOS platform. The app's executable has `__TOTKX` r-x and
+`__TOTK{main,subsdk0,sdk}W` rw. `build_app.py <xci> -k prod.keys --platform ios` reuses the verified steps and writes a
+4.2 GB IPA in 25 s. On the iPhone (free personal team, signed for 7 days): `mapped embedded main at 0x300400000
+size=1922859008`, guest alias region 16 GiB, the RomFS hashed once (9,654 files), 1,141 shader files imported. The title
+movie runs at 60 fps (frame time p50 16.67 ms, p95 16.9 ms, no dropped frames over 1,800 frames; GPU 1.2 ms per frame),
+audio without underruns. The player then played for about 8.5 minutes (30,300 frames) and reported no problems; peak
+footprint 2,678 MiB, no `[shader-miss]` in either run's log (everything played was in the Mac's cache). A few single
+frames took about 1.1 s (frame 9045, 9661: area loads, as the long-frame lines show no shader or pipeline work).
+
+Not checked: an iPad; areas the Mac has not played (their draws would be skipped); a phone with less memory; the
+Builder's iOS page with this game.
+
