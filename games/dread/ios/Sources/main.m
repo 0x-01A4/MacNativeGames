@@ -20,19 +20,30 @@ static NSString *g_no_game_data;   // set when the app carries no RomFS image (d
 
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)dread_host_main(3, host_argv); }
 
-/* The shaders translated on the Mac (build_ipa.py: <work>/build/shader-cache, GameData/shader-cache in the app) into the
-   cache in Documents: the device cannot translate (totk_shader_rt.m no_translator). Files the device already has stay; the
-   .variants indexes are replaced, since a later build's index names more variants. */
+/* The shaders translated on the Mac while playing (build_ipa.py: <work>/build/shader-cache, GameData/shader-cache in the
+   app) into the cache in Documents: the device cannot translate (totk_shader_rt.m no_translator). The prepared seed
+   (GameData/shader-seed) is imported by the runtime itself (totk_shader_seed.h). Files the device already has stay; a
+   .variants index gains the rows it lacks, so the seed's rows in it are kept. */
+static NSArray *variant_rows(NSString *path) {
+    NSData *d = [NSData dataWithContentsOfFile:path]; id a = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+    return [a isKindOfClass:NSArray.class] ? a : nil;
+}
 static unsigned long import_shaders(NSString *from, NSString *to) {
     NSFileManager *fm = NSFileManager.defaultManager; unsigned long copied = 0;
     for (NSString *name in [fm contentsOfDirectoryAtPath:from error:nil] ?: @[]) {
         NSString *src = [from stringByAppendingPathComponent:name], *dst = [to stringByAppendingPathComponent:name];
-        BOOL index = [name hasSuffix:@".variants"];
-        if ([fm fileExistsAtPath:dst]) {
-            if (!index || [[NSData dataWithContentsOfFile:src] isEqualToData:[NSData dataWithContentsOfFile:dst]]) continue;
-            [fm removeItemAtPath:dst error:nil];
+        if ([name hasSuffix:@".variants"] && [fm fileExistsAtPath:dst]) {
+            NSArray *add = variant_rows(src); NSMutableArray *have = [variant_rows(dst) mutableCopy];
+            if (!add || !have) continue;
+            NSMutableSet *known = [NSMutableSet set];
+            for (id row in have) if ([row isKindOfClass:NSDictionary.class] && row[@"variant"]) [known addObject:row[@"variant"]];
+            BOOL changed = NO;
+            for (id row in add) if ([row isKindOfClass:NSDictionary.class] && row[@"variant"] && ![known containsObject:row[@"variant"]]) { [have addObject:row]; changed = YES; }
+            NSData *data = changed ? [NSJSONSerialization dataWithJSONObject:have options:NSJSONWritingSortedKeys error:nil] : nil;
+            if (data && [data writeToFile:dst atomically:YES]) copied++;
+            continue;
         }
-        if ([fm copyItemAtPath:src toPath:dst error:nil]) copied++;
+        if (![fm fileExistsAtPath:dst] && [fm copyItemAtPath:src toPath:dst error:nil]) copied++;
     }
     return copied;
 }
@@ -118,7 +129,9 @@ static unsigned long import_shaders(NSString *from, NSString *to) {
     setenv("TOTK_GAME_SLOT_DIR", slot.fileSystemRepresentation, 1);
     setenv("TOTK_ROMFS_PROOF_DIR", docs.fileSystemRepresentation, 1);   // hash the 4.4 GB RomFS once, not on every launch
     setenv("TOTK_SHADER_CACHE", cache.fileSystemRepresentation, 1);
-    setenv("TOTK_SHADER_SEED", "off", 0);   // no prepared seed: the Mac's own translations, imported above
+    setenv("TOTK_SHADER_SEED_DIR", [res stringByAppendingPathComponent:@"shader-seed"].fileSystemRepresentation, 1);   // scripts/prepare_shader_seed.py
+    // A variant the app lacks (skipped draws, [shader-miss]) as a shader-list row: merge it into assets/shader_list.tsv
+    setenv("TOTK_SHADER_CONTRIB", [docs stringByAppendingPathComponent:@"shader-list-contribution.txt"].fileSystemRepresentation, 1);
     for (NSString *name in @[@"TOTK_GPU_ALLOW_SUBMIT", @"TOTK_GPU_WIDEN", @"TOTK_GPU_BLOCKRT", @"TOTK_GPU_MIDCLEAR"]) setenv(name.UTF8String, "1", 1);
     setenv("TOTK_GPU_BUDGET_MB", "3000", 0);   // the Mac's 5000 MB is more than an iPhone's footprint limit
     setenv("DREAD_HUD_RENDER", "1", 0);

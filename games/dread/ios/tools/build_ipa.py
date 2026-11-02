@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Build an unsigned, sideloadable iPhone / iPad app of Metroid Dread 1.0.0 from a prepared work folder (games/Dread_build:
 the verified rewrite in rewritten/v100, the Mac runtime build/dread-native with its generated tables, the RomFS in
-extracted/v100/romfs and the shaders the Mac translated in build/shader-cache). Sign and install it with install_device.py.
+extracted/v100/romfs, the prepared shader seed in build/shader-seed and the shaders the Mac translated in
+build/shader-cache). Sign and install it with install_device.py.
 
   python3.14 games/dread/ios/tools/build_ipa.py --work games/Dread_build --out "games/Metroid Dread.ipa"
 
 iOS cannot execute code written at run time, so the rewritten modules are compiled into the app (gen_embed.py; the loader
-maps them back, runtime/loader.c), and it cannot translate shaders, so the app carries the Mac's translations: shaders the
-Mac has not seen yet are skipped on the device. Play more on the Mac and build again to add them."""
+maps them back, runtime/loader.c), and it cannot translate shaders, so the app carries them translated: every shader of
+the game for its default bind state plus the states assets/shader_list.tsv names (scripts/prepare_shader_seed.py), and
+what the Mac translated while playing (its pipelines too). A variant neither has is skipped on the device."""
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -175,11 +177,16 @@ def main():
     res = dest/'GameData'
     for name in ('romfs.bin', 'runtime-index.bin', 'index.json'):
         if (romfs/name).is_file(): clone(romfs/name, res/'romfs'/name)
+    seed = work/'build/shader-seed'
+    if not (seed/'seed-manifest.json').is_file(): raise RuntimeError(f'no prepared shader seed in {seed}: run scripts/prepare_shader_seed.py (build.py does)')
+    for f in sorted(seed.iterdir()):
+        if f.is_file(): clone(f, res/'shader-seed'/f.name)
+    print(f'shaders: {json.loads((seed/"seed-manifest.json").read_text())["shaders"]} prepared variants')
     cache = work/'build/shader-cache/rt-totk-native-v4-unverified'   # gfx/nvn/dmsh_chain.h DMSH_CHAIN
     shaders = sorted(cache.iterdir()) if cache.is_dir() else []
     for f in shaders:
         if f.is_file(): clone(f, res/'shader-cache'/f.name)
-    print(f'shaders: {sum(1 for f in shaders if f.name.endswith(".variants"))} from the Mac\'s cache (shaders it has not seen are skipped on the device)')
+    print(f'shaders: {sum(1 for f in shaders if f.name.endswith(".variants"))} more from the Mac\'s cache')
     if out.suffix == '.app': print(f'app ready: {out}; unsigned, install it with games/dread/ios/tools/install_device.py'); return
     out.parent.mkdir(parents=True, exist_ok=True); out.unlink(missing_ok=True)
     run(['zip', '-qry', '-0', out, 'Payload'], payload, logs/'ipa-zip.log', env)

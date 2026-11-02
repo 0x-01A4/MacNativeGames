@@ -36,9 +36,17 @@ and installs it over the cable; the first time, trust your Apple ID on the devic
 Management). Play with a game controller or the on-screen controls (Switch layout; they hide while a controller is
 connected and come back on a touch).
 
-The device cannot translate shaders. The app carries the ones the Mac translated while you played the Mac app
-(`Dread_build/build/shader-cache`); a draw that needs one the Mac has not seen is skipped, logged as `[shader-miss]`.
-Play the Mac app through what you want to play on the phone, then build again. iOS also cannot run code written at run
+The device cannot translate shaders, so the build prepares them (`scripts/prepare_shader_seed.py`, a few seconds; the app
+carries them in `GameData/shader-seed`). Every shader of the game sits in `system/shd/*.bshdat` (MercurySteam's MSHD
+files: 1,010 unique shaders); each is translated for its default bind state, and for the other states
+`assets/shader_list.tsv` names (cube maps and depth textures the defaults do not serve). The list holds shader keys and
+bind states only; the build reads the shaders from your own RomFS. The app also carries what the Mac translated while
+you played (`Dread_build/build/shader-cache`, with its pipelines). A draw needing a variant neither has is skipped, logged
+as `[shader-miss]` and written to `shader-list-contribution.txt` in the app's Documents. To add the states you met:
+`python3.14 games/dread/scripts/shader_list.py merge games/dread/assets/shader_list.tsv <that file or the Mac's shader
+cache folder>`, then
+`... shader_list.py prune games/dread/assets/shader_list.tsv Dread_build/build/shader-seed` keeps only the rows the
+defaults do not serve. iOS also cannot run code written at run
 time: the rewritten modules are compiled into the app's executable segments (`ios/tools/gen_embed.py`) and the loader
 maps them back, the leading patch area included. Saves, the shader cache and `dread.log` are in the app's Documents
 (the Files app shows them). `--simulator` (`build_ipa.py`) builds for the iOS Simulator but does not compile yet: the
@@ -100,4 +108,5 @@ subsdk0 here, every module of the other games) keep the old layout and byte-iden
 ## Next
 
 Longer play beyond the first area; frame rate and audio in the areas; the 2.1.0 update (a second set of hashes and a
-rewrite of its code); a prepared shader seed for iOS. Open findings are listed at the end of [CHANGELOG.md](CHANGELOG.md).
+rewrite of its code); shader libraries compiled on the Mac for iOS (`.metallib`: the device now compiles the seed's MSL
+on first launch; needs Xcode's Metal Toolchain). Open findings are listed at the end of [CHANGELOG.md](CHANGELOG.md).

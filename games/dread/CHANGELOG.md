@@ -17,7 +17,7 @@ named by hash and subject. Game data, keys and saves are never committed (see th
 | 2 | A runtime target with the other games' parts compiled out, booting to `nnMain` | done 2026-10-25 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | done 2026-10-25 (first presented frame at 1.2 s) |
 | 4 | A picture, audio, input, saves | in progress: a new game reaches the first area (Artaria) with HUD and minimap |
-| 5 | Performance, shaders, packaging as an app | in progress: Mac app and Builder; iPhone / iPad app (2026-11-01) |
+| 5 | Performance, shaders, packaging as an app | in progress: Mac app and Builder; iPhone / iPad app (2026-11-01), its shader seed (2026-11-02) |
 
 ## Log
 
@@ -416,4 +416,42 @@ controller is connected and comes back on a touch.
 
 Verified: on the iPhone 16 Pro Max with the controller disconnected, the player reported menus, movement and
 multi-finger moves (holding L to aim while moving, shooting while moving) all working. Not checked: an iPad.
+
+### 2026-11-02: a prepared shader seed for iPhone / iPad
+
+The device cannot translate shaders, so until now it drew only what the Mac had translated while playing. The iOS build
+now prepares every shader of the game from the player's own RomFS (`scripts/prepare_shader_seed.py`, forked from TotK's
+for this folder's older runtime):
+
+- **Where the shaders are.** All of them sit in `system/shd/*.bshdat`, MercurySteam's MSHD files: 478 files, 1,342 NVN
+  control sections, 1,010 unique shaders (671 vertex, 671 fragment programs). Each control section (magic `0x98761234`,
+  0x880 bytes, hashed into the key with the code as `nvn_mtl.m prog_get` does) is followed by the shader's assembly text
+  and then its code (magic `0x12345678`); the first 4-aligned code header after a section is its code. A scan of every
+  other RomFS file and the three game modules found no other control section.
+- **What is translated.** Each shader for the default bind state, then every state `assets/shader_list.tsv` names, named
+  and matched as `totk_shader_rt.m` does (variant = key + SHA-256 of the answers' sorted JSON; `deps_match` without
+  wildcards, unanswered slots 2d / float). Vertex shaders are translated with `depth_minus_w` (Dread sets NEAR_IS_MINUS_W:
+  the first try without it gave different MSL than the Mac's). One translator service per core: 1,044 variants in about
+  2 s; a rebuild with the same inputs reuses the seed, a longer list translates only its new rows.
+- **The list.** `assets/shader_list.tsv` (`scripts/shader_list.py`, TotK's with Dread's header) holds the 34 bind states
+  of the Mac's 190 that the defaults do not serve: cube maps (57 slots) and depth textures (4). Identifiers only.
+- **The seed** holds only what `totk_shader_seed.h` imports (`<key>.variants`, `<variant>_b.metal` / `_b.json`,
+  `pso_manifest.tsv`; TotK's newer `shader-keys.json` would make this runtime refuse the whole seed).
+- **The app** carries it in `GameData/shader-seed` (`build_ipa.py`; `build.py` runs the step), `main.m` sets
+  `TOTK_SHADER_SEED_DIR` (it was `TOTK_SHADER_SEED=off`) and `TOTK_SHADER_CONTRIB` (a miss becomes a list row in
+  Documents/`shader-list-contribution.txt`). The Mac's own translations still come along, with their pipelines; their
+  import now adds the rows a `.variants` index lacks instead of replacing it, which would have dropped the seed's rows.
+
+Verified: for all 190 shaders the Mac had translated, the seed's translation of the same bind state is byte-identical
+MSL. Phone conditions on the Mac (an empty cache filled from the seed only, `TOTK_SHADER_NO_TRANSLATE=1`, a fresh
+profile, A every 4 s from the title for 5.5 minutes): the seed imported (1,044 variants, 3,099 files), all compiled
+(5.2 s on the first start, 0.14 s once Metal had them), 7,200 frames, zero `[shader-miss]`, and screenshots show the
+in-engine prologue (the ship, Samus close-up with subtitles). The iOS build with the seed builds (1 min with the work
+folder ready). `tests/test_dread_shader_seed.py`; full suite 1,302 tests pass.
+
+Not checked: the seed on the iPhone (not installed yet), the first-start compile time there (the device compiles the
+MSL; `.metallib` built on the Mac would avoid it but needs Xcode's Metal Toolchain), areas beyond the prologue, and
+whether more bind states than cube and depth textures turn up. The Mac app is unchanged: its launcher does not set
+`TOTK_SHADER_SEED_DIR`, and the Mac build does not prepare the seed (a work folder that has one, after an iOS build,
+imports it on the next Mac start, as the runtime always did with `build/shader-seed`).
 

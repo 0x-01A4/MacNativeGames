@@ -398,14 +398,15 @@ def ios_prerequisites():
 
 
 def step_ios(py, work, out, logs):
-    """The Mac runtime first (export-ios runs it to write the code the app embeds), then the unsigned app. The device cannot
-    translate shaders, so the app takes the ones the Mac translated while playing (build/shader-cache); without any, say so."""
-    say('4/4 iPhone / iPad app: generating the runtime tables, compiling the Mac runtime, then the app (Xcode)')
+    """The Mac runtime first (export-ios runs it to write the code the app embeds), the shader seed, then the unsigned app.
+    The device cannot translate shaders: the seed holds every shader of the game for its default bind state and the states
+    assets/shader_list.tsv names (scripts/prepare_shader_seed.py, a few seconds; reused while nothing changed), and the
+    app also takes what the Mac translated while playing (build/shader-cache)."""
+    say('4/4 iPhone / iPad app: generating the runtime tables, compiling the Mac runtime, the shader seed, then the app (Xcode)')
     run(['make', 'prepare', 'mods', 'runtime', f'WORK={work}', f'PY={py}'], logs / 'runtime.log')
-    cache = work / 'build/shader-cache'
-    if not (cache.is_dir() and any(cache.rglob('*.variants'))):
-        notice('no_shaders', 'this Mac has translated no shaders yet, so the iPhone / iPad would draw almost nothing: build and play '
-                             'the Mac app first, through the parts you want to play, then build this again')
+    run([py, HERE / 'scripts/prepare_shader_seed.py', '--romfs', work / f'extracted/{VERSION}/romfs',
+         '--output', work / 'build/shader-seed', '--translator', work / 'build/shader-service/totk_xlate',
+         '--spirv-cross', work / 'build/spirv-cross/spirv-cross', '--version', VERSION], logs / 'shader-seed.log')
     run([sys.executable, HERE / 'ios/tools/build_ipa.py', '--work', work, '--out', out], logs / 'ios.log')
     say(f'4/4 iPhone / iPad app: {out}')
 
@@ -418,8 +419,8 @@ def parse_args(argv):
     ap.add_argument('-o', '--out', type=Path, help='the app to write (default: next to the game file)')
     ap.add_argument('--work', type=Path, help='work folder (default: Dread_build next to the game file); the app runs the game from it')
     ap.add_argument('--platform', choices=('macos', 'ios', 'visionos'), default='macos',
-                    help='macos (default), or ios: an unsigned iPhone / iPad app (.ipa, or .app) with the shaders this Mac has '
-                         'translated; install it with games/dread/ios/tools/install_device.py')
+                    help='macos (default), or ios: an unsigned iPhone / iPad app (.ipa, or .app) with the game\'s shaders '
+                         'translated ahead; install it with games/dread/ios/tools/install_device.py')
     fonts = ap.add_mutually_exclusive_group()
     fonts.add_argument('--firmware', type=Path, help='optional: an unpacked firmware NCA directory for the system shared fonts')
     fonts.add_argument('--shared-fonts', type=Path, help='optional: shared fonts extracted before, with their manifest.json')
