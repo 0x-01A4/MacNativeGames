@@ -405,3 +405,15 @@ frames took about 1.1 s (frame 9045, 9661: area loads, as the long-frame lines s
 Not checked: an iPad; areas the Mac has not played (their draws would be skipped); a phone with less memory; the
 Builder's iOS page with this game.
 
+### 2026-11-01: touch controls on iPhone / iPad
+
+`ios/Sources/touch_controls.m` is TotK's on-screen controller (`games/totk/ios/Sources/touch_pad.m`) without its
+frame-rate button and Settings-pane switches: the Switch layout (ZL/L, −/+, R/ZR along the top; d-pad and left stick
+on the left, A/B/X/Y and right stick on the right; L3 / R3 in the bottom corners), so the game's own prompts match. A
+touch that misses every button is a stick centred where it went down. It feeds `runtime_touch_pad_set`, which
+`runtime/gamepad.m` already merged with physical controllers (buttons OR-ed, the stronger axis wins). It hides while a
+controller is connected and comes back on a touch.
+
+Verified: on the iPhone 16 Pro Max with the controller disconnected, the player reported menus, movement and
+multi-finger moves (holding L to aim while moving, shooting while moving) all working. Not checked: an iPad.
+

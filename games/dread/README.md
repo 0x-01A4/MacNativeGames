@@ -33,7 +33,8 @@ python3.14 games/dread/ios/tools/install_device.py "Metroid Dread.ipa" [--device
 The same steps, then an unsigned app (`ios/tools/build_ipa.py`; needs the full Xcode and `brew install xcodegen cmake
 ninja`) that carries the game (about 4.2 GB). `install_device.py` signs it with your Xcode team (a free Apple ID: 7 days)
 and installs it over the cable; the first time, trust your Apple ID on the device (Settings > General > VPN & Device
-Management). Play with a game controller: there are no touch controls yet.
+Management). Play with a game controller or the on-screen controls (Switch layout; they hide while a controller is
+connected and come back on a touch).
 
 The device cannot translate shaders. The app carries the ones the Mac translated while you played the Mac app
 (`Dread_build/build/shader-cache`); a draw that needs one the Mac has not seen is skipped, logged as `[shader-miss]`.
@@ -99,4 +100,4 @@ subsdk0 here, every module of the other games) keep the old layout and byte-iden
 ## Next
 
 Longer play beyond the first area; frame rate and audio in the areas; the 2.1.0 update (a second set of hashes and a
-rewrite of its code); touch controls and a prepared shader seed for iOS. Open findings are listed at the end of [CHANGELOG.md](CHANGELOG.md).
+rewrite of its code); a prepared shader seed for iOS. Open findings are listed at the end of [CHANGELOG.md](CHANGELOG.md).

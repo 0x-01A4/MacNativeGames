@@ -1,6 +1,7 @@
 /* The Metroid Dread iPhone / iPad app: a full-screen Metal view, the player environment of the Mac launcher (app/launcher.m)
    with every path in the app or its Documents, and the loader's main (runtime/loader.c, built as dread_host_main) on a game
-   thread. Play is with a game controller; the runtime's own boot screen (runtime/frontend_ios.m) says what happens. */
+   thread. Play with a game controller or the on-screen controls (touch_controls.m), which hide while a controller is
+   connected; the runtime's own boot screen (runtime/frontend_ios.m) says what happens. */
 #import <UIKit/UIKit.h>
 #import <AVFAudio/AVFAudio.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -10,6 +11,7 @@
 #include <unistd.h>
 #include "runtime.h"
 #include "dmsh_chain.h"
+#import "touch_controls.h"
 
 int dread_host_main(int argc, char **argv);
 void runtime_ios_attach_layer(CAMetalLayer *layer, UIView *host);
@@ -49,6 +51,8 @@ static unsigned long import_shaders(NSString *from, NSString *to) {
     self.gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.gameView];
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
+    DreadTouchControls *pad = [[DreadTouchControls alloc] initWithFrame:self.view.bounds];
+    pad.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:pad];
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
