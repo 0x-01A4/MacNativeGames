@@ -351,6 +351,14 @@ Verified: same save, same room. Samus is lit in her suit colours, and walls and 
 detail. No new errors in the log; memory 2,888 MB vs 2,883 MB before. Not checked: other areas, the title-screen visor
 (it looked blown out before this change).
 
+### 2026-10-26: the main thread's priority from main.npdm
+
+`prepare_runtime.py` took the main thread's priority from byte 0x0c of the META header and the default core from 0x0d.
+Those are the process flags (0x27) and a reserved byte; the priority is at 0x0e (44) and the core at 0x0f (0). So the
+main thread ran at priority 39 instead of 44 (the core was 0 either way). It now reads 0x0e and 0x0f and checks that
+the priority is below 64 and the core at most 3 (`017c2cc`). Verified: `runtime_tables.h` has `NPDM_MAIN_PRIORITY 44`;
+the title, the save menu and the first area still play.
+
 ### 2026-11-01: iPhone / iPad
 
 **Goal.** The game on an iPhone 16 Pro Max (iOS 26.6.1, 8 GB), built from the same work folder as the Mac app.
