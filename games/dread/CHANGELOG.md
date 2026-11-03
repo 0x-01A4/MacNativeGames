@@ -449,9 +449,18 @@ profile, A every 4 s from the title for 5.5 minutes): the seed imported (1,044 v
 in-engine prologue (the ship, Samus close-up with subtitles). The iOS build with the seed builds (1 min with the work
 folder ready). `tests/test_dread_shader_seed.py`; full suite 1,302 tests pass.
 
-Not checked: the seed on the iPhone (not installed yet), the first-start compile time there (the device compiles the
-MSL; `.metallib` built on the Mac would avoid it but needs Xcode's Metal Toolchain), areas beyond the prologue, and
-whether more bind states than cube and depth textures turn up. The Mac app is unchanged: its launcher does not set
+On the iPhone 16 Pro Max (installed over the cable, a fresh Documents shader cache): the app imported the seed (1,044
+variants, 3,096 files) 11 s after launch, the first frame came at 5.6 s, the startup pipelines were ready after 13 ms of
+waiting and the rest compiled in the background (1,233 shader libraries, 221 pipelines in 57 s on one thread) while the
+title and the movies played. The player then played for about half an hour (7.1 minutes of it with the app in front,
+25,685 display beats and 21,600 presented frames over 12 trips to the background) and reported no errors; footprint
+about 2.6 GB. The log has one miss: a fragment shader (`822cb9fd…`) with cube maps in slots 2, 12 and 13, needed around
+frames 20,100 to 21,000 (about 3,800 draws skipped). Its row, from the app's `shader-list-contribution.txt`, is now in
+`assets/shader_list.tsv` (35 rows; `shader_list.py prune` keeps it): the rebuilt seed holds 1,045 variants, and the new
+variant's dependencies match the missed state as `deps_match` checks it. Not yet replayed on the phone.
+
+Not checked: the first-start compile on an older device (`.metallib` built on the Mac would avoid it but needs Xcode's
+Metal Toolchain), an iPad, areas beyond those played, and whether more bind states than cube and depth textures turn up. The Mac app is unchanged: its launcher does not set
 `TOTK_SHADER_SEED_DIR`, and the Mac build does not prepare the seed (a work folder that has one, after an iOS build,
 imports it on the next Mac start, as the runtime always did with `build/shader-seed`).
 
