@@ -5,9 +5,10 @@ assets/expected-v1.0.0.json, with the work folder reused across runs.
     python3.14 build.py <game.xci|nsp> -k <prod.keys> [--firmware DIR | --shared-fonts DIR] [-o OUT] [--work DIR]
 
 build_app.py at the top of the repository hands a Metroid Dread card image or NSP to this script with the same
-arguments, so either works. It speaks build_app.py's --json-progress events (ui/README.md) for the Builder, and takes its
---inspect. The app it writes runs the game from the work folder (Info.plist DreadWorkFolder): do not move or delete that
-folder. Nothing here reads another game's folder.
+arguments, so either works. Run it from the top of the repository. It speaks build_app.py's --json-progress events
+(ui/README.md) for the Builder, and takes its --inspect. The app it writes runs the game from the work folder (Info.plist
+DreadWorkFolder): do not move or delete that folder; --platform ios writes an iPhone / iPad app that carries the game.
+Nothing here reads another game's folder.
 """
 import argparse
 import hashlib

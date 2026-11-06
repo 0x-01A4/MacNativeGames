@@ -1,5 +1,8 @@
-// The launcher inside the packaged app (build_app.py compiles it as Contents/MacOS/TOTK).
-// The game itself is Contents/Resources/totk/build/totk-native; everything it writes goes to the player's own folders:
+// The launcher inside the packaged app. It is part of the game binary, which build_app.py places as Contents/MacOS/TOTK
+// (and, for tools, as Contents/Resources/totk/build/totk-native): started from Contents/MacOS, runtime/loader.c main runs
+// runtime_app_launch first and then boots the game in the same process. One process on purpose: an app that execs another
+// binary after it started is left out of the Cmd+Tab switcher (macOS 27; the Dock still shows it).
+// Everything the game writes goes to the player's own folders:
 //   ~/Library/Application Support/MacNativeGames/TOTK/   profile (account, saves), shader cache, game slot, RomFS proof (BotW/ for Breath of the Wild)
 //   ~/Library/Logs/MacNativeGames/totk.log             this run, only with the debug log on (totk.previous.log: the one before; botw.log for Breath of the Wild)
 // If the game is already running, the launcher only brings it to the front.
@@ -13,16 +16,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/event.h>
 #include <sys/file.h>
 #include <sys/proc.h>
+#include <sys/stat.h>
 #include <unistd.h>
-#include "dmsh_chain.h"   // DMSH_CHAIN: the shader translation chain the cache folder is named after
-#include "game_version.h"
-#include "controller_map.h"
-#include "include/totk_ui_lang.h"
-#include "totk_shader_contrib.h"   // the shared shader list contribution and its reminder
-#include "contrib_submit.h"        // its "Submit automatically" (gh), shared with the settings panel
-#include "update_notice.h"
+#include "../third_party/d2r_gfx/gfx/nvn/dmsh_chain.h"
+#include "../runtime/game_version.h"
+#include "../runtime/controller_map.h"
+#include "../runtime/runtime.h"
+#include "../third_party/d2r_gfx/gfx/nvn/include/totk_ui_lang.h"
+#include "../third_party/d2r_gfx/gfx/nvn/totk_shader_contrib.h"
+#include "../runtime/contrib_submit.h"
+#include "auto_update.h"
 
 static void show_error(NSString *detail) {
     NSAlert *alert = [NSAlert new];
@@ -94,6 +100,32 @@ static void note(NSString *text) {
     [alert runModal];
 }
 
+/* Saves sync (runtime/cloud_save.m): a start with no sync folder offers to choose one, before the game reads its save, so
+   it syncs from this start. "Not now" asks again at the next start; "Don't ask again" (or Stop Syncing in the app menu,
+   runtime/frontend.m) never. Returns the folder chosen now, or nil. */
+static NSString *cloud_folder_offer(NSUserDefaults *sync) {
+    if ([sync boolForKey:@"TOTK_CLOUD_SAVE_ASKED"]) return nil;
+    [NSApplication sharedApplication]; [NSApp activateIgnoringOtherApps:YES];
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @(TOTK_UI("要和其他设备同步存档吗？", "Sync saves with your other devices?"));
+    alert.informativeText = @(TOTK_UI("选择一个每台设备都能看到的文件夹，例如 iCloud 云盘里的文件夹（也可以是和另一个 Apple ID 共享的文件夹）。存档仍保存在这台 Mac 上，只把副本放进这个文件夹，其他设备在那里接续。以后也可以在应用菜单 › 存档同步里更改。",
+                                      "Choose a folder every device can see, such as a folder in iCloud Drive (one shared with another Apple ID works too). Saves stay on this Mac; a copy goes to the folder, and your other devices carry on from there. You can change it later in the app menu › Save Sync."));
+    [alert addButtonWithTitle:@(TOTK_UI("选择文件夹…", "Choose Folder…"))];
+    [alert addButtonWithTitle:@(TOTK_UI("以后再说", "Not Now"))];
+    [alert addButtonWithTitle:@(TOTK_UI("不要再问", "Don't Ask Again"))];
+    NSModalResponse choice = [alert runModal];
+    if (choice == NSAlertThirdButtonReturn) [sync setBool:YES forKey:@"TOTK_CLOUD_SAVE_ASKED"];
+    if (choice != NSAlertFirstButtonReturn) return nil;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = NO; panel.canChooseDirectories = YES; panel.canCreateDirectories = YES; panel.allowsMultipleSelection = NO;
+    panel.message = @(TOTK_UI("选择每台设备都能看到的文件夹（例如 iCloud 云盘里共享的文件夹）。", "Choose a folder every device can see (e.g. a shared folder in iCloud Drive)."));
+    panel.prompt = @(TOTK_UI("选择", "Choose"));
+    panel.directoryURL = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs"] isDirectory:YES];
+    if ([panel runModal] != NSModalResponseOK || !panel.URL) return nil;   // cancelled: asked again at the next start
+    [sync setObject:panel.URL.path forKey:@"TOTK_CLOUD_SAVE_FOLDER"];
+    return panel.URL.path;
+}
+
 /* Every TOTK_CONTRIB_STEP shaders and render pipelines the shared list does not have yet (totk_shader_contrib.h), before the game starts: ask
    the player to send the file in a GitHub issue. "Send" opens the issue form and shows the file in Finder to drag in.
    With gh signed in, "Submit automatically" takes the place of "Remind me next time" and sends this file at once.
@@ -163,8 +195,11 @@ static BOOL make_dir(NSString *path) {
 static NSString *game_data_in(NSString *folder, unsigned long long size, NSString *sha) {
     if (!folder.length) return nil;
     for (NSString *place in @[[folder stringByAppendingPathComponent:@TOTK_GAME_DIR], folder]) {
-        NSDictionary *image = [NSFileManager.defaultManager attributesOfItemAtPath:[place stringByAppendingPathComponent:@"romfs.bin"] error:nil];
-        if (!image || image.fileSize != size) continue;
+        /* Only the size is needed (every version). Foundation also queries extended attributes, which can block on a
+           large image on a removable volume before any UI (after PR #1473). */
+        struct stat image;
+        if (stat([place stringByAppendingPathComponent:@"romfs.bin"].fileSystemRepresentation, &image) ||
+            !S_ISREG(image.st_mode) || image.st_size < 0 || (uint64_t)image.st_size != size) continue;
         NSString *mark = [NSString stringWithContentsOfFile:[place stringByAppendingPathComponent:@"romfs.sha256"] encoding:NSUTF8StringEncoding error:nil];
         mark = [mark stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (!mark.length || [mark caseInsensitiveCompare:sha] == NSOrderedSame) return place;
@@ -208,21 +243,104 @@ static NSString *game_data_ask(NSArray<NSString *> *looked, unsigned long long s
     }
 }
 
-int main(int argc, char **argv) {
+/* The Update page's two requests (auto_update.h), each in a cut-off copy of the launcher the game starts. */
+static NSString *update_folder(void) { return [mng_update_data() stringByAppendingPathComponent:@"update"]; }
+static NSString *update_info(NSString *key) { id v = [NSBundle.mainBundle objectForInfoDictionaryKey:key]; return [v isKindOfClass:NSString.class] ? v : nil; }
+static int update_check_run(void) {
+    if (mng_update_held() || !mng_update_data()) return 0;
+    int lock = mng_update_lock(update_folder()); if (lock < 0) return 0;
+    mng_update_check(update_folder(), update_info(@"MNGSourceRepo"), update_info(@"MNGSourceCommit"));
+    close(lock); return 0;
+}
+/* The Update button: check first, so a game is closed only for an update that can go in; then close it (as the window's
+   close does, saves written: the runtime's command file), wait for it, update with a small window saying so, and start
+   the game again. An update that cannot go in says why and how to do it by hand. */
+static void update_say(NSString *text, BOOL problem) {
+    NSAlert *alert = [NSAlert new]; alert.alertStyle = problem ? NSAlertStyleWarning : NSAlertStyleInformational;
+    alert.messageText = problem ? @(TOTK_UI("更新没有成功", "The update did not work")) : @(GAME_NAME);
+    alert.informativeText = text; [alert addButtonWithTitle:@"OK"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal];
+}
+static NSString *update_by_hand(void) {
+    NSString *repo = update_info(@"MNGSourceRepo") ?: @(TOTK_UI("你的项目文件夹", "your checkout"));
+    return [NSString stringWithFormat:@(TOTK_UI("请自己更新代码再重新编译：在 %@ 里运行 git pull，然后 python3.14 update_runtime.py \"%@\"（打不过就用 build_app.py 重新打包）。",
+                                               "Please update the code and build again yourself: run git pull in %@, then python3.14 update_runtime.py \"%@\" (or build the app again with build_app.py).")),
+            repo, NSBundle.mainBundle.bundlePath];
+}
+/* Each step of the install, in update/update.log after update_runtime.py's output. */
+static void update_note(NSString *folder, NSString *what) {
+    NSString *line = [NSString stringWithFormat:@"[update %@] %@\n", [NSDateFormatter localizedStringFromDate:NSDate.date dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle], what];
+    FILE *f = fopen([folder stringByAppendingPathComponent:@"update.log"].fileSystemRepresentation, "a"); if (f) { fputs(line.UTF8String, f); fclose(f); }
+}
+static int update_install_run(pid_t game) {
+    if (mng_update_held() || !mng_update_data()) return 0;
+    NSString *folder = update_folder();
+    int lock = mng_update_lock(folder); if (lock < 0) return 0;
+    NSString *repo = update_info(@"MNGSourceRepo"), *commit = update_info(@"MNGSourceCommit");
+    if (![mng_update_check(folder, repo, commit)[@"state"] isEqual:@"behind"]) { close(lock); return 0; }   /* the page says why */
+    NSMutableDictionary *closing = [[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:@"status.json"]] options:0 error:nil] mutableCopy];
+    [NSFileManager.defaultManager removeItemAtPath:[folder stringByAppendingPathComponent:@"update.log"] error:nil];   /* this install's log */
+    closing[@"state"] = @"closing"; mng_update_write(folder, closing);
+    update_note(folder, [NSString stringWithFormat:@"closing the game (pid %d) to update to %@", (int)game, closing[@"to"]]);
+    const char *commands = getenv("TOTK_INPUT_FILE");
+    if (game > 0 && commands) {
+        FILE *f = fopen(commands, "a"); if (f) { fputs("close\n", f); fclose(f); }
+        int kq = kqueue(); struct kevent ev; EV_SET(&ev, game, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+        if (kq >= 0 && !kevent(kq, &ev, 1, NULL, 0, NULL)) while (kevent(kq, NULL, 0, &ev, 1, NULL) < 0 && errno == EINTR) {}
+        if (kq >= 0) close(kq);
+    }
+    update_note(folder, @"the game has closed; updating");
+    [NSApplication sharedApplication]; NSApp.activationPolicy = NSApplicationActivationPolicyRegular; [NSApp activateIgnoringOtherApps:YES];
+    __block NSWindow *window = nil; __block NSString *state = nil;
+    void (^installing)(NSString *, NSInteger) = ^(NSString *to, NSInteger total) {
+        window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 420, 96) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        window.title = @GAME_NAME; window.releasedWhenClosed = NO;
+        NSString *what = [NSString stringWithFormat:@(TOTK_UI("正在更新到 %@（%ld 个新提交），需要几分钟，完成后自动打开游戏",
+                                                              "Updating to %@ (%ld new commits), a few minutes; the game opens when it is done")), to, (long)total];
+        NSTextField *label = [NSTextField wrappingLabelWithString:what]; label.frame = NSMakeRect(20, 42, 380, 40); [window.contentView addSubview:label];
+        NSProgressIndicator *bar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(20, 18, 380, 16)];
+        bar.indeterminate = YES; bar.style = NSProgressIndicatorStyleBar; [window.contentView addSubview:bar]; [bar startAnimation:nil];
+        [window center]; [window makeKeyAndOrderFront:nil];
+    };
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *s = mng_update_install(folder, repo, NSBundle.mainBundle.bundlePath, commit, update_info(@"MNGBuildPython"), update_info(@"MNGWorkFolder"),
+                                         ^(NSString *to, NSInteger total) { dispatch_async(dispatch_get_main_queue(), ^{ installing(to, total); }); });
+        dispatch_async(dispatch_get_main_queue(), ^{ state = s; });
+    });
+    while (!state) {   /* the window drawn and macOS never seeing the launcher hang */
+        for (NSEvent *e; (e = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.1] inMode:NSDefaultRunLoopMode dequeue:YES]);) [NSApp sendEvent:e];
+    }
+    [window close];
+    close(lock);
+    update_note(folder, [@"the update ended: " stringByAppendingString:state]);
+    if (![state isEqualToString:@"updated"]) {
+        NSDictionary *d = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:@"status.json"]] options:0 error:nil];
+        NSString *why = [d[@"detail"] isKindOfClass:NSString.class] && [d[@"detail"] length] ? d[@"detail"] : @"";
+        update_say([NSString stringWithFormat:@"%@%@%@", why, why.length ? @"\n\n" : @"", update_by_hand()], YES);
+    }
+    NSTask *open = [NSTask new]; open.executableURL = [NSURL fileURLWithPath:@"/usr/bin/open"];   /* -n: this launcher is the app too */
+    open.arguments = @[@"-n", NSBundle.mainBundle.bundlePath]; BOOL opened = [open launchAndReturnError:nil]; [open waitUntilExit];
+    update_note(folder, [NSString stringWithFormat:@"opening the game again: %@", opened && !open.terminationStatus ? @"done" : @"failed"]);
+    return 0;
+}
+
+/* Returns -1 with *boot set to the arguments the game boots with (rewritten folder, "boot"), or the status to exit with. */
+int runtime_app_launch(int argc, char **argv, char ***boot) {
     @autoreleasepool {
+        if (argc > 1 && !strcmp(argv[1], "--update-check")) return update_check_run();   // the Update page (auto_update.h)
+        if (argc > 2 && !strcmp(argv[1], "--update-install")) return update_install_run((pid_t)atoi(argv[2]));
         NSString *root = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"totk"];
-        NSString *binary = [root stringByAppendingPathComponent:@"build/totk-native"];
+        NSString *binary = [root stringByAppendingPathComponent:@"rewritten/" TOTK_GAME_DIR "/main.patched.bin"];   // the game's code
         /* --check (build_app.py, once after packaging): only look that the game is there and exit. The first run of a new
            app is when macOS scans the whole bundle (minutes for 16 GB, with nothing on screen); doing it during the build
            makes the player's first start immediate. */
         if (argc > 1 && !strcmp(argv[1], "--check")) {
-            int ok = access(binary.fileSystemRepresentation, X_OK) == 0;
+            int ok = access(binary.fileSystemRepresentation, R_OK) == 0;
             NSString *declared = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
             ok = ok && [declared isEqualToString:@TOTK_GAME_VERSION];
-            printf("%s: game version %s\n", ok ? "ok" : "missing binary or version mismatch", TOTK_GAME_VERSION);
+            printf("%s: game version %s\n", ok ? "ok" : "missing game files or version mismatch", TOTK_GAME_VERSION);
             return ok ? 0 : 1;
         }
-        if (access(binary.fileSystemRepresentation, X_OK) != 0) {
+        if (access(binary.fileSystemRepresentation, R_OK) != 0) {
             show_error(@"The game files are missing from this app. Build it again with build_app.py.");
             return 1;
         }
@@ -245,8 +363,7 @@ int main(int argc, char **argv) {
             [[NSRunningApplication runningApplicationWithProcessIdentifier:running] activateWithOptions:NSApplicationActivateAllWindows];
             return 0;
         }
-        mng_update_notice(data);
-#if defined(TOTK_GAME_V112) || defined(TOTK_GAME_V121) || defined(TOTK_GAME_V143)
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V143)
         NSString *backup = [profile stringByAppendingFormat:@"-before-%s", TOTK_GAME_VERSION];
         NSFileManager *fm = NSFileManager.defaultManager;
         if (![fm fileExistsAtPath:backup]) {
@@ -308,6 +425,15 @@ int main(int argc, char **argv) {
             setenv("TOTK_ROMFS_DATA", library.fileSystemRepresentation, 1);   // runtime/romfs.c
         }
         setenv("TOTK_SHARED_FONTS", "extracted/firmware/shared-fonts", 1);
+        /* The folder the game binary's own files are in (shader-service, shader-seed, shader-libs, pso lists: totk_shader_rt.m
+           root_dir, nvn_mtl.m exe_rel), which is no longer the folder of the running executable (Contents/MacOS). */
+        setenv("TOTK_NATIVE_DIR", [root stringByAppendingPathComponent:@"build"].fileSystemRepresentation, 1);
+        /* Save sync (runtime/cloud_save.m): the folder the player chose in the app menu (runtime/frontend.m) or in
+           cloud_folder_offer, which asks at a start that has none. TOTK_CLOUD_SAVE_DIR wins over it; 0 = off. */
+        NSUserDefaults *sync = [[NSUserDefaults alloc] initWithSuiteName:@RUNTIME_SAVE_SYNC_DEFAULTS];
+        NSString *chosen = [sync stringForKey:@"TOTK_CLOUD_SAVE_FOLDER"];
+        if (!getenv("TOTK_CLOUD_SAVE_DIR") && !getenv("TOTK_CLOUD_SAVE_FOLDER") && !chosen.length) chosen = cloud_folder_offer(sync);
+        if (!getenv("TOTK_CLOUD_SAVE_DIR") && chosen.length) setenv("TOTK_CLOUD_SAVE_FOLDER", chosen.fileSystemRepresentation, 0);
         /* Player mods (runtime/romfs.c): <data>/mods/<version>/manifest.tsv, when present. With no controller connected at
            start, <data>/mods/<version>-keyboard takes its place when it holds a manifest (keyboard key icons in the prompts:
            scripts/make_button_icons.py --style keyboard or azerty). The fonts are read once, so it holds for the session. */
@@ -332,12 +458,28 @@ int main(int argc, char **argv) {
         if ([commit isKindOfClass:NSString.class] && commit.length) setenv("TOTK_SOURCE_COMMIT", commit.UTF8String, 1);
         NSString *contrib = env_or("TOTK_SHADER_CONTRIB", contrib_file(data));
         setenv("TOTK_SHADER_CONTRIB", contrib.fileSystemRepresentation, 1);
+        { const char *seed = getenv("TOTK_SHADER_SEED_DIR");   // what this app serves leaves the file before the reminder counts it
+          NSString *build = [root stringByAppendingPathComponent:@"build"];
+          totk_contrib_prune(contrib, seed ? @(seed) : [build stringByAppendingPathComponent:@"shader-seed"], build); }
         contrib_reminder(contrib);
         unsetenv("TOTK_AUTOLOAD");   // the game starts at its title screen, as on the console
         /* runtime command channel (runtime/input.c): echo "shot ~/Desktop/shot.png" >> "<data>/input.txt" */
         { NSString *cmds = env_or("TOTK_INPUT_FILE", [data stringByAppendingPathComponent:@"input.txt"]);
           FILE *cf = fopen(cmds.fileSystemRepresentation, "w"); if (cf) fclose(cf);
           setenv("TOTK_INPUT_FILE", cmds.fileSystemRepresentation, 1); }
+        /* VR (stage 1, totk_vr.m): the control file of `basalt-streamer --wired --runtime <file>`, from
+           defaults write org.macnativegames.totk TOTK_VR_CONTROL <file> or the environment, which wins. */
+        { NSString *vr = [NSUserDefaults.standardUserDefaults stringForKey:@"TOTK_VR_CONTROL"];
+          if (vr.length) setenv("TOTK_VR_CONTROL", vr.fileSystemRepresentation, 0);
+          /* VR settings: the game runs the streamer (defaults TOTK_VR_STREAMER <basalt-streamer>) and keeps the per-eye
+             size picked in the settings panel in <data>/vr.txt */
+          NSString *st = [NSUserDefaults.standardUserDefaults stringForKey:@"TOTK_VR_STREAMER"];
+          if (st.length) setenv("TOTK_VR_STREAMER", st.fileSystemRepresentation, 0);
+          setenv("TOTK_VR_SETTINGS", [data stringByAppendingPathComponent:@"vr.txt"].fileSystemRepresentation, 0);
+          setenv("TOTK_CAMERA_SETTINGS", [data stringByAppendingPathComponent:@"camera.txt"].fileSystemRepresentation, 0);   /* third-person distance */
+          setenv("TOTK_HEAD_SETTINGS", [data stringByAppendingPathComponent:@"head.txt"].fileSystemRepresentation, 0);   /* Link's head shown / hidden */
+          setenv("TOTK_VR_OFFSET", [data stringByAppendingPathComponent:@"vr-offset.txt"].fileSystemRepresentation, 0);   /* the camera's offset (VR page) */
+          setenv("TOTK_VR_OPTIONS", [data stringByAppendingPathComponent:@"vr-options.txt"].fileSystemRepresentation, 0); }   /* the VR page's switches: Mac screen, 6DoF, snap turning */   /* the camera's offset (VR page) */   /* Link's head shown / hidden */
 
         /* The log is written only with debug on, as on the iPhone: defaults write org.macnativegames.totk TOTK_DEBUG_LOG
            -bool YES (org.macnativegames.botw for Breath of the Wild), or TOTK_DEBUG_LOG=1 in the environment, which wins
@@ -355,11 +497,10 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
-        char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
-        execv(arguments[0], arguments);
-        int failed = errno;
-        fprintf(stderr, "[launcher] execv failed: %s\n", strerror(failed));
-        show_error([NSString stringWithFormat:@"Starting the game failed: %s.", strerror(failed)]);
-        return 1;
+        setenv("TOTK_UPDATE_LAUNCHER", NSBundle.mainBundle.executablePath.fileSystemRepresentation, 1);
+        static char *arguments[4] = {NULL, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
+        arguments[0] = argv[0];
+        *boot = arguments;
+        return -1;
     }
 }

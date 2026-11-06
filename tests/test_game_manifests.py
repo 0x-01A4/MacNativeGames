@@ -90,8 +90,9 @@ class Manifests(unittest.TestCase):
 
     def test_build_app_games_agree(self):
         # the games build_app.py builds itself: the same title, name, bundle identifier and data folder as its tables
+        # (the Switch 2 games it builds from a dump folder, build_app.NS2, have no game.json: the Builder takes card images and NSPs)
         mine = {g['id']: g for g in build_app.GAMES if g['build'] == 'build_app.py'}
-        self.assertEqual(set(mine), set(build_app.APPS))
+        self.assertEqual(set(mine), set(build_app.APPS) - {g['version'] for g in build_app.NS2.values()})
         self.assertEqual({g['title_id']: i for i, g in mine.items()}, build_app.TITLES)
         for i, g in mine.items():
             self.assertEqual((g['name'], g['bundle_id'], g['data_folder']), build_app.APPS[i])

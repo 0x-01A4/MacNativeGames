@@ -202,6 +202,15 @@ static int prefill_blocks(void) {   // read once before the device starts (audio
     }
     return blocks;
 }
+/* VR (zeldaVR): the headset's audio taps the mix here, on the CoreAudio thread (lock-free on its side); it may silence
+   the Mac's output while the headset plays it. Set by third_party/d2r_gfx/gfx/nvn/totk_vr.m. */
+void (*runtime_audio_tap)(float *out, unsigned frames, int rate);
+/* Silent from the start until the shader warm-up is over (nvn_mtl.m warm_start releases it on every way out): the game
+   runs before its first draw loads the shader map and during the warm-up that holds its first frame, and its producer,
+   paced by the wall clock, fills the ring with the title's ambience, heard alone behind the start-up screen (iPhone,
+   2026-10-29: water / wind in a loop under "shader cache ready" and "warming"). What it writes meanwhile is dropped. */
+static _Atomic int g_audio_hold = 1;
+void runtime_audio_hold(int on) { atomic_store_explicit(&g_audio_hold, on != 0, memory_order_release); }
 static OSStatus pull(void *ctx, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *io) {
     (void)flags; (void)ts; (void)bus;
     Mixer *m = ctx; float *out = io->mBuffers[0].mData;
@@ -210,7 +219,7 @@ static OSStatus pull(void *ctx, AudioUnitRenderActionFlags *flags, const AudioTi
     unsigned epoch=atomic_load_explicit(&m->stop_epoch,memory_order_acquire);
     uint64_t rd = atomic_load(&m->rd), wr = atomic_load_explicit(&m->wr, memory_order_acquire), have = wr - rd;
     if(epoch!=m->callback_epoch){uint64_t until=atomic_load_explicit(&m->flush_until,memory_order_acquire);if(until>rd){rd=until<wr?until:wr;atomic_store_explicit(&m->rd,rd,memory_order_release);}have=wr-rd;m->callback_epoch=epoch;m->ready=0;}
-    if(!atomic_load_explicit(&m->playing,memory_order_acquire)){
+    if(!atomic_load_explicit(&m->playing,memory_order_acquire)||atomic_load_explicit(&g_audio_hold,memory_order_acquire)){
         memset(out,0,(size_t)frames*(size_t)ch*sizeof(float));m->ready=0;atomic_store_explicit(&m->rd,wr,memory_order_release);return noErr;
     }
     uint64_t prefill=(uint64_t)m->frame*(uint64_t)prefill_blocks();if(prefill<frames)prefill=frames;if(prefill>RING_FRAMES)prefill=RING_FRAMES;
@@ -243,6 +252,8 @@ static OSStatus pull(void *ctx, AudioUnitRenderActionFlags *flags, const AudioTi
     atomic_fetch_add(&m->callback_nonzero,nonzero);
     if (n < frames) { memset(out + (size_t)ch * n, 0, (size_t)(frames - n) * (size_t)ch * sizeof(float));atomic_fetch_add(&m->underruns,1);atomic_fetch_add(&m->missing_frames,frames-n);m->ready=0; }
     atomic_store_explicit(&m->rd, rd + n, memory_order_release);
+    void (*tap)(float *, unsigned, int) = runtime_audio_tap;
+    if (tap) tap(out, frames, m->rate);
     return noErr;
 }
 static void output_open(Mixer *m, int rate) {
